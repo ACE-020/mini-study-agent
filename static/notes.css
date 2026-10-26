@@ -1,0 +1,20 @@
+.notes-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; align-items:start; }
+.notes-grid > .panel { min-width:0; } .notes-grid.source-collapsed { grid-template-columns:1fr; }
+#note-text,#notes-follow { color:#202b40; } #note-text::placeholder,#notes-follow::placeholder { color:#737b8f; }
+#note-upload-pane { margin:20px 0; } #note-upload-pane .helper { line-height:1.7; }
+.note-image-list { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0; }
+.note-image-item { margin:0; width:96px; position:relative; } .note-image-item img { width:96px;height:96px;object-fit:contain;background:#f4f5fa;border:1px solid #e1e3ed;border-radius:10px; }
+.note-image-item figcaption { font-size:12px;line-height:1.7; } .note-image-item button { border:0;background:#fff;color:#9f3030;cursor:pointer;font:inherit;font-size:12px;padding:3px 0; }
+.note-library-heading { margin-top:34px; gap:16px; } .note-library-heading input { max-width:320px; }
+.note-library { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+.note-library:has(> .note-card:only-child) { grid-template-columns:1fr; }
+.note-card { min-width:0; padding:24px;border:1px solid #e6e7f1;background:#fff;border-radius:18px; }
+.note-card h3 { color:#202b40;margin:14px 0; } .note-card .note-content { line-height:1.85;color:#273249;overflow-wrap:anywhere; }
+.note-card blockquote { border-left:3px solid #b6c6d2;background:#f6f8fa;padding:10px 16px;margin:16px 0; }
+.note-card .note-content .katex-display { overflow-x:auto;overflow-y:hidden; }
+.note-card-actions { display:flex; gap:12px; flex-wrap:wrap;align-items:center;margin-top:20px; }
+.note-card-actions a { color:#5342af;text-decoration:none;border:1px solid #ddd7f2;border-radius:8px;padding:7px 12px; }
+.note-card-actions a:hover { background:#f4f1ff; } .note-export-feedback { color:#875325;font-size:13px;line-height:1.7; }
+@media(max-width:1100px) { .notes-grid,.note-library { grid-template-columns:1fr; } }
+@media(max-width:640px) { .note-library-heading { flex-direction:column;align-items:stretch; } .note-library-heading input { max-width:none; } .note-card {padding:18px;} }
+@media(max-width:640px) { .nav {display:flex;overflow-x:auto;gap:4px;} .nav-item {flex:0 0 auto;white-space:nowrap;gap:4px;padding:10px 9px;font-size:11px;} .nav-item span {white-space:nowrap;} }

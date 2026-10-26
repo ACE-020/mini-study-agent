@@ -1,0 +1,77 @@
+\xeCJKsetup{CJKmath=true}
+\xeCJKDeclareCharClass{CJK}{"2460->"2473}
+\usepackage{needspace}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\definecolor{ink}{HTML}{17232B}
+\definecolor{accent}{HTML}{355C73}
+\definecolor{noteback}{HTML}{F6F8FA}
+\definecolor{noteframe}{HTML}{B6C6D2}
+\definecolor{notetitle}{HTML}{EAF0F4}
+\color{ink}
+\raggedbottom
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\widowpenalty=10000
+\clubpenalty=10000
+\displaywidowpenalty=10000
+\predisplaypenalty=10000
+\postdisplaypenalty=3000
+\interdisplaylinepenalty=10000
+\titleformat{\subsection}
+  {\normalfont\fontsize{16}{21}\bfseries\color{ink}}{}{0pt}{}
+\titleformat{\subsubsection}
+  {\normalfont\fontsize{13}{18}\bfseries\color{ink}}{}{0pt}{}
+\titlespacing*{\subsection}{0pt}{0pt}{10pt}
+\titlespacing*{\subsubsection}{0pt}{12pt}{7pt}
+\newcommand{\MathSpacing}{%
+  \setlength{\abovedisplayskip}{6pt}%
+  \setlength{\belowdisplayskip}{6pt}%
+  \setlength{\abovedisplayshortskip}{4pt}%
+  \setlength{\belowdisplayshortskip}{5pt}%
+}
+\AtBeginDocument{\MathSpacing}
+\newif\ifmeasuringunit
+\newsavebox{\unitcontents}
+% Measure one semantic unit. Keep short units together; let oversized ones flow.
+\NewDocumentEnvironment{noteunit}{+b}{%
+  \par\begingroup
+  \measuringunittrue
+  \begin{lrbox}{\unitcontents}\begin{minipage}{\linewidth}%
+    \setlength{\parindent}{0pt}\setlength{\parskip}{4pt}%
+    \MathSpacing\ignorespaces#1%
+  \end{minipage}\end{lrbox}%
+  \measuringunitfalse
+  \ifdim\dimexpr\ht\unitcontents+\dp\unitcontents\relax>0.8\textheight
+    \Needspace{5\baselineskip}%
+    #1\par
+  \else
+    \Needspace{\dimexpr\ht\unitcontents+\dp\unitcontents\relax}%
+    \noindent\usebox{\unitcontents}\par
+  \fi
+  \vspace{2pt}\endgroup
+}{}
+\tcbset{mathannotation/.style={
+  enhanced jigsaw,
+  colback=noteback,colframe=noteframe,
+  colbacktitle=notetitle,coltitle=accent,
+  fonttitle=\fontsize{10.8}{15}\selectfont\bfseries,
+  fontupper=\fontsize{10.8}{16}\selectfont,
+  boxrule=0.45pt,leftrule=1.6pt,
+  arc=1.2mm,outer arc=1.2mm,
+  left=3mm,right=3mm,top=2mm,bottom=2mm,
+  toptitle=1.7mm,bottomtitle=1.7mm,
+  before skip=0pt,after skip=13pt,
+  pad at break*=2mm,lines before break=4,
+  before upper={\setlength{\parindent}{0pt}\setlength{\parskip}{4pt}\MathSpacing}
+}}
+\NewDocumentEnvironment{annotationbox}{m +b}{%
+  \ifmeasuringunit
+    \begin{tcolorbox}[mathannotation,unbreakable,title={#1}]#2\end{tcolorbox}%
+  \else
+    \begin{tcolorbox}[mathannotation,breakable,title={#1},title after break={#1（续）}]#2\end{tcolorbox}%
+  \fi
+}{}
+\pagestyle{plain}

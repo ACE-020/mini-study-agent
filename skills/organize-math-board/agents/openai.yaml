@@ -1,0 +1,14 @@
+interface:
+  display_name: 数学板书整理
+  short_description: 保留板书编号与顺序，注解独立分框，输出中文 Markdown 和 PDF
+  default_prompt: 使用 $organize-math-board 按原板书顺序、编号和符号整理这些图片，必要解释独立标注并分框，输出 .md 与嵌入中文字体、逐页检查的
+    .pdf。
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

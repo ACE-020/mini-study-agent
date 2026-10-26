@@ -1,0 +1,8 @@
+# 网页与图片识别所需依赖；原命令行版本仍只使用标准库。
+Flask>=3.1,<4
+Pillow>=11,<14
+prompt_toolkit>=3,<4
+
+# 笔记 PDF 备用排版与字体/文本核验（复用已安装 Chrome / Edge）
+playwright>=1.50,<2
+PyMuPDF>=1.25,<2

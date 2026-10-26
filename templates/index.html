@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="上传作业图片，整理错题，围绕薄弱知识点复习。">
+  <title>知错 · 学习整理助手</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="/static/app.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/workflow.css?v=20261026-review-focus-v20">
+  <script defer src="/static/vendor/marked.umd.js"></script>
+  <script defer src="/static/vendor/purify.min.js"></script>
+  <script defer src="/static/vendor/katex/katex.min.js"></script>
+  <script defer src="/static/vendor/katex/auto-render.min.js"></script>
+  <script defer src="/static/app.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/file-preview.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/settings.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/chat-composer.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/chat-queue.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/exercise-math.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/materials.js?v=20261026-review-focus-v20"></script>
+  <link rel="stylesheet" href="/static/materials.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/notes.css?v=20261026-review-focus-v20">
+  <script defer src="/static/material-correction.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/material-review.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/material-reader.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/material-reading.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/material-submission.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/material-recovery.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/material-locations.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/library.js?v=20261026-review-focus-v20"></script>
+  <link rel="stylesheet" href="/static/workspace.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/material-workflow.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/material-correction.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/material-review.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/material-reader.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/material-reading.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/material-locations.css?v=20261026-review-focus-v20">
+<link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/chat-composer.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/review-focus.css?v=20261026-review-focus-v20">
+</head>
+<body>
+  <svg class="icon-defs" aria-hidden="true"><defs>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-3H4zM13 7a3 3 0 0 1 3-3h5v14h-4a4 4 0 0 0-4 3"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+  </defs></svg>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#organize" aria-label="知错首页"><span class="brand-mark"><svg><use href="#i-book"/></svg></span><span>知错<small>学习整理助手</small></span></a>
+      <p class="nav-caption">我的学习空间</p>
+      <nav class="nav" aria-label="主要导航">
+        <button class="nav-item active" data-view="organize"><svg><use href="#i-plus"/></svg><span>添加学习内容</span></button>
+        <button class="nav-item" data-view="notebook"><svg><use href="#i-grid"/></svg><span>我的错题本</span><span id="sidebar-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-view="notes"><svg><use href="#i-book"/></svg><span>我的笔记</span><span id="notes-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-view="review"><svg><use href="#i-spark"/></svg><span>复习练习</span></button>
+        <button class="nav-item" data-view="materials"><svg><use href="#i-book"/></svg><span>练习资料</span></button>
+      </nav>
+      <div class="sidebar-note"><span class="note-line"></span><p>每一道错题，<br>都值得再学会一次。</p><small>从记录，到真正理解。</small></div>
+      <div class="local-label"><span class="status-dot"></span>本机学习空间</div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="breadcrumb">学习空间 <span>/</span> <strong id="view-context">添加学习内容</strong></div><div class="topbar-actions"><button id="stop-request" class="button stop-button small" hidden>停止并编辑</button><button id="clear-intake" class="button quiet small" type="button" aria-describedby="intake-clear-help">清空本次上传</button><button id="show-prompt" class="button quiet small">助手规则</button><button id="open-settings" class="button quiet small">模型设置</button><button id="material-tasks-button" class="task-orb" type="button" aria-label="资料整理任务" aria-expanded="false" aria-controls="material-task-popover" title="资料整理任务"><svg><use href="#i-book"/></svg><span id="material-task-badge" hidden>0</span></button></div></header>
+      <div class="page-content">
+        <div class="page-heading"><div><p class="eyebrow">YOUR STUDY SPACE</p><h1 id="page-title">添加学习内容</h1><p id="page-subtitle">上传或粘贴原稿，笔记与错题可以放在一起。</p></div><span id="model-status" class="connection"><span class="status-dot"></span>读取配置中</span></div>
+        <div id="notice" class="notice" role="alert" hidden></div>
+        <div id="config-banner" class="config-banner" hidden>尚未配置模型。点击右上角“模型设置”，填写 API Key 并保存即可使用，无需重启或重复输入命令。</div>
+        <section id="view-organize" class="view">
+          <p id="intake-clear-help" class="helper">本页对话暂不保存历史；已收录的笔记和错题会保留。</p>
+          <div id="source-summary" class="source-summary" hidden><div><strong id="source-summary-title">本次内容已保存</strong><p>可以继续讨论，或录入下一份内容。</p></div><div class="source-summary-actions"><button id="toggle-source" class="button quiet small" type="button">查看原稿</button><button id="new-mistake" class="button secondary small" type="button">添加下一份</button></div></div>
+          <div id="organize-workspace" class="workspace-grid">
+            <section id="source-panel" class="panel input-panel">
+              <div class="panel-heading"><div><span class="step-label">原稿</span><h2>图片、笔记、错题，都放这里</h2></div></div>
+              <div class="source-tabs" role="group" aria-label="录入方式"><button class="source-tab active" data-source="image" type="button">上传文件</button><button class="source-tab" data-source="text" type="button">直接输入文字</button></div>
+              <div id="image-pane">
+                <label class="drop-zone" id="drop-zone" for="image-input" tabindex="0"><input id="image-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp" class="visually-hidden"><span id="upload-placeholder"><span class="upload-icon"><svg><use href="#i-image"/></svg></span><strong>拖入文件，或点击多选</strong><small>图片、PDF、TXT、Markdown</small></span></label>
+                <div id="input-files" class="file-queue" aria-label="待处理文件"></div>
+                <div class="page-range-field"><label for="input-page-range">PDF 页码</label><input id="input-page-range" class="material-input" placeholder="全部，或 1-8、1,3,5-8" aria-label="添加内容的 PDF 页码范围"></div>
+                <button id="recognize-button" class="button secondary full" type="button" disabled>批量读取并填入文字</button><p class="helper">单个 PDF 最多 256 MB，每批 512 MB；每次读取最多 20 页。先预览找页码，再读取，笔记与错题无需提前分类。</p><div class="ocr-choice"><label>识别方式 <select data-ocr-backend aria-label="识别方式"><option value="remote">云端识图 · DeepSeek / 已配置服务</option><option value="local">GLM 本机识别 · 无识图 API 费用</option></select></label><span class="ocr-choice-feedback" role="status"></span></div><p class="helper" data-local-ocr-info></p>
+                <div id="ocr-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在批量读取…</span><button class="button stop-button small" type="button" data-stop-request>停止并编辑</button></div>
+              </div>
+              <div class="editor-heading"><label id="draft-label" for="draft">原稿文字与补充说明</label><button id="fill-example" class="text-button" type="button">填入示例</button></div>
+              <textarea id="draft" maxlength="80000" rows="7" autocomplete="off" placeholder="粘贴笔记、题目和解题过程，也可上传文件读取。&#10;&#10;如果要记错题，请提供你的答案 / 步骤；参考答案如有可一起提供。"></textarea>
+              <div class="editor-footer"><span>读取文字插入光标处，可继续修改。</span><span id="draft-count">0 / 80000</span></div>
+              <button id="organize-submit" class="button primary full" type="button"><span>交给 AI 整理</span><svg><use href="#i-arrow"/></svg></button>
+            </section>
+            <section class="panel assistant-panel">
+              <div class="panel-heading"><div><span class="step-label">讨论与整理</span><h2>围绕这份内容</h2></div></div>
+              <div id="organize-messages" class="messages" role="log" aria-label="学习内容整理对话"><div class="empty-chat"><h3>先把内容交给我</h3><p>笔记保留原有顺序，错题逐步引导。<br>信息不清楚时，在这里补充就好。</p></div></div>
+              <div id="organize-suggestions" class="contextual-actions" aria-label="建议追问" hidden><span class="suggestion-caption">建议追问</span><button id="practice-current" class="suggestion-button" type="button">从资料中选一道同类题</button></div>
+              <div id="organize-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在分析与整理…</span><button class="button stop-button" type="button" data-stop-request>停止并编辑</button><small>Esc / Ctrl+C 停止</small></div>
+              <form id="organize-follow-form" class="follow-form" hidden><label for="organize-follow" class="visually-hidden">补充信息</label><textarea id="organize-follow" rows="2" maxlength="24000" placeholder="补充符号、答案或继续提问…（Ctrl+Enter 发送）"></textarea><button class="button primary icon-button" type="submit" aria-label="发送补充信息"><svg><use href="#i-arrow"/></svg></button></form>
+              <details id="organize-trace" class="trace" hidden><summary>查看本次处理过程</summary><div class="trace-content"></div></details>
+            </section>
+          </div>
+          <div id="organize-results" class="inline-results" aria-label="本次已保存内容"></div>
+        </section>
+
+        <section id="view-notebook" class="view" hidden>
+          <div class="library-toolbar"><label class="search-box"><svg><use href="#i-search"/></svg><input id="mistake-search" type="search" placeholder="搜索题目、知识点或错因" aria-label="搜索错题"></label><div class="library-toolbar-actions"><button id="select-mistakes" class="button quiet small" type="button">选择本页</button><button id="add-mistake" class="button primary" type="button">＋ 添加错题</button></div></div>
+          <div id="topic-filters" class="topic-filters" aria-label="按知识点筛选"></div><div id="mistake-list" class="library-list"></div>
+        </section>
+
+        <section id="view-notes" class="view" hidden>
+          <div class="library-toolbar"><label class="search-box"><svg><use href="#i-search"/></svg><input id="note-search" type="search" placeholder="搜索笔记正文或知识点" aria-label="搜索笔记"></label><div class="library-toolbar-actions"><button id="select-notes" class="button quiet small" type="button">选择本页</button><button id="add-note" class="button primary" type="button">＋ 添加笔记</button></div></div>
+          <div id="note-library" class="library-list"></div>
+        </section>
+
+        <section id="view-review" class="view" hidden>
+          <div class="review-layout-bar"><button id="toggle-review-catalog" class="button quiet small" type="button" aria-controls="review-catalog-panel" aria-expanded="true">收起选题</button><span id="review-focus-label">选择范围后开始练习</span></div><div class="review-grid"><section id="review-catalog-panel" class="panel review-setup"><h2>选一个知识点，开始练习</h2><p>资料题目与错题一起归类。点击箭头展开细分标签，再选择想练的范围。</p><label class="review-source-label" for="review-source">题目来源<select id="review-source"><option value="any">资料与错题</option><option value="exercise">仅资料题目</option><option value="mistake">仅错题</option></select></label><div id="review-tree" class="review-tree" role="group" aria-label="知识点和细分标签"></div><div id="review-selection" class="review-selection" role="status" aria-live="polite">正在读取分类…</div><p id="review-load-status" class="review-load-status"></p><button id="start-review" class="button primary full" type="button" disabled>选一道题</button></section><section class="panel assistant-panel review-tutor"><h2>专注这一题</h2><section id="review-question" class="review-question" aria-label="当前练习题" hidden><div class="review-question-heading"><strong>当前题目</strong><button id="toggle-review-question" class="text-button" type="button" aria-expanded="true" aria-controls="review-question-content">收起题干</button></div><div id="review-question-content"><p id="review-question-source"></p><div id="review-question-body" class="message-body"></div></div></section><div id="review-messages" class="messages" role="log" aria-label="复习对话"><div class="empty-chat"><h3>先作答，再看解析</h3><p>选择知识点后，这里会出现练习。</p></div></div><div id="review-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在处理…</span><button class="button stop-button" type="button" data-stop-request>停止并编辑</button></div><form id="review-follow-form" class="follow-form" hidden><label for="review-follow" class="visually-hidden">输入复习答案</label><textarea id="review-follow" rows="2" maxlength="24000" placeholder="输入答案或步骤…（Ctrl+Enter 发送）"></textarea><button class="button primary icon-button" type="submit" aria-label="发送复习答案"><svg><use href="#i-arrow"/></svg></button></form><details id="review-trace" class="trace" hidden><summary>查看本次处理过程</summary><div class="trace-content"></div></details></section></div>
+        </section>
+
+        <section id="view-materials" class="view" hidden>
+          <div id="material-import-summary" class="source-summary" hidden><div><strong>资料已确认入库</strong><p>可在下方选择原题练习。</p></div><button id="import-more-materials" class="button secondary small" type="button">继续导入</button></div>
+          <p id="material-feedback" class="settings-feedback" role="status" hidden></p>
+          <div id="materials-import-area" class="materials-workflow" data-stage="source">
+            <section id="material-source-panel" class="panel material-step">
+              <div class="material-step-heading"><div><span class="step-label">01 / 导入</span><h2>批量导入练习资料</h2><p class="helper">PDF / 图片可直接按原图整理，保留公式结构；无需先转成纯文字。任务在后台运行。</p></div><button id="resume-preview" class="button secondary small" type="button" hidden>返回本批预览 →</button></div>
+              <div class="ocr-choice"><label>识别方式 <select data-ocr-backend aria-label="识别方式"><option value="remote">云端识图 · DeepSeek / 已配置服务</option><option value="local">GLM 本机识别 · 无识图 API 费用</option></select></label><span class="ocr-choice-feedback" role="status"></span></div><p class="helper" data-local-ocr-info></p><div class="material-source-fields"><div><label class="field-label" for="material-source">资料名称 / 来源</label><input id="material-source" class="material-input" maxlength="180" placeholder="例如：线性代数习题集"><label class="field-label" for="material-file">上传 PDF、图片、TXT 或 Markdown（可多选）</label><input id="material-file" class="material-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp"><div id="material-files-preview" class="file-queue" aria-label="所选资料预览"></div><div class="material-page-label"><label class="field-label" for="material-page-range">PDF 页码范围</label><select id="material-range-file" aria-label="选择要预览的PDF" hidden></select><button id="preview-material-range" class="text-button" type="button" disabled>预览所选页</button></div><input id="material-page-range" class="material-input" placeholder="例如 1-{{ material_page_limit }}，或 1,3,5-8"><div class="material-read-actions"><button id="read-material" class="button secondary" type="button" disabled>转成文字（可选）</button><span id="material-read-help" class="material-read-help"><button id="material-read-help-button" class="material-help-dot" type="button" aria-label="转成文字的说明" aria-expanded="false" aria-controls="material-read-help-text" aria-describedby="material-read-help-text">?</button><span id="material-read-help-text" class="material-read-tooltip" role="tooltip" hidden>先将原稿转成可编辑文字，填入文字框，方便核对或复制。整理题目可直接点“直接从原文件整理”，不必先转文字。选择 GLM 时，PDF 与照片在本机读取，识别无需 API；选择云端时使用已配置的图片服务并产生 API 费用。文字层可能丢失根号和分数，因此本机识别保留页面图像。转文字和直接整理每批均最多{{ material_page_limit }}页；继续导入时可保留文件，自动接上后续页码。</span></span></div><div id="material-read-status" class="material-read-status" hidden><span id="material-read-spinner" class="spinner" aria-hidden="true" hidden></span><div class="material-read-copy"><div id="material-read-title" role="status" aria-live="polite"></div><span id="material-read-clock" aria-live="off"></span></div><button id="stop-material-read" class="button stop-button small" type="button" data-stop-request hidden>停止并编辑</button><div id="material-read-track" class="material-read-track" aria-hidden="true" hidden></div></div><p class="helper">单个 PDF 最多 256 MB，每批文件合计 512 MB；转文字与直接整理每批均最多 {{ material_page_limit }} 页。继续导入时可保留文件，自动接续下 {{ material_page_limit }} 页。页面图片会自动控制体积；识别方式可选择云端或本机 GLM；整理与讲解仍需 API。TXT / Markdown 直接读取文字，无需转图。</p></div><div><label class="field-label" for="material-text">补充说明，也可直接粘贴文字资料</label><div id="material-text-container" class="material-text-container"><textarea id="material-text" rows="12" maxlength="80000" placeholder="保留题号、条件、子问和资料中的参考答案。"></textarea><div id="material-text-loading" class="material-text-loading" hidden><span class="spinner" aria-hidden="true"></span><span>正在转成文字，结果会填入这里…</span></div></div><p class="helper">选了文件时，将依据原始页面直接拆题；本框文字作为补充。纯文字资料也可单独提交。</p></div></div>
+              <div id="materials-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span><span id="material-operation-label">正在读取资料…</span></span><button class="button stop-button small" type="button" data-stop-request>停止并编辑</button></div><div class="material-submit-area"><div id="material-submit-status" class="material-read-status" hidden><span id="material-submit-spinner" class="spinner" aria-hidden="true" hidden></span><div class="material-read-copy"><div id="material-submit-title" role="status" aria-live="polite"></div><span id="material-submit-clock" aria-live="off"></span></div><div id="material-submit-track" class="material-read-track" aria-hidden="true" hidden></div></div><div id="material-source-retry" class="material-retry" hidden></div><div class="material-step-footer"><span class="helper"><span id="material-source-model">图片 / PDF 使用已配置的图片模型；确认前不会写入题库。</span></span><button id="parse-material" class="button primary" data-max-pages="{{ material_page_limit }}" type="button" aria-describedby="material-submit-title" disabled>整理成题目预览 →</button></div></div>
+            </section>
+            <section id="material-processing-panel" class="panel material-processing material-step" hidden><span class="processing-symbol"><svg><use href="#i-book"/></svg></span><span class="step-label">02 / 后台整理</span><h2>这一批已经交给 AI</h2><p id="material-processing-label">正在整理，完成后即可核对。</p><p class="helper">可以继续浏览已有资料，或导入下一批。右上角圆形按钮随时查看任务。关闭本机服务会中断任务。</p><div class="source-summary-actions"><button id="view-current-task" class="button secondary" type="button">查看任务</button><button id="material-next-batch" class="button quiet" type="button">继续导入另一批</button></div></section>
+            <section id="material-preview-panel" class="panel material-step" hidden>
+              <div class="material-step-heading"><div><span class="step-label">03 / 核对</span><h2>核对后入库 <small id="preview-total"></small></h2><p id="preview-batch-source" class="helper"></p><div id="preview-batch-provenance" class="batch-provenance"></div></div><div class="preview-heading-actions"><button id="open-batch-ai" class="button secondary small" type="button">请 AI 修正</button><button id="material-back" class="button quiet small" type="button">← 返回原文</button></div></div>
+              <div id="material-preview-retry" class="material-retry" hidden></div><div class="preview-controls"><span id="preview-selection-count" role="status"></span><div><button id="preview-select-all" class="text-button" type="button">全选本批</button><button id="preview-select-none" class="text-button" type="button">取消全选</button></div></div>
+              <div class="review-warning-row"><details id="material-warnings" class="material-warnings" hidden><summary>查看需要核对的识别疑点</summary><ul></ul></details><button id="fix-material-warnings" class="button secondary small" type="button">对照原页修正疑点 →</button></div>
+<div id="preview-pagination" class="question-pagination" aria-label="核对题目分页"></div>
+<div id="material-review-layout" class="material-review-layout">
+  <div id="exercise-preview" class="exercise-preview-grid" tabindex="0" aria-label="本批待核对题目，可在区域内滚动"></div>
+  <dialog id="batch-ai-dialog" class="batch-correction review-workspace" aria-labelledby="batch-ai-title">
+    <div class="batch-correction-header">
+      <div><h3 id="batch-ai-title">题目与原页对照</h3><p id="batch-ai-scope" class="helper">本批题目</p><p id="review-save-feedback" class="review-save-feedback" role="status" hidden></p></div>
+      <div class="review-header-actions"><button id="stop-batch-ai" class="button stop-button small" type="button" data-stop-request hidden>停止</button><button id="review-confirm-exercises" class="button primary small" type="button" title="保存本批所有已勾选题目，包含其他分页的选择">添加所选题目入库（0）</button><button id="close-batch-ai" class="button quiet small" type="button" aria-label="关闭 AI 修正">返回核对列表</button></div>
+    </div>
+    <div class="review-source-toolbar"><button id="show-batch-origin" class="text-button" type="button" aria-controls="material-origin-dialog" aria-expanded="false">查看原页</button><button id="close-material-origin" class="text-button" type="button" aria-controls="material-origin-dialog" aria-expanded="true" hidden>收起原页</button></div>
+    <div class="review-workspace-content">
+      <section class="review-left" aria-label="自由浏览题目和连续修正对话">
+        <div class="review-list-panel"><div class="review-list-heading"><strong>待核对题目</strong><span>自由滚动，点题卡上的 AI 修正切换当前题</span></div><div id="review-browse-location" role="status"></div><div id="review-pagination-port"></div><div id="review-list-port"></div></div>
+        <button id="review-height-divider" class="review-height-divider" type="button" role="separator" aria-orientation="horizontal" aria-label="调整题目与 AI 修正高度，上下方向键调整，回车恢复默认" aria-controls="review-list-port review-conversation" aria-valuemin="20" aria-valuemax="80" aria-valuenow="58" title="上下拖动调整；双击恢复默认"><span aria-hidden="true">↕ 上下拖动调整</span></button>
+        <div id="review-conversation" class="review-conversation">
+          <div class="review-chat-heading"><h3>AI 修正</h3><span id="review-current-target"></span></div>
+          <div class="batch-correction-body">
+            <details class="review-ai-reference"><summary>AI 参考范围与识别疑点</summary><p class="helper">右侧翻页仅供查看；需要缩小 AI 参考范围时，在这里选择。</p><div class="correction-source"><label for="batch-ai-page">参考原页</label><select id="batch-ai-page"><option value="">本批原页</option></select></div><div id="review-scope-warnings" class="record-body"></div></details>
+            <div id="batch-ai-question" class="correction-question"></div>
+            <div id="batch-ai-messages" class="correction-messages" role="log" aria-label="修正对话"></div>
+            <div id="batch-ai-feedback" role="status"></div><div id="batch-ai-changes" class="batch-ai-changes"></div>
+          </div>
+          <div class="batch-correction-footer">
+            <form id="batch-ai-form" class="batch-ai-form"><label class="visually-hidden" for="batch-ai-input">修改要求</label><div class="review-compose-row"><textarea id="batch-ai-input" rows="2" maxlength="4000" placeholder="指出本题需要核对的位置…"></textarea><button id="batch-ai-send" class="button primary small" type="submit">发送</button></div><details class="review-attachment"><summary>补充局部图（可选）</summary><label class="correction-attachment" for="batch-ai-image">仅在原页不清楚时补充<input id="batch-ai-image" type="file" accept="image/jpeg,image/png,image/webp"></label></details></form>
+            <div id="batch-ai-actions" class="source-summary-actions" hidden><button id="apply-batch-changes" class="button primary small" type="button">确认应用到预览</button><button id="discard-batch-changes" class="button quiet small" type="button">放弃建议</button></div>
+          </div>
+        </div>
+      </section>
+      <button id="review-divider" class="review-divider" type="button" role="separator" aria-orientation="vertical" aria-valuemin="35" aria-valuemax="62" aria-valuenow="46" aria-label="调整题目与原页宽度，左右方向键调整" title="左右拖动调整；双击恢复默认"></button>
+      <section id="material-origin-dialog" class="review-origin" aria-labelledby="material-origin-title" hidden>
+        <div class="review-origin-header"><h3 id="material-origin-title">原始页面</h3></div>
+        <div class="origin-navigation"><button id="origin-previous" type="button" class="button quiet small">上一页</button><select id="origin-page-select" aria-label="选择本批原页"></select><button id="origin-next" type="button" class="button quiet small">下一页</button><select id="origin-zoom" aria-label="原页缩放"><option value="100">适合宽度</option><option value="125">125%</option><option value="160">160%</option><option value="200">200%</option></select></div>
+        <div class="origin-location-actions"><button id="origin-question-page" class="text-button" type="button">本题原页</button><button id="origin-answer-page" class="text-button" type="button">已知答案页</button><label><input id="origin-follow" type="checkbox" checked>跟随左侧浏览</label></div>
+        <p id="material-origin-caption" class="helper"></p>
+        <div id="material-origin-scroll" class="review-origin-scroll" tabindex="0" aria-label="原页独立滚动区域"><div id="origin-page-canvas" class="origin-page-canvas"><img id="material-origin-image" alt="当前题目的原始页面"><div id="origin-hit-layer" class="origin-hit-layer"></div></div><p id="origin-image-error" class="helper" role="status" hidden></p></div><p id="origin-hit-status" role="status"></p>
+      </section>
+    </div>
+  </dialog>
+</div>
+
+              <div class="material-step-footer preview-footer"><span class="helper">原题、子问与公式确认无误后，再写入题库。</span><button id="confirm-exercises" class="button primary" type="button" hidden>确认所选题目并入库</button></div>
+
+            </section>
+          </div>
+          <div class="material-library-heading"><h2>资料题库 <small id="exercise-count">0 道题</small></h2><button id="export-exercises" class="button quiet small" type="button" disabled>导出题库</button></div>
+          <div class="library-toolbar"><label class="search-box"><svg><use href="#i-search"/></svg><input id="exercise-search" type="search" placeholder="搜索题目、来源或知识点" aria-label="搜索练习题"></label><div class="library-toolbar-actions"><button id="select-exercises" class="button quiet small" type="button">选择本页</button><button id="add-exercise" class="button secondary small" type="button">＋ 添加题目</button></div></div><div class="exercise-filters"><label>试卷 / 题组<select id="exercise-paper-filter"><option value="">全部归属</option></select></label><label>细题型<select id="exercise-tag-filter"><option value="">全部细题型</option></select></label><button id="organize-exercise-selection" class="button quiet small" type="button">设置所选题目归属 / 标签</button></div><div id="exercise-library" class="library-list"></div><div id="library-pagination" class="question-pagination" aria-label="资料题库分页"></div>
+        </section>
+
+        <section id="view-analysis" class="view" hidden>
+          <button id="analysis-back" class="text-button" type="button">← 返回内容库</button><div class="analysis-layout"><aside class="panel"><section class="analysis-shortcuts" aria-label="可选提问建议"><h2>可以这样问</h2><p class="helper">点击填入问题，修改后再发送。</p><div class="analysis-suggestion-list"><button class="button secondary small" type="button" data-analysis-prompt="merge">合并去重</button><button class="button secondary small" type="button" data-analysis-prompt="compare">分析共同点</button><button class="button secondary small" type="button" data-analysis-prompt="outline">梳理知识点</button></div></section><h3 class="analysis-sources-title">本次所选内容</h3><div id="analysis-sources"></div></aside><section class="panel assistant-panel"><h2>问问 AI</h2><div id="analysis-messages" class="messages" role="log" aria-label="所选内容分析"><div class="empty-chat"><p>已带上所选内容。输入你的问题，或从左侧选择建议。</p></div></div><div id="analysis-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在分析所选内容…</span><button class="button stop-button" type="button" data-stop-request>停止并编辑</button></div><form id="analysis-follow-form" class="follow-form"><label for="analysis-follow" class="visually-hidden">分析要求</label><textarea id="analysis-follow" rows="3" maxlength="24000" placeholder="你想问什么？也可以先选择左侧建议，再修改问题。"></textarea><button class="button primary icon-button" type="submit" aria-label="发送分析要求"><svg><use href="#i-arrow"/></svg></button></form><div id="analysis-proposals"></div><details id="analysis-trace" class="trace" hidden><summary>查看本次处理过程</summary><div class="trace-content"></div></details></section></div>
+        </section>
+        <section id="selection-tray" class="selection-tray" aria-label="跨页已选内容" hidden><div><strong id="selection-count">已选 0 条</strong><button id="show-selection" class="text-button" type="button">查看已选</button><button id="clear-selection" class="text-button" type="button">清空</button></div><div class="selection-actions"><button id="export-selection" class="button secondary small" type="button">导出所选</button><button id="delete-selection" class="button danger-quiet small" type="button">删除所选</button><button id="analyze-selection" class="button primary small" type="button">交给 AI →</button></div></section>
+
+      </div>
+    </main>
+  </div>
+
+  <section id="material-task-popover" class="task-popover" aria-label="后台整理任务" hidden><div class="task-popover-heading"><div><h2>资料整理任务</h2><small>完成后打开核对，再确认入库</small></div><button id="close-material-tasks" class="text-button" type="button" aria-label="关闭任务列表">关闭</button></div><p id="material-task-error" class="helper" role="status" hidden></p><div id="material-task-list" class="task-list"></div><p class="task-footnote">任务在本机服务运行时处理，预览保留约 2 小时。</p></section>
+
+  <dialog id="exercise-edit-dialog" class="record-dialog" aria-labelledby="exercise-edit-title"><div class="record-dialog-header"><h2 id="exercise-edit-title">校正练习题</h2><button id="close-exercise-edit" class="text-button" type="button">关闭</button></div><div id="exercise-edit-body" class="record-dialog-body"></div><div class="record-dialog-footer"><p id="exercise-edit-feedback" role="status"></p><button id="cancel-exercise-edit" class="button quiet" type="button">取消</button><button id="save-exercise-edit" class="button primary" type="button">确认保存</button></div></dialog>
+  <dialog id="selection-export-dialog" class="record-dialog" aria-labelledby="selection-export-title">
+    <header class="record-dialog-header"><h2 id="selection-export-title">导出所选内容</h2><button id="close-selection-export" class="button quiet small" type="button">关闭</button></header>
+    <div class="record-dialog-body"><p id="selection-export-summary" class="proposal-summary"></p><label class="field-label" for="selection-export-format">导出格式</label><select id="selection-export-format" class="material-input"><option value="md">Markdown 合集</option><option value="pdf">PDF 合集</option><option value="json">JSON 原始数据</option></select><p class="helper">笔记与错题按勾选顺序导出；错题包含题目、原答案、正确答案与错因。原记录保留，导出不调用 AI。</p><div id="selection-export-sources"></div><p id="selection-export-feedback" class="record-feedback" role="status"></p></div>
+    <footer class="record-dialog-footer"><button id="stop-selection-export" class="button stop-button" type="button" hidden>停止导出</button><button id="download-selection" class="button primary" type="button">下载合集</button></footer>
+  </dialog>
+  <dialog id="file-preview-dialog" class="record-dialog file-preview-dialog" aria-labelledby="file-preview-title">
+    <header class="record-dialog-header"><h2 id="file-preview-title">文件预览</h2><button id="close-file-preview" class="button quiet small" type="button">关闭</button></header>
+    <div id="pdf-preview-controls" class="pdf-preview-controls"><button id="preview-previous" class="button secondary small" type="button">上一页</button><label>第 <input id="preview-page-number" type="number" min="1" value="1" aria-label="跳转到文件页码"> <span id="preview-page-total">页</span></label><button id="preview-next" class="button secondary small" type="button">下一页</button><button id="preview-from-here" class="text-button" type="button">选中当前页</button></div>
+    <p id="file-preview-status" class="preview-status" role="status"></p><div class="record-dialog-body file-preview-canvas"><img id="file-preview-image" alt="文件页面预览" hidden><pre id="file-preview-text" hidden></pre></div>
+    <footer class="record-dialog-footer"><div id="preview-range-controls"><label for="preview-range">要读取的文件页码</label><input id="preview-range" class="material-input" placeholder="如 5-12 或 5,8-10"><small>预览可浏览整本；每批读取最多 20 页。</small></div><button id="use-preview-pages" class="button primary" type="button">使用这些页码</button></footer>
+  </dialog>
+
+  <dialog id="record-dialog" class="record-dialog" aria-labelledby="record-dialog-title"><header class="record-dialog-header"><h2 id="record-dialog-title">核对操作</h2><button id="close-record-dialog" class="button quiet small" type="button">关闭</button></header><div id="record-dialog-body" class="record-dialog-body"></div><footer class="record-dialog-footer"><button id="cancel-record-operation" class="button secondary" type="button">取消</button><button id="confirm-record-operation" class="button primary" type="button">确认</button></footer></dialog>
+  <dialog id="assistant-rules" aria-labelledby="rules-title">
+    <div class="settings-header rules-header"><h2 id="rules-title">助手的提示词与规则</h2><button id="close-rules" class="rules-close" type="button" aria-label="关闭助手规则">关闭</button></div>
+    <div id="rules-scroll" class="rules-body" tabindex="0" aria-label="规则正文">
+      <p class="material-intro">默认一次只引导一步；当前题的追问不读取历史错题；练习题从已确认资料选取。下面是实际发送给模型的规则。选题来源和工具范围另有程序约束。</p>
+      <div id="rules-content"></div>
+    </div>
+  </dialog>
+  <dialog id="model-settings" aria-labelledby="settings-title">
+    <div class="settings-header"><div><p class="eyebrow">YOUR MODEL, YOUR CHOICE</p><h2 id="settings-title">模型设置</h2></div><button id="close-settings" class="text-button" aria-label="关闭设置">关闭</button></div>
+    <p class="settings-intro">配置一次，之后自动读取。整理与复习、图片识别可以分别选择模型。</p>
+    <form id="settings-form">
+      <label for="settings-base">API 服务地址</label><input id="settings-base" type="url" required placeholder="https://api.deepseek.com" autocomplete="off">
+      <label for="settings-key">API Key</label><input id="settings-key" type="password" autocomplete="new-password" placeholder="首次使用请输入 API Key" spellcheck="false"><small id="key-hint">密钥仅用于本机服务调用，不在页面回显。</small>
+      <div class="settings-model-grid"><div><label for="settings-model">整理与复习模型</label><select id="settings-model"><option value="deepseek-v4-pro">DeepSeek Pro · 整理与推理</option><option value="deepseek-flash">DeepSeek Flash · 快速处理</option><option value="custom">自定义模型名称</option></select><input id="custom-model" aria-label="自定义整理模型名称" placeholder="填写服务支持的模型名称" hidden></div><div><label for="settings-ocr-model">云端识图模型（选择云端时使用）</label><select id="settings-ocr-model"><option value="deepseek-flash">DeepSeek Flash · 图片转写</option><option value="custom">自定义图片模型</option></select><input id="custom-ocr-model" aria-label="自定义图片模型名称" placeholder="填写支持图片输入的模型" hidden></div></div>
+      <details class="settings-advanced"><summary>图片识别使用不同的服务地址或 Key</summary><label for="settings-ocr-base">图片服务地址（留空使用主地址）</label><input id="settings-ocr-base" type="url" autocomplete="off" placeholder="与主服务相同则留空"><label for="settings-ocr-key">图片服务 API Key（同一服务可留空）</label><input id="settings-ocr-key" type="password" autocomplete="new-password" placeholder="留空保留已有配置或使用主 Key"></details>
+      <p id="settings-storage" class="helper"></p><p id="settings-feedback" class="settings-feedback" role="status" hidden></p>
+      <div class="settings-actions"><button id="test-settings" class="button secondary" type="button">测试文字连接</button><button id="save-settings" class="button primary" type="submit">保存并使用</button></div>
+      <p class="helper">测试连接会发送一条简短的文字请求；保存配置本身不调用模型。</p>
+    </form>
+  </dialog>
+<script src="{{ url_for('static', filename='ocr-progress.js') }}?v=20261026-review-focus-v20"></script>
+<script src="{{ url_for('static', filename='ocr-choice.js') }}?v=20261026-review-focus-v20"></script>
+<script src="{{ url_for('static', filename='review.js') }}?v=20261026-review-focus-v20"></script>
+</body>
+</html>

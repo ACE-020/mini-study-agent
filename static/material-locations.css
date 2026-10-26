@@ -1,0 +1,52 @@
+/* Navigation stays attached to the list; source identity outranks topic tags. */
+#preview-pagination{padding:8px 10px;margin:0 0 10px;background:#f5f1ff;border:1px solid #ded5ef;border-radius:8px;justify-content:space-between}
+#preview-pagination .button{min-height:36px;font-size:12px;padding:8px 12px;border:1px solid #bbaadc;background:#fff;color:#584491;font-weight:600}
+#preview-pagination .button:last-of-type{background:#6a55bd;color:#fff;border-color:#6a55bd}
+#preview-pagination .button:disabled{background:#eeeaf4;color:#8c839a;border-color:#ddd6e6}
+#preview-pagination select{font-size:12px;font-weight:600}
+#review-pagination-port #preview-pagination{margin:0;border:0;border-radius:0;background:transparent}
+#review-pagination-port{order:0;border-bottom:1px solid #ded5ef;background:#f5f1ff;padding:8px 10px}
+#review-pagination-port .question-pagination{justify-content:space-between;gap:8px;padding:0}
+#review-pagination-port .question-pagination .button{min-height:36px;font-size:12px;padding:8px 12px;border:1px solid #bbaadc;background:#fff;color:#584491;font-weight:600}
+#review-pagination-port .question-pagination .button:last-of-type{background:#6a55bd;color:#fff;border-color:#6a55bd}
+#review-pagination-port .question-pagination .button:disabled{background:#eeeaf4;color:#8c839a;border-color:#ddd6e6}
+#review-pagination-port .question-pagination select{font-size:12px;font-weight:600;min-height:36px;max-width:220px;padding:8px;background:#fff;border-color:#c6b8e1}
+.review-list-heading{padding:10px 14px 6px}
+.review-list-heading>span{display:none}
+#review-browse-location{font-size:12px;color:#514167;padding:0 14px 8px;line-height:1.7;overflow-wrap:anywhere}
+.review-workspace .exercise-preview-top{align-items:center;flex-wrap:wrap;gap:8px}
+.original-question-number{font-size:13px;font-weight:600;padding:3px 8px;border-radius:6px;background:#ece6fa;color:#503b85}
+.exercise-preview-top .exercise-check{font-size:11px;color:#70667d;font-weight:400}
+.exercise-preview-top .topic-tag{font-size:11px}
+.exercise-editor .exercise-metadata{margin:6px 0 12px;line-height:1.7;font-size:12px}
+.exercise-editor .paper-label{flex-basis:100%;color:#524269;font-size:12px}
+.exercise-editor.is-browsing{box-shadow:inset 3px 0 #bc921f}
+.review-issue{padding:12px 0;border-bottom:1px solid #e7e0ed}
+.issue-location-link{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;margin-bottom:7px;border-radius:6px;border:1px solid #cfc0e5;color:#59408d;background:#f5f0fe;font-size:12px;line-height:1.7;text-align:left;text-decoration:underline;text-underline-offset:3px}
+.issue-location-link:hover{background:#e9e0f7;border-color:#aa91ce}
+.issue-unlocated{font-size:11px;color:#897b8f}
+.review-warning-list{list-style:none;padding:0!important}
+.review-issue>.record-body{font-size:12px;line-height:1.85}
+.origin-page-canvas{position:relative;width:100%;flex-shrink:0}
+.review-origin #material-origin-image{width:100%!important}
+.origin-hit-layer{position:absolute;inset:0;pointer-events:none}
+.origin-question-hit{position:absolute;pointer-events:auto;cursor:pointer;border:2px solid transparent;background:transparent;padding:0;margin:0;border-radius:3px;min-width:0;min-height:0}
+.origin-question-hit:hover{background:#f4ca3c20;border-color:#bd9229b0}
+.origin-question-hit.is-active{background:#f4ca3c18;border-color:#b28b19;box-shadow:0 0 0 1px #fff5}
+.origin-hit-label{display:none;position:absolute;top:0;left:0;max-width:100%;padding:0 4px;background:#ffefaf;color:#684b08;font-size:11px;line-height:1.5;transform:translateY(-100%);white-space:nowrap}
+.origin-question-hit:hover .origin-hit-label,.origin-question-hit.is-active .origin-hit-label{display:block}
+#origin-hit-status{flex-shrink:0;font-size:11px;line-height:1.6;color:#76694b;background:#fffbef;padding:6px 12px;margin:0;border-top:1px solid #ece5d3}
+@media(max-width:760px){#review-pagination-port{padding:7px}#review-pagination-port .question-pagination{gap:5px}#review-pagination-port .question-pagination .button{padding:7px;font-size:11px}#review-pagination-port .question-pagination select{max-width:148px;min-width:0;font-size:11px}#review-browse-location{font-size:11px}.original-question-number{font-size:12px}.issue-location-link{font-size:11px}}
+
+/* Keep reversible warning controls attached to the list, with one shared undo. */
+.review-issues-toolbar{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;background:#fff;font-size:12px;color:#756781;border-bottom:1px solid #eee8f4}
+.material-warnings .review-issues-toolbar{background:#fff9ed}
+.review-issue-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.review-issue-locations{min-width:0;flex:1;display:flex;align-items:flex-start;flex-wrap:wrap;gap:0 6px}
+.issue-hide-button,.issue-restore-button{flex-shrink:0;min-height:30px;padding:3px 8px;font-size:12px;border-radius:6px;cursor:pointer;line-height:1.8}
+.issue-hide-button{border:1px solid #dfd7e9;background:#fff;color:#766783}
+.issue-hide-button:hover{background:#f1ebf9;border-color:#bcabd5;color:#513b79}
+.issue-restore-button{border:1px solid #cfc0e5;background:#f5f0fe;color:#59408d;white-space:nowrap}
+.issue-restore-button:hover{background:#e9e0f7}
+.issue-hide-button:focus-visible,.issue-restore-button:focus-visible{outline:2px solid #7961ca;outline-offset:2px}
+@media(max-width:760px){.review-issues-toolbar{font-size:11px;gap:6px}.issue-hide-button,.issue-restore-button{font-size:11px}}

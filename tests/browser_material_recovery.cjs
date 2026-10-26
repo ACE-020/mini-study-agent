@@ -1,0 +1,86 @@
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const base=process.env.STUDY_QA_URL||'http://127.0.0.1:8766';
+function makePdf(count){
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','', '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],kids=[];
+ for(let i=0;i<count;i++){
+  const id=objects.length+1,stream='BT /F1 16 Tf 30 400 Td (Exercise '+(i+1)+': Find the derivative of x squared, for all real x.) Tj ET';
+  kids.push(id+' 0 R');objects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 500] /Resources << /Font << /F1 3 0 R >> >> /Contents '+(id+1)+' 0 R >>');
+  objects.push('<< /Length '+Buffer.byteLength(stream)+' >>\nstream\n'+stream+'\nendstream');
+ }
+ objects[1]='<< /Type /Pages /Count '+count+' /Kids ['+kids.join(' ')+'] >>';
+ let text='%PDF-1.4\n',offsets=[0];objects.forEach((o,i)=>{offsets.push(Buffer.byteLength(text));text+=(i+1)+' 0 obj\n'+o+'\nendobj\n';});
+ const start=Buffer.byteLength(text);text+='xref\n0 '+(objects.length+1)+'\n0000000000 65535 f \n';
+ for(const offset of offsets.slice(1))text+=String(offset).padStart(10,'0')+' 00000 n \n';
+ return Buffer.from(text+'trailer\n<< /Size '+(objects.length+1)+' /Root 1 0 R >>\nstartxref\n'+start+'\n%%EOF\n');
+}
+(async()=>{const browser=await chromium.launch({headless:true,channel:'chrome'});try{
+ fs.writeFileSync('tmp/recovery-pages.pdf',makePdf(7));
+ const page=await browser.newPage({viewport:{width:1366,height:960}}),errors=[],submissions=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/materials/jobs'))submissions.push(r);});
+ await page.goto(base+'/#materials');await page.waitForFunction(()=>state.configured&&materialState.loaded);
+ const source='恢复验收-'+Date.now();
+ await page.locator('#material-file').setInputFiles('tmp/recovery-pages.pdf');
+ await page.locator('#material-source').fill(source);await page.locator('#material-text').fill(source);
+ await page.locator('#material-page-range').fill('1-5');await page.locator('#preview-material-range').click();
+ await page.waitForFunction(()=>document.querySelector('#file-preview-image').naturalWidth>0&&!document.querySelector('#file-preview-image').hidden);
+ assert.equal(await page.locator('#preview-page-number').inputValue(),'1');
+ await page.locator('#preview-page-number').fill('5');await page.locator('#preview-page-number').dispatchEvent('change');
+ assert.equal(await page.locator('#preview-next').isDisabled(),true);
+ await page.locator('#close-file-preview').click();
+ await page.locator('#material-files-preview [data-file-preview]').click();
+ await page.locator('#preview-page-number').fill('7');await page.locator('#preview-page-number').dispatchEvent('change');
+ assert.equal(await page.locator('#preview-page-number').inputValue(),'7');
+ await page.locator('#close-file-preview').click();
+ await page.locator('#parse-material').click();await page.waitForFunction(()=>materialState.stage==='preview'&&materialState.currentJob?.status==='failed');
+ const id=await page.evaluate(()=>materialState.currentJob.id),key=await page.evaluate(()=>materialState.currentJob.source_files[0].id);
+ assert.equal(await page.locator('.exercise-editor').count(),2);
+ assert.match(await page.locator('#material-preview-retry').textContent(),/JSON/);
+ assert.match(await page.locator('#material-preview-retry').textContent(),/第3页.*第4页/);
+ // Switching tasks restores the file associated with this task, not the last upload.
+ await page.evaluate(()=>resetMaterialDraft());
+ await page.locator('#material-source').fill('另一个独立任务');await page.locator('#material-text').fill('整理普通文字题');
+ await page.locator('#parse-material').click();await page.locator('#material-preview-panel').waitFor({state:'visible'});
+ await page.locator('#material-tasks-button').click();
+ await page.locator('.task-row').filter({hasText:source}).getByRole('button',{name:'打开核对'}).click();
+ await page.locator('#material-back').click();
+ assert.equal(await page.locator('#material-file').evaluate(e=>e.files[0].name),'recovery-pages.pdf');
+ // Reload deliberately discards browser File objects; server-retained originals remain usable.
+ await page.reload();await page.waitForFunction(()=>state.configured&&materialState.loaded);
+ await page.locator('#material-tasks-button').click();
+ await page.locator('.task-row').filter({hasText:source}).getByRole('button',{name:'打开核对'}).click();
+ await page.locator('#material-back').click();
+ assert.equal(await page.locator('#material-file').evaluate(e=>e.files.length),0);
+ assert.equal(await page.locator('#material-file').isVisible(),false);
+ assert.match(await page.locator('#material-files-preview').textContent(),/recovery-pages.pdf.*已保留/);
+ assert.equal(await page.locator('#parse-material').isEnabled(),true);
+ assert.equal(await page.locator('#read-material').isEnabled(),true);
+ await page.locator('#material-page-range').fill('3-4');await page.locator('#preview-material-range').click();
+ await page.waitForFunction(()=>!document.querySelector('#file-preview-image').hidden);
+ assert.equal(await page.locator('#preview-page-number').inputValue(),'3');
+ assert.equal(await page.locator('#preview-previous').isDisabled(),true);
+ await page.locator('#preview-next').click();assert.equal(await page.locator('#preview-page-number').inputValue(),'4');
+ assert.equal(await page.locator('#preview-next').isDisabled(),true);
+ await page.waitForFunction(()=>!document.querySelector('#file-preview-image').hidden&&document.querySelector('#file-preview-status').textContent.includes('第 4 页'));
+ await page.screenshot({path:'tmp/material-recovery-selected-pages.png'});
+ await page.locator('#close-file-preview').click();
+ await page.locator('#material-source-retry [data-material-retry]').click();
+ await page.waitForFunction(()=>materialState.stage==='preview'&&materialState.currentJob.status==='ready');
+ assert.equal(await page.evaluate(()=>materialState.currentJob.id),id);
+ assert.equal(await page.locator('.exercise-editor').count(),3);
+ await page.locator('#confirm-exercises').click();await page.locator('#material-import-summary').waitFor({state:'visible'});
+ page.once('dialog',d=>d.accept());await page.locator('#import-more-materials').click();
+ assert.equal(await page.locator('#material-page-range').inputValue(),'6-7');
+ assert.match(await page.locator('#material-files-preview').textContent(),/已保留/);
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.locator('#preview-material-range').click();await page.waitForFunction(()=>!document.querySelector('#file-preview-image').hidden);
+ assert.equal(await page.locator('#preview-page-number').inputValue(),'6');
+ await page.locator('#close-file-preview').click();await page.setViewportSize({width:1366,height:960});
+ await page.locator('#parse-material').click();await page.locator('#material-preview-panel').waitFor({state:'visible'});
+ assert.deepEqual(await page.evaluate(()=>materialState.currentJob.metadata.files[0].pages),[6,7]);
+ const payload=submissions.at(-1).postDataJSON();assert.deepEqual(payload.source_file_ids,[key]);
+ assert.deepEqual(errors,[]);
+ console.log('PASS: selected-range and full previews, partial-result recovery, original file restored per task and after reload, retry without reupload, automatic continuation from cached original, mobile range preview.');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

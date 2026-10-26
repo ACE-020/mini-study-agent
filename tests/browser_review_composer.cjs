@@ -1,0 +1,50 @@
+const assert=require('node:assert/strict');
+const path=require('node:path');
+const {chromium}=require('playwright');
+const OUT=process.env.REVIEW_QA_OUTPUT||require('node:os').tmpdir();
+const image={name:'handwritten.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=','base64')};
+(async()=>{const browser=await chromium.launch({headless:true,channel:'chrome'});try{
+ const page=await browser.newPage({viewport:{width:1520,height:1080}}),errors=[];
+ page.on('pageerror',error=>errors.push(error.message));await page.goto('http://127.0.0.1:8791/#review');
+ await page.waitForFunction(()=>reviewState.catalog?.total===5&&!reviewState.loading);
+ await page.locator('[data-review-toggle="极限"]').click();await page.locator('[data-review-tag="等价无穷小"]').click();await page.locator('#start-review').click();
+ await page.waitForFunction(()=>!state.busy&&reviewState.question?.question.includes('L1'));
+ assert.ok(await page.locator('#review-question-body .katex').count());
+ const question=await page.locator('#review-question').boundingBox();
+ for(let i=0;i<5;i++){
+  await page.locator('#review-follow').fill('请检查下一步 '+i);await page.locator('#review-follow').press('Control+Enter');await page.waitForFunction(()=>!state.busy);
+ }
+ await page.evaluate(()=>{document.querySelector('#review-messages').scrollTop=0;});
+ const first=await page.locator('#review-question').boundingBox();await page.evaluate(()=>{const log=document.querySelector('#review-messages');log.scrollTop=log.scrollHeight;});
+ const last=await page.locator('#review-question').boundingBox();assert.ok(Math.abs(first.y-last.y)<1);assert.ok(Math.abs(question.height-last.height)<1);
+ await page.locator('#toggle-review-question').click();assert.equal(await page.locator('#review-question-content').isVisible(),false);
+ await page.locator('#review-follow').fill('再检查一步');await page.locator('#review-follow').press('Control+Enter');await page.waitForFunction(()=>!state.busy);
+ assert.equal(await page.locator('#review-question-content').isVisible(),false);await page.locator('#toggle-review-question').click();
+ const quick=page.locator('[data-chat-model="review"]');await quick.selectOption('deepseek-flash');await page.waitForFunction(()=>!state.busy&&state.chatModel==='deepseek-flash');
+ assert.equal(await page.locator('[data-chat-model="organize"]').inputValue(),'deepseek-flash');
+ const countBefore=await (await page.request.get('http://127.0.0.1:8791/qa/model-calls')).json();
+ await page.locator('#open-settings').click();await page.waitForFunction(()=>!settingsPending);assert.equal(await page.locator('#settings-model').inputValue(),'deepseek-flash');
+ await page.locator('#settings-model').selectOption('deepseek-v4-pro');await page.locator('#save-settings').click();await page.waitForFunction(()=>!settingsPending&&state.chatModel==='deepseek-v4-pro');await page.locator('#close-settings').click();
+ assert.equal((await (await page.request.get('http://127.0.0.1:8791/qa/model-calls')).json()).count,countBefore.count);
+ await page.locator('#review-image-input').setInputFiles(image);assert.equal(await page.locator('#review-attachments img').count(),1);assert.equal(await page.locator('#review-follow').inputValue(),'');
+ assert.equal((await (await page.request.get('http://127.0.0.1:8791/qa/model-calls')).json()).ocr_calls,countBefore.ocr_calls);
+ await page.locator('#review-follow-form [type=submit]').click();await page.waitForFunction(()=>!state.busy&&answerAttachments.length===0);
+ let calls=await (await page.request.get('http://127.0.0.1:8791/qa/model-calls')).json();assert.equal(calls.ocr_calls,countBefore.ocr_calls+1);assert.match(JSON.stringify(calls.last_context),/手写测试标记/);
+ assert.equal(await page.locator('#review-messages .chat-image-preview').count(),1);
+ assert.doesNotMatch(await page.locator('#view-review').textContent(),/手写测试标记/);assert.equal(await page.locator('#review-follow').inputValue(),'');
+ // Failed submission keeps both the draft and attachment; retry does not create another upload.
+ await page.locator('#review-image-input').setInputFiles({...image,name:'retry.png'});await page.locator('#review-follow').fill('检查我乘的共轭式');
+ await page.route('**/api/chat',async route=>{await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify({ok:false,error:'模拟暂时失败，原图保留。'})});await page.unroute('**/api/chat');});
+ await page.locator('#review-follow-form [type=submit]').click();await page.waitForFunction(()=>!state.busy);
+ assert.equal(await page.locator('#review-attachments img').count(),1);assert.equal(await page.locator('#review-follow').inputValue(),'检查我乘的共轭式');
+ await page.locator('#review-follow-form [type=submit]').click();await page.waitForFunction(()=>!state.busy&&answerAttachments.length===0);
+ calls=await (await page.request.get('http://127.0.0.1:8791/qa/model-calls')).json();assert.equal(calls.ocr_calls,countBefore.ocr_calls+2);
+ await page.locator('#review-follow').scrollIntoViewIfNeeded();
+ await page.screenshot({path:path.join(OUT,'review-composer-desktop.png')});
+ console.log('Desktop geometry:',await page.evaluate(()=>Object.fromEntries(['#review-question','#review-messages','#review-follow-form'].map(selector=>{const r=document.querySelector(selector).getBoundingClientRect();return [selector,{top:r.top,bottom:r.bottom,height:r.height}];}))));
+ await page.setViewportSize({width:390,height:844});await page.locator('#review-follow').scrollIntoViewIfNeeded();
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+ assert.ok((await page.locator('#review-messages').boundingBox()).height>120);
+ await page.screenshot({path:path.join(OUT,'review-composer-mobile.png')});
+ assert.deepEqual(errors,[]);console.log('PASS pinned formulas/scroll/collapse, both model controls, image-only answers, hidden OCR, retry draft+image retention, mobile layout.');
+}finally{await browser.close();}})().catch(error=>{console.error(error);process.exit(1);});
