@@ -16,7 +16,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe web.py --open
 ```
 
-在网页右上角“模型设置”保存服务地址、API Key 和模型。也可先运行 `python main.py --demo save --trace` 体验不调用 API 的工具循环。完整源码检查：
+在网页右上角“模型设置”保存服务地址、API Key 和模型。也可先运行 `.\.venv\Scripts\python.exe main.py --demo save --trace` 体验不调用 API 的工具循环。完整源码检查：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
