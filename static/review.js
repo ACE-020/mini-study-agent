@@ -59,11 +59,20 @@ function renderReviewTree(){
  updateReviewButtons();
 }
 async function loadReviewCatalog(){
- if(reviewState.loading)return reviewState.loading;
+ if(reviewState.loading){await reviewState.loading.catch(()=>{});if(reviewState.catalog?.source===reviewState.selection.source)return;}
  const source=reviewState.selection.source;reviewState.error="";
  reviewState.loading=api("/api/review/catalog?source="+encodeURIComponent(source));updateReviewButtons();
  try{reviewState.catalog=await reviewState.loading;}catch(error){reviewState.error=error.message;}
  finally{reviewState.loading=null;renderReviewTree();}
+}
+async function practiceMistakeTopic(topic){
+ if(state.busy||hasQueuedChat("review"))return;
+ reviewState.selection={category:"",tag:"",source:"any"};$("#review-source").value="any";showView("review");
+ await loadReviewCatalog();
+ const filter=reviewState.catalog?.topic_filters?.[topic];
+ if(!filter||reviewState.error){notify(reviewState.error||"这个知识点已不在题库中，请刷新错题本后重试。",true,"review");return;}
+ reviewState.expanded.add(filter.category);chooseReviewNode(filter.category,filter.tag);
+ await startReviewSelection();
 }
 async function startReviewSelection(){
  if(state.busy||!reviewSelectionCount()||(typeof hasQueuedChat==="function"&&hasQueuedChat("review")))return;

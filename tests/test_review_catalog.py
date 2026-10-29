@@ -51,6 +51,20 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn('隐藏',json.dumps(picked,ensure_ascii=False));self.assertNotIn('user_answer',picked)
         self.assertIsNone(self.tools.review_catalog().pick('行列式与矩阵',source='exercise')['exercise'])
 
+    def test_notebook_topics_map_to_the_current_category_and_alias_tag(self):
+        self.tools.save_mistake(**{**MISTAKE, 'topic':'洛必达法则', 'question':'别名知识点测试'})
+        filters=self.tools.review_catalog().tree()['topic_filters']
+        self.assertEqual(filters['行列式'], {'category':'行列式与矩阵', 'tag':'行列式'})
+        self.assertEqual(filters['洛必达法则'], {'category':'极限', 'tag':'洛必达法'})
+        self.assertEqual(filters['极限'], {'category':'极限', 'tag':''})
+
+    def test_legacy_topic_practice_cycles_through_every_matching_question(self):
+        previous=None;seen=[]
+        for _ in range(5):
+            exercise=self.tools.bank.pick('极限',exclude_id=previous)['exercise']
+            seen.append(exercise['number']);previous=exercise['id']
+        self.assertEqual(seen,['1','2','4','1','2'])
+
     def test_pick_and_tree_do_not_modify_json(self):
         before={p.name:p.read_bytes() for p in self.root.glob('*.json')}
         self.tools.review_catalog().tree();self.tools.review_catalog().pick('极限')
@@ -127,6 +141,29 @@ class ReviewWebTests(unittest.TestCase):
         follow=self.browser.post('/api/chat',json={'view':'review','message':'我不会，下一步呢？'})
         self.assertEqual(follow.status_code,200,follow.json)
         self.assertIn('L1',json.dumps(self.model.requests[-1],ensure_ascii=False))
+
+    def test_repeated_tree_and_chat_picks_visit_the_whole_range(self):
+        questions=[]
+        for _ in range(4):
+            response=self.browser.post('/api/review/select',json={'category':'极限','source':'exercise'})
+            self.assertEqual(response.status_code,200,response.json)
+            questions.append(response.json['current_question']['question'])
+        self.assertEqual(len(set(questions[:3])),3)
+        self.assertEqual(questions[3],questions[0])
+        response=self.browser.post('/api/chat',json={'view':'review','message':'换一道题'})
+        self.assertEqual(response.status_code,200,response.json)
+        self.assertEqual(response.json['current_question']['question'],questions[1])
+        self.assertEqual(self.model.requests,[])
+
+    def test_notebook_returns_all_records_without_changing_tool_limits(self):
+        self.tools._write_records('mistakes.json',[
+            {**MISTAKE,'id':f'mistake-{i}','question':f'合成错题 {i}','created_at':'2026-10-30T00:00:00+00:00'}
+            for i in range(205)])
+        response=self.browser.get('/api/mistakes')
+        self.assertEqual(response.json['data']['total'],205)
+        self.assertEqual(len(response.json['data']['mistakes']),205)
+        self.assertIn('mistake-204',{item['id'] for item in response.json['data']['mistakes']})
+        self.assertEqual(len(self.tools.get_mistakes(limit=20)['mistakes']),20)
 
     def test_can_select_mistake_without_a_matching_material_question(self):
         result=self.browser.post('/api/review/select',json={'category':'行列式与矩阵','source':'mistake'})

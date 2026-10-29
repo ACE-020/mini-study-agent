@@ -448,11 +448,13 @@ class QuestionBank:
 
     def pick(self, topic, exclude_id=None, exercise_id=None, tags=None):
         topic_key = topic.casefold().strip()
-        matches = [item for item in self.read() if item["id"] != exclude_id and (exercise_id is None or item["id"] == exercise_id) and (
+        matches = [item for item in self.read() if (exercise_id is None or item["id"] == exercise_id) and (
             topic_key in item["topic"].casefold() or item["topic"].casefold() in topic_key)]
         if tags:
             required=set(clean_tags(tags))
             matches=[item for item in matches if required.issubset(set(item.get("tags",[])))]
+        start = next((i+1 for i, item in enumerate(matches) if item["id"] == exclude_id), 0)
+        matches = [item for item in matches[start:] + matches[:start] if item["id"] != exclude_id]
         chosen = matches[0] if matches else None
         # 选题工具和模型上下文只拿题干；答案仅由用户在资料页主动展开。
         exercise = {key: value for key, value in chosen.items() if key != "answer"} if chosen else None

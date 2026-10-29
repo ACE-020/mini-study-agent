@@ -38,6 +38,13 @@ function makePdf(count){
  assert.equal(await page.locator('.exercise-editor').count(),2);
  assert.match(await page.locator('#material-preview-retry').textContent(),/JSON/);
  assert.match(await page.locator('#material-preview-retry').textContent(),/第3页.*第4页/);
+ // Completed questions from a failed batch can be saved before retry; retain the task and source.
+ const beforePartial=await page.request.get(base+'/api/exercises').then(r=>r.json());
+ await page.locator('#confirm-exercises').click();await page.locator('#material-import-summary').waitFor({state:'visible'});
+ const partialSaved=await page.request.get(base+'/api/exercises').then(r=>r.json());
+ assert.equal(partialSaved.total,beforePartial.total+2);
+ const retainedJob=await page.request.get(base+'/api/materials/jobs/'+id).then(r=>r.json());
+ assert.equal(retainedJob.job.status,'failed');assert.equal(retainedJob.job.source_files[0].id,key);
  // Switching tasks restores the file associated with this task, not the last upload.
  await page.evaluate(()=>resetMaterialDraft());
  await page.locator('#material-source').fill('另一个独立任务');await page.locator('#material-text').fill('整理普通文字题');
@@ -70,6 +77,7 @@ function makePdf(count){
  assert.equal(await page.evaluate(()=>materialState.currentJob.id),id);
  assert.equal(await page.locator('.exercise-editor').count(),3);
  await page.locator('#confirm-exercises').click();await page.locator('#material-import-summary').waitFor({state:'visible'});
+ const afterRetry=await page.request.get(base+'/api/exercises').then(r=>r.json());assert.equal(afterRetry.total,beforePartial.total+3);
  page.once('dialog',d=>d.accept());await page.locator('#import-more-materials').click();
  assert.equal(await page.locator('#material-page-range').inputValue(),'6-7');
  assert.match(await page.locator('#material-files-preview').textContent(),/已保留/);

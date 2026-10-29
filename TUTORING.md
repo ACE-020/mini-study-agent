@@ -34,7 +34,7 @@ review_catalog.py 对 data/exercises.json 与 data/mistakes.json 做只读汇总
 
 GET /api/review/catalog 只返回分类、标签和计数。POST /api/review/select 接收 category、tag、source（any/exercise/mistake），不依赖模型决定范围；题目与工具日志不含参考答案、旧作答或错因。
 
-执行 `python -m unittest discover -s tests -p 'test_*.py'` 检查源码。当前共 227 项自动检查，另有分类树及完整工作区浏览器验收。tests/test_review_catalog.py 覆盖资料独有知识点、精确标签、错题选择、答案隔离、换题清理上下文、明确生成和本地无 API 选题。
+执行 `python -m unittest discover -s tests -p 'test_*.py'` 检查源码。当前共 233 项自动检查，另有分类树及完整工作区浏览器验收。tests/test_review_catalog.py 覆盖资料独有知识点、精确标签、错题选择、答案隔离、换题清理上下文、明确生成和本地无 API 选题。
 
 网页测试使用 tests/serve_review_fixture.py（临时数据、假模型，端口8791）与 tests/browser_review_tree.cjs，覆盖展开、键盘、来源切换、选题、连续追问、明确生成及手机布局。没有新增付费请求；没有对真实模型生成题的数学正确性作保证。体验包未更新。
 

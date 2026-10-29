@@ -60,8 +60,12 @@ class ReviewCatalog:
     def tree(self, source="any"):
         records = self.matches(source=source)
         groups = {}
+        topic_filters = {}
         for kind, item in records:
             category = category_for(item["topic"])
+            topic = ALIASES.get(item["topic"].strip(), item["topic"].strip())
+            topic_filters[item["topic"]] = {"category": category,
+                "tag": topic if topic != category and len(topic) <= 40 else ""}
             node = groups.setdefault(category, {"category": category, "label": category, "count": 0, "tags": {}})
             node["count"] += 1
             for tag in facets_for(item):
@@ -73,12 +77,15 @@ class ReviewCatalog:
             nodes.append({k: v for k, v in node.items() if k != "tags"} | {
                 "children": [{"tag": tag, "label": tag, "count": count} for tag, count in sorted(node["tags"].items())]})
         return {"categories": nodes, "total": len(records),
-                "counts": {kind: sum(k == kind for k, _ in records) for kind in ("exercise", "mistake")}, "source": source}
+                "counts": {kind: sum(k == kind for k, _ in records) for kind in ("exercise", "mistake")},
+                "source": source, "topic_filters": topic_filters}
 
     def pick(self, category="", tag="", source="any", exclude_id=None, exercise_id=None):
         records = self.matches(category, tag, source)
         if exercise_id:
             records = [(kind, item) for kind, item in records if kind+":"+item["id"] == exercise_id]
+        start = next((i+1 for i, (kind, item) in enumerate(records) if kind+":"+item["id"] == exclude_id), 0)
+        records = records[start:] + records[:start]
         choices = [(kind, item) for kind, item in records if kind+":"+item["id"] != exclude_id]
         # An explicit re-pick can redo the only available question.
         chosen = (choices or records)[0] if records else None

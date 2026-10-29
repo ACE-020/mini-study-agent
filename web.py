@@ -59,7 +59,7 @@ class LockedTools:
 
     def list_mistakes(self):
         with self.lock:
-            return self.local.get_mistakes(limit=200)
+            return self.local.get_mistakes(limit=None)
 
     def review_catalog(self):
         with self.lock:
@@ -712,7 +712,8 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             if payload.get("job_id"):
                 get_state()
                 job = jobs.get(session["sid"], payload["job_id"])
-                if job["status"] != "ready":
+                partial = job["status"] in ("failed", "cancelled") and bool((job.get("result") or {}).get("exercises"))
+                if job["status"] != "ready" and not partial:
                     raise ValueError("请等待该批次整理完成后再入库。")
                 provenance = {**job["metadata"], "source": job["source"], "submitted_at": job["created_at"],
                               "documents": [{k:v for k,v in doc.items() if k in ("source","page","page_index")}
