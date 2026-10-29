@@ -30,6 +30,7 @@ function updateReviewButtons(){
  const selected=reviewState.selection;
  $("#review-selection").textContent=[selected.category||"全部知识点",selected.tag].filter(Boolean).join(" / ")+" · "+reviewSelectionCount()+" 道";
  $("#review-load-status").textContent=reviewState.error||(reviewState.loading?"正在读取分类…":reviewState.catalog?.total?"分类来自已收录的资料题目和错题；细分标签可交叉归类。":"暂无可练习的题目，可先添加学习内容或导入练习资料。");
+ $("#review-load-status").hidden=Boolean(!reviewState.error&&!reviewState.loading&&reviewState.catalog?.total);
 }
 function chooseReviewNode(category,tag=""){
  reviewState.selection={...reviewState.selection,category,tag};renderReviewTree();[...$("#review-tree").querySelectorAll("[data-review-category]")].find(node=>node.dataset.reviewCategory===category&&(node.dataset.reviewTag||"")===tag)?.focus({preventScroll:true});

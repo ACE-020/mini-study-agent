@@ -1,3 +1,4 @@
+const {navigate,utility,materialText}=require('./task_ui_helpers.cjs');
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const base=process.env.STUDY_QA_URL||'http://127.0.0.1:8766';
@@ -22,7 +23,7 @@ function makePdf(count){
  await page.goto(base+'/#materials');await page.waitForFunction(()=>state.configured&&materialState.loaded);
  const source='恢复验收-'+Date.now();
  await page.locator('#material-file').setInputFiles('tmp/recovery-pages.pdf');
- await page.locator('#material-source').fill(source);await page.locator('#material-text').fill(source);
+ await page.locator('#material-source').fill(source);await materialText(page,source);
  await page.locator('#material-page-range').fill('1-5');await page.locator('#preview-material-range').click();
  await page.waitForFunction(()=>document.querySelector('#file-preview-image').naturalWidth>0&&!document.querySelector('#file-preview-image').hidden);
  assert.equal(await page.locator('#preview-page-number').inputValue(),'1');
@@ -40,14 +41,14 @@ function makePdf(count){
  assert.match(await page.locator('#material-preview-retry').textContent(),/第3页.*第4页/);
  // Completed questions from a failed batch can be saved before retry; retain the task and source.
  const beforePartial=await page.request.get(base+'/api/exercises').then(r=>r.json());
- await page.locator('#confirm-exercises').click();await page.locator('#material-import-summary').waitFor({state:'visible'});
+ await page.locator('#confirm-exercises').click();await page.locator('#material-library-panel').waitFor({state:'visible'});
  const partialSaved=await page.request.get(base+'/api/exercises').then(r=>r.json());
  assert.equal(partialSaved.total,beforePartial.total+2);
  const retainedJob=await page.request.get(base+'/api/materials/jobs/'+id).then(r=>r.json());
  assert.equal(retainedJob.job.status,'failed');assert.equal(retainedJob.job.source_files[0].id,key);
  // Switching tasks restores the file associated with this task, not the last upload.
  await page.evaluate(()=>resetMaterialDraft());
- await page.locator('#material-source').fill('另一个独立任务');await page.locator('#material-text').fill('整理普通文字题');
+ await page.locator('#material-source').fill('另一个独立任务');await materialText(page,'整理普通文字题');
  await page.locator('#parse-material').click();await page.locator('#material-preview-panel').waitFor({state:'visible'});
  await page.locator('#material-tasks-button').click();
  await page.locator('.task-row').filter({hasText:source}).getByRole('button',{name:'打开核对'}).click();
@@ -76,9 +77,9 @@ function makePdf(count){
  await page.waitForFunction(()=>materialState.stage==='preview'&&materialState.currentJob.status==='ready');
  assert.equal(await page.evaluate(()=>materialState.currentJob.id),id);
  assert.equal(await page.locator('.exercise-editor').count(),3);
- await page.locator('#confirm-exercises').click();await page.locator('#material-import-summary').waitFor({state:'visible'});
+ await page.locator('#confirm-exercises').click();await page.locator('#material-library-panel').waitFor({state:'visible'});
  const afterRetry=await page.request.get(base+'/api/exercises').then(r=>r.json());assert.equal(afterRetry.total,beforePartial.total+3);
- page.once('dialog',d=>d.accept());await page.locator('#import-more-materials').click();
+ page.once('dialog',d=>d.accept());await page.locator('#focus-next-material').click();
  assert.equal(await page.locator('#material-page-range').inputValue(),'6-7');
  assert.match(await page.locator('#material-files-preview').textContent(),/已保留/);
  await page.setViewportSize({width:390,height:844});

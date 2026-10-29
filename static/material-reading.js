@@ -33,6 +33,7 @@ async function readMaterialText(){
  const operation={id:crypto.randomUUID(),type:"materials-read",view:"materials",stopping:false},started=Date.now();
  const elapsed=()=>Math.floor((Date.now()-started)/1000);
  const renderProgress=()=>materialReadFeedback("working",operation.stopping?"正在停止转文字，请稍候…":(operation.backendMessage||"正在转成文字，完成后会填入文字框"),elapsed());
+ const supplement=$(".material-supplement");if(supplement)supplement.open=true;
  state.operation=operation;setBusy(true);materialFeedback("");renderProgress();
  materialReadTimer=setInterval(renderProgress,1000);
  try{
@@ -42,7 +43,7 @@ async function readMaterialText(){
   if(operation.stopping){const error=new Error("已停止转文字，原有文字保留。");error.cancelled=true;throw error;}
   if(typeof result.text!=="string"||!result.text.trim())throw new Error("没有提取到可用文字，原有内容已保留。可检查原页，或直接从原文件整理题目。");
   if(result.text.length>80000)throw new Error("提取结果超过 80000 字，原有内容已保留，请缩小页码范围。");
-  $("#material-text").value=result.text;$("#material-text").scrollTop=0;
+  $("#material-text").value=result.text;$("#material-text").scrollTop=0;const details=$(".material-supplement");if(details)details.open=true;
   materialState.activeJob=null;renderExercisePreview([]);
   const message="已读取 "+(result.pages?.length||1)+" 页 / 份，"+result.text.length+" 字，已填入文字框。";
   materialReadFeedback("success",message+" 核对后再整理，尚未入库。",elapsed());updateMaterialDraft();
