@@ -80,15 +80,15 @@ class ReviewCatalog:
                 "counts": {kind: sum(k == kind for k, _ in records) for kind in ("exercise", "mistake")},
                 "source": source, "topic_filters": topic_filters}
 
-    def pick(self, category="", tag="", source="any", exclude_id=None, exercise_id=None):
+    def pick(self, category="", tag="", source="any", exclude_id=None, exercise_id=None, exclude_ids=None):
         records = self.matches(category, tag, source)
         if exercise_id:
             records = [(kind, item) for kind, item in records if kind+":"+item["id"] == exercise_id]
         start = next((i+1 for i, (kind, item) in enumerate(records) if kind+":"+item["id"] == exclude_id), 0)
         records = records[start:] + records[:start]
-        choices = [(kind, item) for kind, item in records if kind+":"+item["id"] != exclude_id]
-        # An explicit re-pick can redo the only available question.
-        chosen = (choices or records)[0] if records else None
+        excluded=set(exclude_ids or [])
+        choices = [(kind, item) for kind, item in records if kind+":"+item["id"] != exclude_id and kind+":"+item["id"] not in excluded]
+        chosen = choices[0] if choices else None
         public = None
         if chosen:
             kind, item = chosen
@@ -97,4 +97,5 @@ class ReviewCatalog:
                       "source": item.get("source", "已确认资料") if kind == "exercise" else "我的错题本",
                       "number": item.get("number", ""), "paper": item.get("paper", "")}
         return {"topic": category or "全部知识点", "exercise": public, "matched": len(records),
+                "remaining":len(choices), "exhausted":bool(records) and not choices,
                 "selection": validate_filter(category, tag, source)}

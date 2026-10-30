@@ -10,6 +10,7 @@ function shouldAutoOpenMaterialPreview(){return taskFocus.material!=="library";}
 function taskBeforeViewChange(view){if(taskFocus.reading&&view!==state.view)closeRecordReading();}
 function setCorrectionFocus(open){const dialog=$("#batch-ai-dialog");dialog.classList.toggle("correction-reading",!open);const button=$("#toggle-correction-chat");if(button){button.textContent=open?"收起 AI 修正":"请 AI 修正";button.setAttribute("aria-expanded",String(open));}if(open&&dialog.open)$("#batch-ai-input").focus({preventScroll:true});}
 function decorateRecordFocus(card,kind,record){
+ if(typeof decorateRecordProgress==="function")decorateRecordProgress(card,kind,record);
  const button=taskButton("专心阅读",()=>openRecordReading(card,record));button.classList.add("record-focus-button");button.dataset.recordFocus=record.id;
  card.querySelector(".record-card-top")?.append(button);
 }

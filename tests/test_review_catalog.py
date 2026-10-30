@@ -149,10 +149,12 @@ class ReviewWebTests(unittest.TestCase):
             self.assertEqual(response.status_code,200,response.json)
             questions.append(response.json['current_question']['question'])
         self.assertEqual(len(set(questions[:3])),3)
-        self.assertEqual(questions[3],questions[0])
+        self.assertEqual(questions[3],questions[2])
+        self.assertIn("本轮已经全部出过",response.json["answer"])
         response=self.browser.post('/api/chat',json={'view':'review','message':'换一道题'})
         self.assertEqual(response.status_code,200,response.json)
-        self.assertEqual(response.json['current_question']['question'],questions[1])
+        self.assertEqual(response.json['current_question']['question'],questions[2])
+        self.assertIn("本轮已经全部出过",response.json["answer"])
         self.assertEqual(self.model.requests,[])
 
     def test_notebook_returns_all_records_without_changing_tool_limits(self):

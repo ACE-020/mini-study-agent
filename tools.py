@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import tempfile
 from review_catalog import ReviewCatalog
+from review_progress import ReviewProgress
 from materials import QuestionBank
 from classification import clean_tags
 from note_exports import NoteExporter
@@ -39,7 +40,7 @@ SCHEMAS = [
     tool_schema("get_mistakes", "仅在用户明确要求历史错题复习时读取错题，确定复习方向。当前题的追问和巩固不调用。",
                 {"topic": TEXT, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, []),
     tool_schema("pick_exercise", "从已确认的现有题目中选原题，不返回答案。不编题。默认只选资料；复习分类可用 category、source_kind（any/exercise/mistake）和一个细分 tags，涵盖资料与错题。",
-                {"topic": TEXT, "exclude_id": TEXT, "exercise_id": TEXT, "category": {**TEXT, "maxLength":120}, "source_kind": {**TEXT, "enum":["any","exercise","mistake"]}, "tags":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":40}}}, ["topic"]),
+                {"topic": TEXT, "exclude_id": TEXT, "exclude_ids": {"type":"array","maxItems":10000,"items":{"type":"string","minLength":1,"maxLength":120}}, "exercise_id": TEXT, "category": {**TEXT, "maxLength":120}, "source_kind": {**TEXT, "enum":["any","exercise","mistake"]}, "tags":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":40}}}, ["topic"]),
     tool_schema("save_note", "保存按默认笔记规则整理的完整 Markdown 笔记，并导出 Markdown/PDF。相同内容不重复入库，不覆盖旧笔记。",
                 {"topic": {**TEXT, "maxLength": 120}, "content": {**TEXT, "maxLength": 24000}}, ["topic", "content"]),
     tool_schema("delete_records", "为用户选中的笔记/错题/练习题生成待确认删除清单，不立即删除。网页再次确认后程序才执行。items 只能包含本轮所选记录。",
@@ -56,6 +57,7 @@ class LocalTools:
     def __init__(self, data_dir, note_exporter=None):
         self.data_dir = Path(data_dir)
         self.bank = QuestionBank(self.data_dir)
+        self.progress = ReviewProgress(self.data_dir)
         self.note_exporter = note_exporter or NoteExporter(self.data_dir)
         self.library = LibraryStore(self)
         self.library.recover()
@@ -153,12 +155,12 @@ class LocalTools:
     def review_catalog(self):
         return ReviewCatalog(self.bank.read(), self._read("mistakes.json"))
 
-    def pick_exercise(self, topic, exclude_id=None, exercise_id=None, tags=None, category=None, source_kind="exercise"):
+    def pick_exercise(self, topic, exclude_id=None, exercise_id=None, tags=None, category=None, source_kind="exercise", exclude_ids=None):
         if category is not None or source_kind != "exercise":
             if tags and len(tags)>1:
                 raise ValueError("复习分类一次请选择一个细分标签。")
-            return self.review_catalog().pick("" if category == "全部知识点" else category or topic, tags[0] if tags else "", source_kind, exclude_id, exercise_id)
-        return self.bank.pick(topic, exclude_id, exercise_id, tags)
+            return self.review_catalog().pick("" if category == "全部知识点" else category or topic, tags[0] if tags else "", source_kind, exclude_id, exercise_id, exclude_ids)
+        return self.bank.pick(topic, exclude_id, exercise_id, tags, exclude_ids)
 
     def execute(self, name, arguments, cancel_token=None):
         """只执行白名单内的函数；工具错误也作为结果返回模型。"""
@@ -175,6 +177,9 @@ class LocalTools:
             for key, value in params.items():
                 if key == "items":
                     params[key] = validate_refs(value)
+                elif key == "exclude_ids":
+                    if not isinstance(value,list) or len(value)>10000 or any(not isinstance(v,str) or not v or len(v)>120 for v in value):
+                        raise ValueError("本轮已出题目列表无效。")
                 elif key == "tags":
                     params[key] = clean_tags(value)
                 elif key == "limit":

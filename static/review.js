@@ -81,10 +81,16 @@ async function startReviewSelection(){
  const operation={id:crypto.randomUUID(),type:"chat",view:"review",stopping:false};state.operation=operation;setBusy(true);notify("",false,"review");
  try{
   const result=await api("/api/review/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selection,request_id:operation.id})});
-  resetReviewAttachments();
-  setReviewQuestion(result.current_question);
-  state.chats.review=[{role:"user",text:"从「"+title+"」选一道题，先不给答案。",selectionRequest:true},{role:"assistant",text:result.answer,selectedQuestionId:result.current_question?.id}];
-  state.traces.review=result.events||[];$("#review-follow").value="";renderChat("review");renderTrace("review");
+  if(result.question_selected){
+   resetReviewAttachments();setReviewQuestion(result.current_question);
+   state.chats.review=[{role:"user",text:"从「"+title+"」选一道题，先不给答案。",selectionRequest:true},{role:"assistant",text:result.answer,selectedQuestionId:result.current_question?.id}];
+   $("#review-follow").value="";
+  }else{
+   state.chats.review.push({role:"assistant",text:result.answer});
+   if(!reviewState.question)notify(result.answer,false,"review");
+  }
+  if(typeof syncReviewProgress==="function")syncReviewProgress(result.review);
+  state.traces.review=result.events||[];renderChat("review");renderTrace("review");
  }catch(error){notify(error.message,!error.cancelled,"review");}
  finally{state.operation=null;setBusy(false);updateReviewButtons();}
 }

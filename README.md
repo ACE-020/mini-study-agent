@@ -22,7 +22,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
-当前源码为 v20，已通过 233 项检查。个人题库和笔记、Key、虚拟环境、本机模型权重、参考书、实验原稿与缓存均不随源码分发。GLM 本机识别需另行安装运行环境和权重，见 [本机 OCR 说明](LOCAL_OCR.md)；源码不包含旧 Windows exe 体验包。完整上手流程见 [网页指南](WEB_GUIDE.md)，开发接手见 [教学与上下文说明](TUTORING.md)。
+当前源码已通过 263 项检查。复习支持本轮不重复选题，以及按次保存的做题时间、提示情况和错因；说明见 [做题记录](REVIEW_HISTORY.md)。长期复习日期与自动提醒尚未实现。个人题库和笔记、Key、虚拟环境、本机模型权重、参考书、实验原稿与缓存均不随源码分发。GLM 本机识别需另行安装运行环境和权重，见 [本机 OCR 说明](LOCAL_OCR.md)；源码不包含旧 Windows exe 体验包。完整上手流程见 [网页指南](WEB_GUIDE.md)，开发接手见 [教学与上下文说明](TUTORING.md)。
 
 ## Windows 免 Python 体验版
 
