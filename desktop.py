@@ -185,8 +185,6 @@ def main(arguments=None):
     server = app = None
     stopped = False
     try:
-        from settings import load_user_environment
-        load_user_environment()
         from web import create_app
         from werkzeug.serving import make_server
         from flask import jsonify

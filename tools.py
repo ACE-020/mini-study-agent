@@ -9,55 +9,116 @@ from pathlib import Path
 import re
 import tempfile
 from review_catalog import ReviewCatalog
-from review_progress import ReviewProgress
 from materials import QuestionBank
 from classification import clean_tags
 from note_exports import NoteExporter
 from library import LibraryStore, validate_refs
 
-
+#返回json
 def tool_schema(name, description, properties, required):
-    return {"type": "function", "function": {
-        "name": name, "description": description,
-        "parameters": {"type": "object", "properties": properties,
-                       "required": required, "additionalProperties": False},
-    }}
+    return {"type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": False
+                    },
+                }
+            }
 
 
+#相关参数
 TEXT = {"type": "string", "minLength": 1, "maxLength": 8000}
+#TEXT：通用非空字符串 schema，长度 1–8000。被多个工具复用。
 MISTAKE_FIELDS = ("question", "user_answer", "correct_answer", "reason", "topic")
-REFS = {"type": "array", "minItems": 1, "maxItems": 30, "items": {
-    "type": "object", "properties": {"kind": {"type": "string", "enum": ["note", "mistake", "exercise"]},
-                                       "id": {"type": "string", "minLength": 1, "maxLength": 120}},
-    "required": ["kind", "id"], "additionalProperties": False}}
+#MISTAKE_FIELDS：错题记录的五个业务字段，元组保证顺序稳定。
+    #question 原题
+    #user_answer 用户原答案
+    #correct_answer 参考答案
+    #reason 错误原因
+    #topic 知识点
+REFS = {"type": "array",
+        "minItems": 1,
+        "maxItems": 30, 
+        "items":{
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["note", "mistake", "exercise"]
+                    },
+                "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                    }
+                },
+            "required": ["kind", "id"],
+            "additionalProperties": False 
+            }
+        }
+#工具定义列表：这是暴露给模型的工具清单
 SCHEMAS = [
-    tool_schema("search_notes", "按简短关键词检索本地高数笔记，返回相关内容；可用空格分隔多个关键词。",
-                {"query": TEXT}, ["query"]),
+    tool_schema("search_notes",
+                "按简短关键词检索本地高数笔记，返回相关内容；可用空格分隔多个关键词。",
+                {"query": TEXT},
+                ["query"]),
     tool_schema("save_mistake", "保存有依据的错题；已有相同题目和错误答案时不重复保存。"
                 "question 是原题，user_answer 是用户原答案，correct_answer 是参考答案，"
                 "reason 是错误原因，topic 是简短知识点（例如：导数）。",
                 {name: TEXT for name in MISTAKE_FIELDS}, list(MISTAKE_FIELDS)),
-    tool_schema("get_mistakes", "仅在用户明确要求历史错题复习时读取错题，确定复习方向。当前题的追问和巩固不调用。",
+    tool_schema("get_mistakes",
+                "仅在用户明确要求历史错题复习时读取错题，确定复习方向。当前题的追问和巩固不调用。",
                 {"topic": TEXT, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, []),
-    tool_schema("pick_exercise", "从已确认的现有题目中选原题，不返回答案。不编题。默认只选资料；复习分类可用 category、source_kind（any/exercise/mistake）和一个细分 tags，涵盖资料与错题。",
-                {"topic": TEXT, "exclude_id": TEXT, "exclude_ids": {"type":"array","maxItems":10000,"items":{"type":"string","minLength":1,"maxLength":120}}, "exercise_id": TEXT, "category": {**TEXT, "maxLength":120}, "source_kind": {**TEXT, "enum":["any","exercise","mistake"]}, "tags":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":40}}}, ["topic"]),
-    tool_schema("save_note", "保存按默认笔记规则整理的完整 Markdown 笔记，并导出 Markdown/PDF。相同内容不重复入库，不覆盖旧笔记。",
-                {"topic": {**TEXT, "maxLength": 120}, "content": {**TEXT, "maxLength": 24000}}, ["topic", "content"]),
-    tool_schema("delete_records", "为用户选中的笔记/错题/练习题生成待确认删除清单，不立即删除。网页再次确认后程序才执行。items 只能包含本轮所选记录。",
+    tool_schema("pick_exercise",
+                "从已确认的现有题目中选原题，不返回答案。不编题。默认只选资料；复习分类可用 category、source_kind（any/exercise/mistake）和一个细分 tags，涵盖资料与错题。",
+                {"topic": TEXT,
+                 "exclude_id": TEXT,
+                 "exercise_id": TEXT,
+                 "category": {**TEXT,
+                              "maxLength":120
+                              },
+                 "source_kind": {
+                     **TEXT, "enum":["any","exercise","mistake"]
+                     },
+                 "tags":{
+                     "type":"array",
+                     "maxItems":8,
+                     "items":{
+                         "type":"string",
+                         "minLength":1,
+                         "maxLength":40
+                         }
+                     }
+                 },
+                ["topic"]),
+    tool_schema("save_note",
+                "保存按默认笔记规则整理的完整 Markdown 笔记，并导出 Markdown/PDF。相同内容不重复入库，不覆盖旧笔记。",
+                {"topic":
+                 {**TEXT, "maxLength": 120},
+                 "content": {**TEXT, "maxLength": 24000}},
+                ["topic", "content"]),
+    tool_schema("delete_records",
+                "为用户选中的笔记/错题/练习题生成待确认删除清单，不立即删除。网页再次确认后程序才执行。items 只能包含本轮所选记录。",
                 {"items": REFS}, ["items"]),
-    tool_schema("merge_records", "将本轮所选内容去重整理成一份笔记预览，保留独有条件、推导和错因。只生成待确认方案，不立即写入或删除原记录。",
-                {"items": REFS, "topic": {**TEXT, "maxLength": 120}, "content": {**TEXT, "maxLength": 24000}},
+    tool_schema("merge_records",
+                "将本轮所选内容去重整理成一份笔记预览，保留独有条件、推导和错因。只生成待确认方案，不立即写入或删除原记录。",
+                {"items": REFS,
+                 "topic": {**TEXT, "maxLength": 120},
+                 "content": {**TEXT, "maxLength": 24000}},
                 ["items", "topic", "content"]),
 ]
 
 
 class LocalTools:
-    supports_cancellation = True
+    supports_cancellation = True #声明本工具集支持取消令牌
 
     def __init__(self, data_dir, note_exporter=None):
-        self.data_dir = Path(data_dir)
-        self.bank = QuestionBank(self.data_dir)
-        self.progress = ReviewProgress(self.data_dir)
+        self.data_dir = Path(data_dir) #存储路径
+        self.bank = QuestionBank(self.data_dir) #初始化题库 QuestionBank，传入数据目录。
         self.note_exporter = note_exporter or NoteExporter(self.data_dir)
         self.library = LibraryStore(self)
         self.library.recover()
@@ -155,12 +216,12 @@ class LocalTools:
     def review_catalog(self):
         return ReviewCatalog(self.bank.read(), self._read("mistakes.json"))
 
-    def pick_exercise(self, topic, exclude_id=None, exercise_id=None, tags=None, category=None, source_kind="exercise", exclude_ids=None):
+    def pick_exercise(self, topic, exclude_id=None, exercise_id=None, tags=None, category=None, source_kind="exercise"):
         if category is not None or source_kind != "exercise":
             if tags and len(tags)>1:
                 raise ValueError("复习分类一次请选择一个细分标签。")
-            return self.review_catalog().pick("" if category == "全部知识点" else category or topic, tags[0] if tags else "", source_kind, exclude_id, exercise_id, exclude_ids)
-        return self.bank.pick(topic, exclude_id, exercise_id, tags, exclude_ids)
+            return self.review_catalog().pick("" if category == "全部知识点" else category or topic, tags[0] if tags else "", source_kind, exclude_id, exercise_id)
+        return self.bank.pick(topic, exclude_id, exercise_id, tags)
 
     def execute(self, name, arguments, cancel_token=None):
         """只执行白名单内的函数；工具错误也作为结果返回模型。"""
@@ -177,9 +238,6 @@ class LocalTools:
             for key, value in params.items():
                 if key == "items":
                     params[key] = validate_refs(value)
-                elif key == "exclude_ids":
-                    if not isinstance(value,list) or len(value)>10000 or any(not isinstance(v,str) or not v or len(v)>120 for v in value):
-                        raise ValueError("本轮已出题目列表无效。")
                 elif key == "tags":
                     params[key] = clean_tags(value)
                 elif key == "limit":
