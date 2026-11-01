@@ -14,15 +14,23 @@ from math_text import normalize_math_markdown
 from runtime_paths import frozen
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent#导入项目根目录
 
 
 class NoteExporter:
     def __init__(self, data_dir):
         self.root = (Path(data_dir) / "note_exports").resolve()
+        #导出文件全部放在note_exports文件夹下
 
     def paths(self, record):
         title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", record["topic"]).strip(" .")[:36] or "学习笔记"
+        #record["topic"]：笔记主题，用作人类可读的文件名部分。
+        #正则： [<>:"/\\|?*\x00-\x1f]：剔除 Windows 文件名非法字符：
+        #< > : " / \ | ? *
+        #\x00-\x1f：所有控制字符（不可见，跨平台都不安全）。
+        #.strip(" .")：去掉首尾空格和点。Windows 不允许文件名以点或空格结尾。
+        #[:36]：截断到 36 字符，避免路径过长（Windows MAX_PATH 限制），也给哈希部分留空间。
+        #or "学习笔记"：如果清洗后为空串，用默认名兜底，避免出现 -<hash>.md 这种怪文件
         key = hashlib.sha256(record["id"].encode()).hexdigest()[:16]
         base = self.root / f"{title}-{key}"
         return {kind: base.with_name(base.name + "." + kind) for kind in ("md", "pdf")}
