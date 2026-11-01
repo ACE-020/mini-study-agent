@@ -13,24 +13,30 @@ from urllib.parse import urlsplit
 from runtime_paths import default_settings_path
 
 
-ROOT = Path(__file__).resolve().parent
-DEFAULT_BASE = "https://api.deepseek.com"
-DEFAULT_MODEL = "deepseek-v4-pro"
-DEFAULT_OCR_MODEL = "deepseek-flash"
+ROOT = Path(__file__).resolve().parent #获得绝对路径
+DEFAULT_BASE = "https://api.deepseek.com" #默认地址
+DEFAULT_MODEL = "deepseek-v4-pro" #默认文本整理模型
+DEFAULT_OCR_MODEL = "deepseek-flash" #默认图片识别模型
 
 
 def load_user_environment():
-    if os.name != "nt":
+    #若用户将数据存在环境变量和注册表内，进行读取
+    if os.name != "nt": #非 Windows 直接返回，不做任何事。
         return
-    import winreg
+    import winreg #函数内导入 Windows 注册表模块，避免非 Windows 平台导入失败。
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+        #打开 HKEY_CURRENT_USER\Environment，即当前用户环境变量所在注册表键。
             for name in ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY", "OCR_BASE_URL", "OCR_MODEL", "OCR_API_KEY"):
                 if not os.getenv(name):
+                #os.getenv()读取环境变量
+                #仅当进程环境里还没有该变量时才从注册表读，避免覆盖调用方显式设置的值。
                     try:
                         value, _ = winreg.QueryValueEx(key, name)
+                        #读取注册表值；返回 (值, 类型)，类型丢弃。
                         if isinstance(value, str):
                             os.environ[name] = value
+                            #只接受字符串值，写入进程环境变量。
                     except FileNotFoundError:
                         pass
     except OSError:
@@ -85,20 +91,27 @@ def unprotect(value):
 class SettingsStore:
     def __init__(self, path=None):
         self.path = Path(path) if path else default_settings_path()
+        #三元表达式：A if 条件 else B
+        #获取路径：有就用传的，没传就用自己的
+        #Path()保证路径格式
         self.lock = threading.RLock()
+        #RLock是可重入锁，有一个计数器，可以被锁多次
 
     def resolve(self):
-        with self.lock:
+        with self.lock: #with等价于加锁最后释放锁
             saved = {}
-            if self.path.exists():
+            if self.path.exists(): #若配置文件存在
                 try:
-                    saved = json.loads(self.path.read_text(encoding="utf-8"))
-                    if not isinstance(saved, dict):
+                    saved = json.loads(self.path.read_text(encoding="utf-8")) #导入配置文件
+                    #如果不是字典报错
+                    if not isinstance(saved, dict): 
                         raise ValueError()
                 except (ValueError, OSError):
                     raise ValueError("本机模型配置文件无法读取；原文件未修改。") from None
+            #获得相关数据
             base = saved.get("base_url") or os.getenv("LLM_BASE_URL") or DEFAULT_BASE
             key = unprotect(saved.get("api_key")) or os.getenv("LLM_API_KEY", "")
+            #返回配置字典 
             return {
                 "base_url": base,
                 "ocr_backend": saved.get("ocr_backend", "auto"),
@@ -108,17 +121,20 @@ class SettingsStore:
                 "ocr_model": saved.get("ocr_model") or os.getenv("OCR_MODEL") or DEFAULT_OCR_MODEL,
                 "ocr_api_key": unprotect(saved.get("ocr_api_key")) or os.getenv("OCR_API_KEY") or key,
             }
+            #ocr_backend 默认 "auto"，不读环境变量。
+            #ocr_base_url 未配置时回落到主 base_url。
+            #ocr_api_key 未配置时回落到主 key。
 
-    def public(self):
-        config = self.resolve()
+    def public(self):#返回可安全暴露给前端/调用方的配置，不含明文密钥。
+        config = self.resolve()#获取配置字典
         return {key: value for key, value in config.items() if key not in ("api_key", "ocr_api_key")} | {
             "configured": bool(config["api_key"]), "key_saved": bool(config["api_key"]),
             "ocr_key_saved": bool(config["ocr_api_key"]),
             "storage": "Windows 当前用户加密保存" if os.name == "nt" else "本机权限受限文件",
         }
 
-    def validate(self, payload):
-        if not isinstance(payload, dict):
+    def validate(self, payload): #校验并合并用户提交的配置，返回可保存的完整值（含明文 Key）
+        if not isinstance(payload, dict): #检验是否为字典，不是报错
             raise ValueError("请填写模型配置。")
         current = self.resolve()
         backend = payload.get("ocr_backend", current["ocr_backend"])
@@ -160,14 +176,14 @@ class SettingsStore:
             raise ValueError("请先输入 API Key，再保存或测试连接。")
         return values
 
-    def save(self, payload):
-        with self.lock:
+    def save(self, payload): #保存用户提交的完整配置
+        with self.lock: #加锁防止并发写
             values = self.validate(payload)
             record = {**values, "api_key": protect(values["api_key"]),
                       "ocr_api_key": protect(values["ocr_api_key"]), "updated_at": time.time()}
             return self._persist(record)
 
-    def set_model(self, model):
+    def set_model(self, model): #快速切换文本模型，只改 model 字段。
         if (not isinstance(model, str) or not model.strip() or len(model) > 2000
                 or any(ord(char) < 32 for char in model)):
             raise ValueError("请选择有效的模型名称。")
@@ -178,7 +194,7 @@ class SettingsStore:
             # A quick switch changes only the text model; encrypted keys/providers stay byte-for-byte intact.
             return self._persist({**record, "model": model.strip(), "updated_at": time.time()})
 
-    def set_ocr_backend(self, backend):
+    def set_ocr_backend(self, backend): #快速切换 OCR 后端。
         if backend not in ("local", "remote"):
             raise ValueError("请选择 GLM 本机识别或云端识图。")
         with self.lock:
@@ -187,10 +203,12 @@ class SettingsStore:
                 raise ValueError("本机模型配置无法读取，原文件未修改。")
             return self._persist({**record, "ocr_backend": backend, "updated_at": time.time()})
 
-    def _persist(self, record):
+    def _persist(self, record): #私有方法：把记录原子地写入配置文件。
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        #在向 self.path 写入之前，先确保它的父目录存在，并自动创建所有缺失的中间层级目录
         temporary = None
         try:
+            #写入json
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".tmp",
                                              prefix=".local-settings-", dir=self.path.parent, delete=False) as file:
                 temporary = file.name

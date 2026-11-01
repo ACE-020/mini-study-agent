@@ -2,7 +2,7 @@
 
 用 Python、大模型 API 和本地 JSON，跑通“整理错题 → 保存 → 下次按错题复习”。主要目的是理解工具调用、上下文、持久化和失败处理，并留下可用于面试讲解的运行证据。
 
-目前提供统一学习原稿录入、错题本、笔记库、跨库选择分析、命令行、本机网页和资料题库。布局依据见 [UI_LAYOUT.md](UI_LAYOUT.md)，各任务的画面取舍与切换规则见 [UI_TASKS.md](UI_TASKS.md)。笔记整理默认使用项目内的 organize-math-board skill，详见 [笔记功能与工具说明](NOTES.md)。默认逐步引导，不直接给完整解法；当前题的巩固与历史错题复习分开。用户已于 2026-10-20 提供真实模型日志，验证了普通问答、检索笔记、保存错题及跨进程读取后出题，详见 [验收记录](VALIDATION.md)。离线演示仍使用固定脚本；数学正确性与错因归纳需要人工核对。
+目前提供统一学习原稿录入、错题本、笔记库、跨库选择分析、命令行、本机网页和资料题库。布局依据见 [UI_LAYOUT.md](UI_LAYOUT.md)。笔记整理默认使用项目内的 organize-math-board skill，详见 [笔记功能与工具说明](NOTES.md)。默认逐步引导，不直接给完整解法；当前题的巩固与历史错题复习分开。用户已于 2026-10-20 提供真实模型日志，验证了普通问答、检索笔记、保存错题及跨进程读取后出题，详见 [验收记录](VALIDATION.md)。离线演示仍使用固定脚本；数学正确性与错因归纳需要人工核对。
 
 ## 查看源码与快速启动
 
@@ -22,7 +22,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
 ```
 
-当前源码已通过 263 项检查。复习支持本轮不重复选题，以及按次保存的做题时间、提示情况和错因；说明见 [做题记录](REVIEW_HISTORY.md)。长期复习日期与自动提醒尚未实现。个人题库和笔记、Key、虚拟环境、本机模型权重、参考书、实验原稿与缓存均不随源码分发。GLM 本机识别需另行安装运行环境和权重，见 [本机 OCR 说明](LOCAL_OCR.md)；源码不包含旧 Windows exe 体验包。完整上手流程见 [网页指南](WEB_GUIDE.md)，开发接手见 [教学与上下文说明](TUTORING.md)。
+当前源码为 v20，已通过 227 项检查。个人题库和笔记、Key、虚拟环境、本机模型权重、参考书、实验原稿与缓存均不随源码分发。GLM 本机识别需另行安装运行环境和权重，见 [本机 OCR 说明](LOCAL_OCR.md)；源码不包含旧 Windows exe 体验包。完整上手流程见 [网页指南](WEB_GUIDE.md)，开发接手见 [教学与上下文说明](TUTORING.md)。
 
 ## Windows 免 Python 体验版
 
@@ -48,9 +48,7 @@ exe 的数据与加密配置位于 %LOCALAPPDATA%\ZhicuoStudy，可从启动窗�
 
 2026-10-26 源码 v20：选题后自动收起目录与大标题，提供“展开选题 / 收起选题”；练习区占满可用宽度。三个主对话处理时均可继续输入与排队，复习图片也可加入队列，支持编辑、移除与“立即发送”。DS 的立即补充通过中断等待、保留本轮上下文后续接实现，不声称改写已在推理的 API 请求。当前完整检查 227 项；验收使用模拟模型，未新增付费调用，体验包未更新。
 
-2026-10-30 修复审查发现的 5 个问题：桌面启动补读 Windows 用户环境变量；错题卡可按原知识点进入分类复习；错题本完整返回超过 200 条的记录；连续换题按当前范围轮换；部分失败批次可先确认成功题目入库，再重试失败部分。当前 233 项自动检查通过，旧 exe / ZIP 尚未更新。
-
-此 README 是项目接手入口，不需要依赖原来的聊天记录。继续开发时先读本节，再看 WEB_GUIDE.md（当前行为）、TUTORING.md（教学与选题约束）、NOTES.md（工具与笔记）、VALIDATION.md（验收和历史更新）。UI_LAYOUT.md 记录布局依据；SOURCE_AND_TAGS.md 解释原图输入、用量、分类与并排核对工作区。较早章节中的旧测试数量属于历史记录；当前完整检查为 233 项。
+此 README 是项目接手入口，不需要依赖原来的聊天记录。继续开发时先读本节，再看 WEB_GUIDE.md（当前行为）、TUTORING.md（教学与选题约束）、NOTES.md（工具与笔记）、VALIDATION.md（验收和历史更新）。UI_LAYOUT.md 记录布局依据；SOURCE_AND_TAGS.md 解释原图输入、用量、分类与并排核对工作区。较早章节中的旧测试数量属于历史记录；当前完整检查为 227 项。
 
 当前是本机单用户版本：统一录入、错题本、笔记库、复习练习、练习资料；7 个模型工具；跨库勾选分析、待确认删除/合并、公式渲染、批量导出和 PDF 预览。历史对话尚未持久保存；“清空本次上传”位于固定顶栏，只在添加学习内容、练习资料页显示，按当前页清空临时内容，已收录内容与后台任务保留。数据是 JSON，检索是关键词匹配，没有向量库、多人账号隔离或掌握度更新。
 
@@ -168,6 +166,28 @@ python main.py --prompt "根据我以前的错题出一道复习题，先不要�
 5. **失败怎么办？** 网络超时、408、429、5xx 最多重试两次；鉴权或参数等其他 HTTP 错误直接报告。工具参数错误和文件错误交回模型，本轮最多请求模型六次。模型最终回复失败时，已经写入的错题保留；未完成的一轮不会留在内存对话历史里。
 
 函数调用的“模型返回调用 → 应用执行 → 结果交回模型”流程参见 [DeepSeek 官方工具调用文档](https://api-docs.deepseek.com/guides/tool_calls/)。不同供应商的协议细节需要分别核对。
+
+## 前后端划分与接口文档
+
+项目的前端（`templates/` + `static/`，无需构建）与后端（`web.py` 等 Python 模块）只通过 `/api/*` 的 JSON 接口通信。完整的目录职责、调用约定、典型流程和扩展方式见 [PROJECT_LAYOUT.md](./PROJECT_LAYOUT.md)；机器可读的接口定义见 [openapi.json](./openapi.json)（OpenAPI 3.1）。
+
+接口定义由 `web.py` 的路由生成，改接口后执行：
+
+```powershell
+python tools\generate_openapi.py          # 重新生成 openapi.json
+python tools\generate_openapi.py --check  # 只校验是否过期（单元测试也会跑）
+```
+
+需要**在 Python 里直接调用**（脚本、定时任务、自己的服务）时，使用 `study_api` 包：
+
+```python
+from study_api import AppConfig, StudyService
+
+with StudyService(AppConfig(data_dir="tmp/data")) as service:
+    print(service.chat("请整理这道错题").answer)
+```
+
+接口参考见 [PYTHON_API.md](./PYTHON_API.md)（含 `HttpApiClient` 的 HTTP 调用方式）。
 
 ## 文件与验证
 

@@ -30,7 +30,6 @@ function updateReviewButtons(){
  const selected=reviewState.selection;
  $("#review-selection").textContent=[selected.category||"全部知识点",selected.tag].filter(Boolean).join(" / ")+" · "+reviewSelectionCount()+" 道";
  $("#review-load-status").textContent=reviewState.error||(reviewState.loading?"正在读取分类…":reviewState.catalog?.total?"分类来自已收录的资料题目和错题；细分标签可交叉归类。":"暂无可练习的题目，可先添加学习内容或导入练习资料。");
- $("#review-load-status").hidden=Boolean(!reviewState.error&&!reviewState.loading&&reviewState.catalog?.total);
 }
 function chooseReviewNode(category,tag=""){
  reviewState.selection={...reviewState.selection,category,tag};renderReviewTree();[...$("#review-tree").querySelectorAll("[data-review-category]")].find(node=>node.dataset.reviewCategory===category&&(node.dataset.reviewTag||"")===tag)?.focus({preventScroll:true});
@@ -60,20 +59,11 @@ function renderReviewTree(){
  updateReviewButtons();
 }
 async function loadReviewCatalog(){
- if(reviewState.loading){await reviewState.loading.catch(()=>{});if(reviewState.catalog?.source===reviewState.selection.source)return;}
+ if(reviewState.loading)return reviewState.loading;
  const source=reviewState.selection.source;reviewState.error="";
  reviewState.loading=api("/api/review/catalog?source="+encodeURIComponent(source));updateReviewButtons();
  try{reviewState.catalog=await reviewState.loading;}catch(error){reviewState.error=error.message;}
  finally{reviewState.loading=null;renderReviewTree();}
-}
-async function practiceMistakeTopic(topic){
- if(state.busy||hasQueuedChat("review"))return;
- reviewState.selection={category:"",tag:"",source:"any"};$("#review-source").value="any";showView("review");
- await loadReviewCatalog();
- const filter=reviewState.catalog?.topic_filters?.[topic];
- if(!filter||reviewState.error){notify(reviewState.error||"这个知识点已不在题库中，请刷新错题本后重试。",true,"review");return;}
- reviewState.expanded.add(filter.category);chooseReviewNode(filter.category,filter.tag);
- await startReviewSelection();
 }
 async function startReviewSelection(){
  if(state.busy||!reviewSelectionCount()||(typeof hasQueuedChat==="function"&&hasQueuedChat("review")))return;
@@ -81,16 +71,10 @@ async function startReviewSelection(){
  const operation={id:crypto.randomUUID(),type:"chat",view:"review",stopping:false};state.operation=operation;setBusy(true);notify("",false,"review");
  try{
   const result=await api("/api/review/select",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selection,request_id:operation.id})});
-  if(result.question_selected){
-   resetReviewAttachments();setReviewQuestion(result.current_question);
-   state.chats.review=[{role:"user",text:"从「"+title+"」选一道题，先不给答案。",selectionRequest:true},{role:"assistant",text:result.answer,selectedQuestionId:result.current_question?.id}];
-   $("#review-follow").value="";
-  }else{
-   state.chats.review.push({role:"assistant",text:result.answer});
-   if(!reviewState.question)notify(result.answer,false,"review");
-  }
-  if(typeof syncReviewProgress==="function")syncReviewProgress(result.review);
-  state.traces.review=result.events||[];renderChat("review");renderTrace("review");
+  resetReviewAttachments();
+  setReviewQuestion(result.current_question);
+  state.chats.review=[{role:"user",text:"从「"+title+"」选一道题，先不给答案。",selectionRequest:true},{role:"assistant",text:result.answer,selectedQuestionId:result.current_question?.id}];
+  state.traces.review=result.events||[];$("#review-follow").value="";renderChat("review");renderTrace("review");
  }catch(error){notify(error.message,!error.cancelled,"review");}
  finally{state.operation=null;setBusy(false);updateReviewButtons();}
 }
