@@ -3,14 +3,34 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import desktop
 import runtime_paths
 
 
 class DesktopTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows user environment")
+    def test_registry_only_key_is_loaded_before_the_desktop_app_is_created(self):
+        from settings import SettingsStore
+        def query(key, name):
+            if name != "LLM_API_KEY":
+                raise FileNotFoundError(name)
+            return "desktop-test-key", 1
+        registry = SimpleNamespace(HKEY_CURRENT_USER=object(), OpenKey=MagicMock(), QueryValueEx=query)
+        captured = []
+        def inspect_app(**kwargs):
+            captured.append(SettingsStore(kwargs["settings_path"]).resolve()["api_key"])
+            raise RuntimeError("Stop this test before creating a server")
+        with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {}, clear=True), \
+                patch.dict("sys.modules", {"winreg": registry}), patch("desktop.InstanceLock"), \
+                patch("desktop.setup_logging"), patch("desktop.logging.exception"), \
+                patch("web.create_app", side_effect=inspect_app):
+            desktop.main(["--user-dir", folder, "--headless", "--no-browser"])
+        self.assertEqual(captured, ["desktop-test-key"])
+
     def test_source_keeps_existing_data_location(self):
         with patch.object(runtime_paths.sys, "frozen", False, create=True):
             self.assertEqual(runtime_paths.default_data_directory(), runtime_paths.RESOURCE_ROOT/"data")

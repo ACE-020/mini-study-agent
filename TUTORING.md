@@ -1,4 +1,4 @@
-# 教学、复习分类与出题（源码 v20）
+# 教学、复习分类与出题
 
 ## 怎么使用
 
@@ -34,7 +34,7 @@ review_catalog.py 对 data/exercises.json 与 data/mistakes.json 做只读汇总
 
 GET /api/review/catalog 只返回分类、标签和计数。POST /api/review/select 接收 category、tag、source（any/exercise/mistake），不依赖模型决定范围；题目与工具日志不含参考答案、旧作答或错因。
 
-执行 `python -m unittest discover -s tests -p 'test_*.py'` 检查源码。当前共 227 项自动检查，另有分类树及完整工作区浏览器验收。tests/test_review_catalog.py 覆盖资料独有知识点、精确标签、错题选择、答案隔离、换题清理上下文、明确生成和本地无 API 选题。
+执行 `python -m unittest discover -s tests -p 'test_*.py'` 检查源码。当前共 233 项自动检查，另有分类树及完整工作区浏览器验收。tests/test_review_catalog.py 覆盖资料独有知识点、精确标签、错题选择、答案隔离、换题清理上下文、明确生成和本地无 API 选题。
 
 网页测试使用 tests/serve_review_fixture.py（临时数据、假模型，端口8791）与 tests/browser_review_tree.cjs，覆盖展开、键盘、来源切换、选题、连续追问、明确生成及手机布局。没有新增付费请求；没有对真实模型生成题的数学正确性作保证。体验包未更新。
 
@@ -67,3 +67,8 @@ tests/test_review_composer.py 验证固定题卡数据、云端 / 本机复用�
 取消若发生在图片准备或 OCR 阶段，尚未进入 Agent 检查点，前端会把原请求和原图片一同带入续接；已经进入 Agent 的转写保留在内部上下文，复习原图缓存可以释放。此兼容实现会开始新 API 请求；停止本地等待不保证提供方停止生成，也不保证旧请求免计费。测试未使用真实 Key 验证费用。
 
 tests/test_chat_steering.py 验证原请求保留、普通停止回滚、工具成功结果保留、未执行工具配对、request_id 取消与模型切换冲突。tests/browser_review_focus.cjs 使用临时题库和模拟慢回复，验证自动 / 手动收起、完整宽度、持续输入附图、顺序发送、编辑移除、两处立即发送、图片识别中断续接以及手动停止暂停队列。
+
+
+## 2026-10-30：本轮去重与长期做题记录
+
+选题不再只排除上一题，而是排除本轮全部已出题；范围出完会明确提示。用户明确改选新分类或细标签时，先更新范围再选题，`1的无穷次方` 等写法统一到 `1^∞型极限`。做题时间、逐次作答、判定、实质提示和错因保存于本地 review-attempts.json，结束本轮或重启不会丢失。没有加入日期安排和复习提醒。完整行为与字段说明见 [REVIEW_HISTORY.md](REVIEW_HISTORY.md)。

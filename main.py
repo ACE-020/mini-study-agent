@@ -13,19 +13,14 @@ from cancellation import CancellationToken, OperationCancelled
 from cli_input import read_prompt
 
 
-ROOT = Path(__file__).resolve().parent #获得当前脚本的绝对目录
-#__file__：当前 Python 文件路径。
-#.resolve()：转成绝对路径，并解析符号链接、.. 等。
-#.parent：取当前文件所在目录。
+ROOT = Path(__file__).resolve().parent
 
 
 def run_turn(agent, prompt):
     token = CancellationToken()
     try:
         if isinstance(agent.client, ModelClient):
-            #isinstance 是 Python 的内置函数，用来判断"某个对象是不是某个类（或某几个类之一）的实例"
             agent.client = ModelClient.from_env()
-            #每轮重新从环境配置构造模型客户端，避免复用旧配置/连接
         print("Agent：" + agent.run(prompt, cancel_token=token))
         return True
     except (KeyboardInterrupt, OperationCancelled):

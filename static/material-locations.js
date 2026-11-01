@@ -138,7 +138,7 @@ function navigateReviewExercise(index,{pageIndex=null,region=null,keepSource=fal
  if(materialState.previewPage!==page){materialState.previewPage=page;renderExercisePreview(materialState.preview,true);}
  const role=requestedRole||region?.role||(pageIndex&&materialState.preview[index].answer_page_indices?.includes(pageIndex)&&pageIndex!==materialState.preview[index].page_index?"answer":"question");
  reviewReader.holdSource=keepSource||Boolean(pageIndex);
- openBatchCorrection([index],{role});
+ openBatchCorrection([index],{role,intent:"read"});
  reviewReader.holdSource=false;
  setReviewBrowse(index,{follow:!keepSource&&!pageIndex,role});
  if(pageIndex){

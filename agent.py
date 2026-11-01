@@ -3,6 +3,9 @@
 import json
 import re
 from copy import deepcopy
+from uuid import uuid4
+from review_progress import ReviewProgress, question_key, question_signature, RECORD_SCHEMA, RECORD_POLICY
+from review_intent import practice_request, requested_scope
 
 from llm import ModelClient, ModelError
 from cancellation import interruptible, OperationCancelled
@@ -13,54 +16,61 @@ from prompts import STUDY_PROMPT, GENERATED_PRACTICE_POLICY, REVIEW_ANSWER_POLIC
 from note_skill import NOTE_CAPABILITY, is_note_request, note_rules
 from note_exports import note_reply
 
-SYSTEM_PROMPT = STUDY_PROMPT #获得提示词
+SYSTEM_PROMPT = STUDY_PROMPT
 
 
 class StudyAgent:
     def __init__(self, client, tools, trace=None, max_rounds=6):
-        """
-        client：模型客户端。
-        tools：工具执行器。
-        trace：追踪回调，默认空函数。
-        max_rounds：单轮用户请求内最多模型往返次数，默认 6。
-        """
         self.client = client
         self.tools = tools
         self.trace = trace or (lambda event, value: None)
         self.max_rounds = max_rounds
-        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}] #对话历史
-        
-        #当前讨论的知识点、细题型标签、上一道练习题 id。
-        #用于“巩固选题”时限定范围、排除已做过题。
+        self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.current_topic = None
         self.current_tags = []
         self.last_exercise_id = None
-        
-        #note_task：本轮是否笔记任务。
-        #web_links：是否网页直接展示下载按钮（影响笔记回复文案）。
-        #review_filter：复习筛选条件（category/tag/source）。
-        #current_question：当前题目的结构化信息（id/kind/topic/question/tags/source/number/paper）。
         self.note_task = False
         self.web_links = False
         self.review_filter = None
         self.current_question = None
+        self.review_round_id=uuid4().hex
+        self.seen_question_ids=set()
+        self.seen_question_signatures=set()
+        self.current_attempt_id=None
+        progress=getattr(tools,"progress",None)
+        self.progress=progress if isinstance(progress,ReviewProgress) else None
+        self._pending_question=None
+        self._review_recording=False
+        self._last_pick_succeeded=False
 
-    #执行单个工具并更新状态
     def _execute(self, name, arguments, cancel_token, automatic=False):
-        """
-        name：工具名。
-        arguments：JSON 字符串。
-        cancel_token：取消令牌。
-        automatic：是否由程序自动发起（而非模型提议），用于 trace 标记。
-        """
         if cancel_token:
-            cancel_token.check() #报错检测
-
-        self.trace("工具请求", {"name": name,
-                            "arguments": arguments,
-                            "selected_by": "program" if automatic else "model"})
-        #发送工具请求
-        if getattr(self.tools, "supports_cancellation", False):#获取"supports_cancellation"
+            cancel_token.check()
+        self.trace("工具请求", {"name": name, "arguments": arguments, "selected_by": "program" if automatic else "model"})
+        if name=="record_review_result":
+            try:
+                params=json.loads(arguments)
+                if not self._review_recording or not self.progress or not self.current_attempt_id:
+                    raise ValueError("当前没有可判定的复习作答。")
+                if not isinstance(params,dict) or set(params)!={"outcome","assisted","error_tags","evidence"}:
+                    raise ValueError("做题结果参数无效。")
+                attempt=self.progress.assess(self.current_attempt_id,**params)
+                result={"ok":True,"data":self.progress.public(attempt)}
+            except (ValueError,TypeError,OSError) as exc:
+                result={"ok":False,"error":str(exc)}
+            self.trace("工具结果",result);return result
+        if name=="pick_exercise":
+            try:
+                params=json.loads(arguments)
+                if isinstance(params,dict):
+                    if self.review_filter is not None:
+                        params.update(topic=self.review_filter["category"] or "全部知识点",category=self.review_filter["category"] or "全部知识点",source_kind=self.review_filter["source"])
+                        if self.review_filter["tag"]:params["tags"]=[self.review_filter["tag"]]
+                        else:params.pop("tags",None)
+                    params["exclude_ids"]=sorted(self.excluded_question_ids())
+                    arguments=json.dumps(params,ensure_ascii=False)
+            except ValueError:pass
+        if getattr(self.tools, "supports_cancellation", False):
             result = self.tools.execute(name, arguments, cancel_token=cancel_token)
         else:
             result = self.tools.execute(name, arguments)
@@ -73,10 +83,18 @@ class StudyAgent:
                 self.current_topic = data[0]["topic"]
         return result
 
-    #收尾、提交消息历史、图片消息降级
     def _finish(self, messages, answer, cancel_token):
         if cancel_token:
-            cancel_token.check()#报错检测
+            cancel_token.check()
+        if self._pending_question is not None:
+            question=self._pending_question;self._pending_question=None
+            if self.progress:
+                self.progress.close(self.current_attempt_id)
+                self.current_attempt_id=self.progress.begin(question,self.review_round_id)["id"]
+            self.current_question=question
+            self.last_exercise_id=question["id"]
+            self.seen_question_ids.add(question_key(question))
+            self.seen_question_signatures.add(question_signature(question))
         messages.append({"role": "assistant", "content": answer})
         self.messages = [self.messages[0], *[item for item in messages[1:] if item["role"] != "system"]]
         # 有可供后续讨论的原稿文字才移除图片；缺题干时保留，继续使用图片模型。
@@ -97,19 +115,24 @@ class StudyAgent:
                     item["content"]="\n".join(part.get("text", "") for part in item["content"] if part.get("type")=="text")+"\n[原稿文字已在识别回复或保存工具结果中保留。]"
         return answer
 
-    #把选题结果格式化成用户可读文本
     def _exercise_reply(self, result):
+        self._last_pick_succeeded=bool(result.get("ok") and result.get("data",{}).get("exercise"))
         if not result.get("ok"):
             return "资料题库暂时无法读取，尚未选出练习题。请检查题库后重试。"
         exercise = result["data"].get("exercise")
+        if not exercise and self.current_question:
+            self.current_topic=self.current_question["topic"]
+            self.current_tags=self.current_question.get("tags",[])
+        if not exercise and result["data"].get("exhausted"):
+            return "这个范围的题目本轮已经全部出过，暂时没有剩余的新题了，不再重复出题。可以换一个知识点或标签；结束本轮后也可以重新练习。"
         if not exercise:
-            self.current_topic = result["data"].get("topic") or self.current_topic
+            if not self.current_question:self.current_topic = result["data"].get("topic") or self.current_topic
             if self.review_filter is not None:
-                return "所选知识点或标签下暂时没有可练习的题目。可刷新左侧分类或换一个范围；明确让我自行出题也可以。"
+                return "所选「"+" / ".join(value for value in (self.review_filter["category"],self.review_filter["tag"]) if value)+"」下暂时没有匹配题目。可换一个范围；明确让我自行出题也可以。"
             return f"资料题库里暂时没有可用的「{result['data']['topic']}」同知识点题目。请到‘练习资料’上传图片或 TXT，核对后入库；我会从资料里选题。我们也可以继续把当前题做完。"
-        self.current_question = {key: exercise.get(key, "") for key in
+        self._pending_question = {key: exercise.get(key, "") for key in
                                  ("id", "kind", "topic", "question", "tags", "source", "number", "paper")}
-        self.last_exercise_id = exercise["id"]
+        self._pending_question["kind"]=exercise.get("kind") or "exercise"
         self.current_topic = exercise["topic"]
         self.current_tags = ([self.review_filter["tag"]] if self.review_filter and self.review_filter.get("tag") else []) if self.review_filter is not None else exercise.get("tags", [])
         number = f" · 原题号 {exercise['number']}" if exercise["number"] else ""
@@ -118,7 +141,6 @@ class StudyAgent:
         origin = "错题本" if exercise.get("kind") == "mistake" else "资料"
         return f"已从{origin}中选出一道「{exercise['topic']}」练习。\n\n来源：{exercise['source']}{paper}{number}{fine}\n\n{exercise['question']}\n\n先试一小步：你会从哪里入手？写出第一步，我再帮你检查。"
 
-    #开始复习选题
     def start_review(self, selection, cancel_token=None):
         from review_catalog import validate_filter
         self.review_filter = validate_filter(**selection)
@@ -130,12 +152,38 @@ class StudyAgent:
         result = self._execute("pick_exercise", json.dumps({"topic":category, "category":category,
             "source_kind":self.review_filter["source"], **({"tags":self.current_tags} if self.current_tags else {}),
             **({"exclude_id":self.last_exercise_id} if self.last_exercise_id else {})}, ensure_ascii=False), cancel_token, automatic=True)
+        if not result.get("data",{}).get("exercise"):
+            messages=[*self.messages,{"role":"user","content":user}]
         return self._finish(messages, self._exercise_reply(result), cancel_token)
 
-    
+    def excluded_question_ids(self):
+        excluded=set(self.seen_question_ids)
+        if self.seen_question_signatures and hasattr(self.tools,"review_catalog"):
+            for kind,item in self.tools.review_catalog().records:
+                if question_signature(item) in self.seen_question_signatures:excluded.add(kind+":"+item["id"])
+        return excluded
+
+    def inherit_review_round(self, previous):
+        self.review_round_id=previous.review_round_id
+        self.seen_question_ids=set(previous.seen_question_ids)
+        self.seen_question_signatures=set(previous.seen_question_signatures)
+        self.current_attempt_id=previous.current_attempt_id
+        self.current_question=deepcopy(previous.current_question)
+        self.messages=deepcopy(previous.messages)
+        self.last_exercise_id=previous.last_exercise_id
+
+    def review_snapshot(self):
+        attempt=self.progress.get(self.current_attempt_id) if self.progress and self.current_attempt_id else None
+        return dict(round_id=self.review_round_id,seen_ids=sorted(self.seen_question_ids),
+                    current_attempt=self.progress.public(attempt) if attempt else None,selection=self.review_filter,current_question=deepcopy(self.current_question))
+
+    def end_review(self):
+        if self.progress:self.progress.close(self.current_attempt_id)
+
     def run(self, *args, **kwargs):
         token = kwargs.get("cancel_token") or (args[1] if len(args) > 1 else None)
         self._inflight_messages = None
+        self._pending_question=None
         self._started_tool_ids = set()
         try:
             return self._run(*args, **kwargs)
@@ -146,6 +194,7 @@ class StudyAgent:
             raise
         finally:
             self._inflight_messages = None
+            self._pending_question=None
 
     def _retain_steer_context(self, messages):
         history = deepcopy(messages)
@@ -184,6 +233,20 @@ class StudyAgent:
         generate = bool(re.search(r"(?:自己|自行).{0,5}(?:出|编(?:写)?|生成|设计)\s*(?:一|1|两|几|个|道|题|练习|新|同|类似)|(?:编(?:写)?|生成|设计)\s*(?:一|1|两|几|个|道|题|练习|新|同|类似)|原创\s*(?:一|1|两|几|个|道|新|同|类似)", user_text))
         if re.search(r"(?:不要|别|不用|不许|禁止)[^，,。；;\n]{0,6}(?:自己|自行|编题|出题|生成)", user_text):
             generate = False
+        wants_practice=practice_request(user_text) or intent=="practice"
+        if (wants_practice or generate) and task!="library" and hasattr(self.tools,"review_catalog"):
+            tree=self.tools.review_catalog().tree()
+            requested=requested_scope(user_text,tree,(self.review_filter or {}).get("source","any"))
+            if requested:
+                self.review_filter=requested
+                self.current_topic=requested["category"]
+                self.current_tags=[requested["tag"]] if requested["tag"] else []
+        if generate and self.review_filter:
+            self.current_topic=self.review_filter["category"] or self.current_topic
+            self.current_tags=[self.review_filter["tag"]] if self.review_filter["tag"] else []
+        self._review_recording=task not in ("notes","library") and bool(self.current_question) and not is_note_request(user_text) and not wants_practice and not generate
+        if self._review_recording and self.progress and self.current_attempt_id:
+            self.progress.submit(self.current_attempt_id,user_text,getattr(cancel_token,"request_id",None) or uuid4().hex,attachment_text)
         schemas = [item for item in SCHEMAS if item["function"]["name"] not in ("delete_records", "merge_records") and
                    (scope == "history" or item["function"]["name"] != "get_mistakes")]
         policy = "本轮范围：历史错题复习，允许读取历史记录确定方向。" if scope == "history" else "本轮范围：当前题对话，禁止 get_mistakes；不得切换到其他历史错题。"
@@ -196,8 +259,17 @@ class StudyAgent:
             policy += "\n" + note_rules()
         if task == "mixed":
             policy += "\n网页会在本轮下面直接展示已保存的正文与下载按钮。保存后简短说明结果；混合原稿不能漏记另一类内容，需要补充时在当前对话询问。"
-        if task == "review":
+        if task == "review" or self._review_recording:
             policy += "\n" + REVIEW_ANSWER_POLICY
+            if self._review_recording and self.progress:
+                schemas.append(RECORD_SCHEMA)
+                policy += "\n"+RECORD_POLICY
+                if self.review_filter:
+                    matches=self.tools.review_catalog().matches(**self.review_filter)
+                    excluded=self.excluded_question_ids()
+                    remaining=sum(kind+":"+item["id"] not in excluded for kind,item in matches)
+                    policy += f"\n所选范围本轮还剩 {remaining} 道未出题目。"
+
         allowed_refs = {(item["kind"], item["id"]) for item in selection or []}
         if task == "library":
             generate = False
@@ -218,7 +290,7 @@ class StudyAgent:
                 part for image in images for part in image_parts(image, details=len(images)<=4)]]
         messages = [self.messages[0], {"role": "system", "content": policy}, *self.messages[1:], {"role": "user", "content": user_content}]
         self._inflight_messages = messages
-        practice = not generate and (intent == "practice" or bool(re.search(r"^出[。！!\s]*$|(?<![指提看算写求得做])出(?:一道|一题|道题|题|类似题|相关题|同类题|练习题|变式题)|巩固|来一道|换一道|选一道|挑一道|选一题|挑一题", user_text)))
+        practice = not generate and wants_practice
         if task == "library" or (new_problem and intent != "practice") or (is_note_request(user_text) and intent != "practice"):
             practice = False
         if re.search(r"(?:不要|不用|别|无需).{0,3}(?:出题|选题|练习|巩固)", user_text):
@@ -258,11 +330,6 @@ class StudyAgent:
             def request_message():
                 if isinstance(self.client, ModelClient):
                     return self.client.complete(messages, schemas, cancel_token=cancel_token)
-                # 自研/测试用的自定义客户端：可选的 complete_with_tools 钩子会拿到当前可用的工具白名单，
-                # 便于“模型自己决定调用哪个工具”的离线驱动（见 study_api.ScriptedBackend）。
-                hook = getattr(self.client, "complete_with_tools", None)
-                if callable(hook):
-                    return hook(messages, [item["function"]["name"] for item in schemas])
                 return self.client.complete(messages, schemas)
             message = interruptible(request_message, cancel_token)
             calls = message.get("tool_calls") or []
@@ -274,11 +341,10 @@ class StudyAgent:
                     answer = "请先明确当前题的知识点，并上传对应的练习资料；我会从你确认的题库里选题，不自行编题。"
                 if generate and self.current_topic and "AI 生成" not in answer and "AI生成" not in answer:
                     answer = "**AI 生成练习（未入库）**\n\n"+answer
-                finished = self._finish(messages, answer, cancel_token)
                 if generate:
-                    self.current_question = {"id":"generated", "kind":"generated", "topic":self.current_topic or "练习",
-                        "question":answer, "tags":[], "source":"AI 生成 · 未入库", "number":"", "paper":""}
-                return finished
+                    self._pending_question = {"id":"generated:"+uuid4().hex, "kind":"generated", "topic":self.current_topic or "练习",
+                        "question":answer, "tags":list(self.current_tags), "source":"AI 生成 · 未入库", "number":"", "paper":""}
+                return self._finish(messages, answer, cancel_token)
             if not isinstance(calls, list) or len(calls) > 10:
                 raise ModelError("模型返回的工具调用数量或格式不符合预期。")
             ids = set()

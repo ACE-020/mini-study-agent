@@ -82,13 +82,48 @@ class MaterialRecoveryTests(unittest.TestCase):
         self.assertEqual([p["page"] for p in failed["result"]["failures"][0]["pages"]],[3,4])
         self.assertIn("JSON",failed["result"]["failures"][0]["message"])
         self.assertEqual(len(model.requests),3)
+        self.assertEqual(client.get('/api/exercises').json['total'],0)
+        payload={'source':'两套试卷','confirmed':True,'job_id':id,'exercises':failed['result']['exercises'][:1]}
+        saved=client.post('/api/exercises',json=payload)
+        self.assertEqual(saved.status_code,200,saved.json)
+        self.assertEqual(saved.json['data']['added'],1)
+        stored=client.get('/api/exercises').json['exercises'][0]
+        self.assertEqual(stored['provenance']['files'][0]['name'],'合集.pdf')
+        repeated=client.post('/api/exercises',json=payload)
+        self.assertEqual(repeated.json['data']['duplicates'],1)
+        self.assertEqual(client.get('/api/materials/jobs/'+id).json['job']['status'],'failed')
         self.assertEqual(client.post("/api/materials/jobs/"+id+"/retry").status_code,202)
         completed=self.wait(client,id)
         self.assertEqual(completed["status"],"ready",completed)
         self.assertEqual(len(completed["result"]["exercises"]),3)
         self.assertEqual(len(model.requests),4)
+        remaining=client.post('/api/exercises',json={**payload,'exercises':completed['result']['exercises']})
+        self.assertEqual(remaining.status_code,200,remaining.json)
+        self.assertEqual(remaining.json['data']['added'],2)
+        self.assertEqual(remaining.json['data']['duplicates'],1)
         self.assertEqual(client.post("/api/materials/jobs/"+id+"/retry").status_code,409)
         self.assertFalse((Path(app.extensions["material_files"].folder.name)/"exercises.json").exists())
+
+    def test_unfinished_or_cancelled_without_results_cannot_be_imported(self):
+        started=threading.Event();release=threading.Event();self.addCleanup(release.set)
+        class Parser:
+            def parse(self,text,cancel_token=None):
+                started.set();release.wait(2)
+                return {'exercises':[],'warnings':[]}
+        with tempfile.TemporaryDirectory() as folder:
+            app=create_app(Path(folder)/'data',material_parser_factory=Parser,
+                           settings_path=Path(folder)/'settings.json',local_ocr_runtime=False)
+            self.addCleanup(app.extensions['stop_background'])
+            client=app.test_client()
+            job=client.post('/api/materials/jobs',json={'source':'未完成测试','text':'测试原文'}).json['job']
+            self.assertTrue(started.wait(1))
+            payload={'source':'未完成测试','confirmed':True,'job_id':job['id'],
+                     'exercises':[{'number':'1','topic':'导数','question':'不能提前入库','answer':''}]}
+            self.assertEqual(client.post('/api/exercises',json=payload).status_code,400)
+            client.post('/api/materials/jobs/'+job['id']+'/cancel')
+            self.assertEqual(client.post('/api/exercises',json=payload).status_code,400)
+            self.assertEqual(client.get('/api/exercises').json['total'],0)
+            release.set()
 
     def test_original_file_is_available_for_full_preview_reading_and_next_range(self):
         model=ScriptedClient([reply(1,1),reply(2,1)])
