@@ -1,0 +1,26 @@
+{
+  "pages": [
+    "pages/chat/chat",
+    "pages/library/library"
+  ],
+  "window": {
+    "navigationBarTitleText": "知错 · 学习整理",
+    "navigationBarBackgroundColor": "#f6f3ec",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f6f3ec",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#8b8578",
+    "selectedColor": "#2f6f5e",
+    "backgroundColor": "#fbf9f4",
+    "borderStyle": "white",
+    "list": [
+      { "pagePath": "pages/chat/chat", "text": "整理" },
+      { "pagePath": "pages/library/library", "text": "记录" }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

@@ -1,0 +1,47 @@
+# 不使用 Docker 时的 systemd 单元。
+# 安装：
+#   sudo cp deploy/study-agent-wx.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now study-agent-wx
+#
+# 环境变量放在 /etc/study-agent-wx.env（权限 600，属主为运行服务的用户）：
+#   LLM_API_KEY=sk-xxx
+#   WX_APPID=wx...
+#   WX_SECRET=...
+#   WX_TOKEN_SECRET=...
+#   WX_API_DATA_DIR=/var/lib/study-agent-wx
+
+[Unit]
+Description=Study Agent WeChat Mini Program API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=study
+Group=study
+WorkingDirectory=/opt/study-agent
+EnvironmentFile=/etc/study-agent-wx.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/study-agent/.venv/bin/gunicorn \
+    --bind 127.0.0.1:8766 \
+    --workers 1 \
+    --threads 16 \
+    --timeout 0 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    'wx_api:create_api()'
+Restart=always
+RestartSec=3
+# 任务表在内存里，重启会丢掉“正在处理”的轮询句柄；已保存的笔记和错题不受影响。
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+# 只允许写数据目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/study-agent-wx
+
+[Install]
+WantedBy=multi-user.target

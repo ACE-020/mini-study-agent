@@ -24,6 +24,17 @@ python -m venv .venv
 
 当前源码为 v20，已通过 227 项检查。个人题库和笔记、Key、虚拟环境、本机模型权重、参考书、实验原稿与缓存均不随源码分发。GLM 本机识别需另行安装运行环境和权重，见 [本机 OCR 说明](LOCAL_OCR.md)；源码不包含旧 Windows exe 体验包。完整上手流程见 [网页指南](WEB_GUIDE.md)，开发接手见 [教学与上下文说明](TUTORING.md)。
 
+## 微信小程序接入
+
+小程序不是把网页套一层壳：浏览器会话、单用户目录、同步长请求这三件事都得换。仓库里已经补好这层外壳，核心 `agent.py` / `tools.py` / `llm.py` 未改动：
+
+- `wx_api.py`：`wx.login` 换 Bearer 令牌、按 openid 分数据目录、对话改「202 + 任务轮询」、图片上传；每个用户同时只跑一轮。
+- `wx_security.py`：用户输入过微信内容安全（`WX_CONTENT_CHECK=1` 开启）。
+- `miniprogram/`：可直接导入微信开发者工具的两个页面（整理 / 记录），`utils/api.js` 封装了登录与轮询。
+- `Dockerfile`、`docker-compose.yml`、`deploy/`：HTTPS 反代、systemd、容器部署。
+
+本地五分钟跑通：`.\start_wx_api.cmd`，开发者工具导入 `miniprogram/`，勾选「不校验合法域名」，把 `config.js` 的 `baseUrl` 改成局域网 IP、`devLogin` 改成 `true`。上线走**微信云托管**：镜像里已按平台约定监听 80，容器内身份来自 `X-WX-OPENID`（`WX_TRUST_CLOUD_HEADER=1`），图片走 base64 通道，免备案域名。完整操作见 [小程序接入操作手册](WECHAT_MINIPROGRAM.md)（云托管部署逐步说明、实例数与存储挂载、提审与合规、验收清单）。
+
 ## Windows 免 Python 体验版
 
 历史 Windows 体验包位于开发者本机 dist/知错-Windows-x64.zip，未随当前源码仓库分发，功能也尚未更新到 v20。若另行获取此包，可分享给同学。解压后双击“知错.exe”，不需要安装 Python 或执行安装命令。启动小窗口会打开浏览器；关闭小窗口即退出程序，重复双击只会打开已有页面。

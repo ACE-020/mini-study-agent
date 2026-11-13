@@ -10,6 +10,15 @@
 *.yml text eol=lf
 *.txt text eol=lf
 *.cmd text eol=crlf
+
+# 容器与 Linux 侧文件必须是 LF：CRLF 会让 sh 脚本和 systemd 单元解析失败
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.service text eol=lf
+*.conf text eol=lf
+.dockerignore text eol=lf
+.gitattributes text eol=lf
+
 *.png -text
 *.ico -text
 *.woff -text
