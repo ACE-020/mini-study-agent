@@ -1,0 +1,81 @@
+<view class="page">
+  <view class="topbar">
+    <view class="modes">
+      <view
+        wx:for="{{modes}}"
+        wx:key="key"
+        class="mode {{mode === item.key ? 'active' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="switchMode"
+      >{{item.name}}</view>
+    </view>
+    <view class="new-chat" bindtap="onReset">新对话</view>
+  </view>
+
+  <scroll-view
+    class="thread"
+    scroll-y
+    scroll-into-view="{{anchor}}"
+    scroll-with-animation
+    enhanced
+    show-scrollbar="{{false}}"
+  >
+    <view wx:if="{{!messages.length && !busy}}" class="intro">
+      <text class="intro-title">把题目或笔记原文发给我</text>
+      <text class="intro-line">整理：先理清条件和考点，再一步步讲。</text>
+      <text class="intro-line">笔记：按你的笔记规则整理成 Markdown 并保存。</text>
+      <text class="intro-line">复习：从已确认的题库里挑原题，不自己编题。</text>
+    </view>
+
+    <block wx:for="{{messages}}" wx:key="index">
+      <view id="msg-{{index}}" class="row {{item.role}}">
+        <view class="bubble {{item.role}}" bindlongpress="onCopy" data-text="{{item.text}}">
+          <rich-text wx:if="{{item.role === 'assistant'}}" nodes="{{item.html}}" />
+          <text wx:else user-select>{{item.text}}</text>
+        </view>
+      </view>
+    </block>
+
+    <view wx:if="{{busy}}" class="row assistant">
+      <view class="bubble assistant pending">
+        <text class="dot">·</text>
+        <text>{{progressText}}</text>
+      </view>
+    </view>
+
+    <view id="thread-end" class="thread-end"></view>
+  </scroll-view>
+
+  <view wx:if="{{images.length || uploading}}" class="attachments">
+    <view wx:for="{{images}}" wx:key="id" class="thumb">
+      <image class="thumb-image" src="{{item.path}}" mode="aspectFill" />
+      <view class="thumb-remove" data-index="{{index}}" catchtap="onRemoveImage">×</view>
+    </view>
+    <view wx:if="{{uploading}}" class="thumb uploading">
+      <text>上传中</text>
+    </view>
+  </view>
+
+  <view class="composer">
+    <textarea
+      class="editor"
+      value="{{input}}"
+      bindinput="onInput"
+      placeholder="输入题目、笔记或问题…"
+      placeholder-class="placeholder"
+      auto-height
+      maxlength="8000"
+      show-confirm-bar="{{false}}"
+      disable-default-padding
+      cursor-spacing="24"
+    />
+    <view class="actions">
+      <view wx:if="{{mode !== 'review'}}" class="tools" bindtap="onChooseImage">
+        <text class="tool-icon">＋</text>
+        <text class="tool-label">原稿</text>
+      </view>
+      <button wx:if="{{busy}}" class="btn ghost" bindtap="onStop">停止</button>
+      <button class="btn primary" bindtap="onSend" disabled="{{!canSend || busy || uploading}}">发送</button>
+    </view>
+  </view>
+</view>

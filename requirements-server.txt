@@ -1,0 +1,6 @@
+# 小程序服务端专用依赖：比网页版少了桌面端与浏览器自动化。
+# 注意：缺少 playwright/chromium 时，笔记仍会保存，但 PDF 导出会如实返回失败。
+Flask>=3.1,<4
+Pillow>=11,<14
+PyMuPDF>=1.25,<2
+gunicorn>=23,<24

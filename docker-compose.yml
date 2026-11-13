@@ -1,0 +1,34 @@
+# 单机部署示例：docker compose up -d
+# 生产环境建议把 8766 只监听内网，前面放 Nginx 做 HTTPS（见 deploy/nginx.conf）。
+
+services:
+  api:
+    build: .
+    image: study-agent-wx
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8766:8766"
+    environment:
+      # 自建部署用 8766；云托管不要这个变量（平台注入 PORT=80）
+      PORT: "8766"
+      # ---- 模型（服务端保存，小程序永远拿不到）----
+      LLM_BASE_URL: "https://api.deepseek.com"
+      LLM_MODEL: "deepseek-v4-pro"
+      LLM_API_KEY: "${LLM_API_KEY:?请先设置 LLM_API_KEY}"
+      # 识图模型：deepseek-flash 或其它支持图片的模型
+      OCR_MODEL: "deepseek-flash"
+      OCR_API_KEY: "${OCR_API_KEY:-}"
+      # ---- 小程序登录 ----
+      WX_APPID: "${WX_APPID:?请先设置 WX_APPID}"
+      WX_SECRET: "${WX_SECRET:?请先设置 WX_SECRET}"
+      # 令牌密钥：换掉它等于让所有已登录用户重新登录
+      WX_TOKEN_SECRET: "${WX_TOKEN_SECRET:?请先设置 WX_TOKEN_SECRET}"
+      WX_TOKEN_TTL_DAYS: "7"
+      WX_MAX_USERS: "500"
+      # 本地联调才打开；上线必须删除
+      WX_DEV_LOGIN: "0"
+    volumes:
+      - study-agent-data:/data
+
+volumes:
+  study-agent-data:

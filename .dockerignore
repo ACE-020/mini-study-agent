@@ -1,0 +1,16 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+.wx-test
+wx-data
+tmp
+.tools
+data
+dist
+build
+node_modules
+tests/browser_*.cjs
+deploy/.env
+*.log
