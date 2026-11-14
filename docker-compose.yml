@@ -25,6 +25,10 @@ services:
       WX_TOKEN_SECRET: "${WX_TOKEN_SECRET:?请先设置 WX_TOKEN_SECRET}"
       WX_TOKEN_TTL_DAYS: "7"
       WX_MAX_USERS: "500"
+      # 用户输入过微信内容安全；依赖 WX_APPID / WX_SECRET 换 access_token
+      WX_CONTENT_CHECK: "${WX_CONTENT_CHECK:-1}"
+      # 路线 A 走 Bearer 令牌，不信任云托管身份头；路线 B 在控制台另配
+      WX_TRUST_CLOUD_HEADER: "0"
       # 本地联调才打开；上线必须删除
       WX_DEV_LOGIN: "0"
     volumes:
