@@ -65,8 +65,17 @@ class ContentSecurity:
             return True, ""
         if not isinstance(data, dict):
             return True, ""
+        # 老接口用 87014 表示命中风险；v2 返回 errcode=0，把结论放在 result.suggest 里。
         if data.get("errcode") == 87014:
             return False, "这段内容可能涉及敏感信息，换一种说法再试。"
         if data.get("errcode"):
             LOG.warning("msg_sec_check 返回 errcode=%s", data.get("errcode"))
+            return True, ""
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        suggest = result.get("suggest")
+        if suggest == "risky":
+            return False, "这段内容可能涉及敏感信息，换一种说法再试。"
+        if suggest == "review":
+            # 没有人工复核通道：只记日志放行，避免正常学习内容被整段拦住。
+            LOG.info("msg_sec_check 建议人工复核（suggest=review），本次放行")
         return True, ""

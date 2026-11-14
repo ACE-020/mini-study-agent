@@ -56,6 +56,14 @@
     </view>
   </view>
 
+  <view wx:if="{{pendingTaskId}}" class="pending-bar">
+    <text class="pending-text">有一轮还在后台处理</text>
+    <view class="pending-actions">
+      <text class="pending-btn" bindtap="onResumePending">继续查看</text>
+      <text class="pending-btn danger" bindtap="onStop">停止</text>
+    </view>
+  </view>
+
   <view class="composer">
     <textarea
       class="editor"
