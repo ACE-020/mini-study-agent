@@ -1,4 +1,4 @@
-const config = require('./config.js');
+const config = require('../config.js');
 
 const TOKEN_KEY = 'study_agent_token';
 let token = wx.getStorageSync(TOKEN_KEY) || '';
@@ -17,11 +17,16 @@ function apiUrl(path) {
   return config.baseUrl + config.apiPrefix + path;
 }
 
+function isCloudAuth() {
+  return !!(config.useCloudContainer && config.cloudAuth);
+}
+
 // 统一处理 401、网络失败和后端 {ok:false,error} 三种错误，页面只处理 message。
 function request(options) {
   const method = options.method || 'GET';
   const header = Object.assign({ 'Content-Type': 'application/json' }, options.header || {});
-  if (options.auth !== false && token) {
+  // 云托管身份走平台注入的 openid：绝不能带自建环境遗留的 Bearer，否则服务端会先按旧令牌认人。
+  if (options.auth !== false && token && !isCloudAuth()) {
     header.Authorization = 'Bearer ' + token;
   }
   const payload = options.data;
@@ -121,6 +126,10 @@ function wxCode() {
 }
 
 function login() {
+  if (isCloudAuth()) {
+    // 云托管模式没有本地登录态，401 也不能退化成 wx.login。
+    return Promise.resolve('');
+  }
   if (loginPromise) {
     return loginPromise;
   }
@@ -153,31 +162,58 @@ function status() {
   return ensureLogin().then(() => request({ path: '/status' }));
 }
 
-// 提交一轮对话：返回 { task_id }，具体结果靠 pollTask 取。
+// 提交一轮对话：网络失败时用同一个 request_id 与同一份载荷重试，避免重复建任务。
 function chat(payload) {
-  return ensureLogin().then(() => request({
-    path: '/chat',
-    method: 'POST',
-    data: payload,
-    timeout: 20000
-  }));
+  const attempt = (left) => ensureLogin()
+    .then(() => request({ path: '/chat', method: 'POST', data: payload, timeout: 20000 }))
+    .catch((error) => {
+      if (left > 0 && error && error.code === 0) {
+        return new Promise((resolve) => setTimeout(resolve, 400)).then(() => attempt(left - 1));
+      }
+      throw error;
+    });
+  return attempt(2);
 }
 
 function cancel(taskId) {
-  return request({ path: '/tasks/' + taskId + '/cancel', method: 'POST' }).catch(() => null);
+  return request({ path: '/tasks/' + taskId + '/cancel', method: 'POST' });
 }
 
-// 轮询任务；1 秒一次，断网退避到 3 秒，直到结束或超时。
+// 轮询任务；1 秒一次，断网退避到 3 秒。超时不再当成失败：先确认一次，
+// 还在跑就返回 status='timeout'，让页面明确告诉用户“后台还在处理”。
 function pollTask(taskId, onUpdate, options) {
   const opts = options || {};
-  const timeoutMs = opts.timeoutMs || 240000;
+  const timeoutMs = opts.timeoutMs || 600000;
   const deadline = Date.now() + timeoutMs;
   let delay = 800;
 
   return new Promise((resolve, reject) => {
+    const settleTimeout = () => {
+      request({ path: '/tasks/' + taskId, timeout: 15000 })
+        .then((body) => {
+          if (body.status === 'running') {
+            resolve({ ok: false, task_id: taskId, status: 'timeout',
+                      error: '这一轮还在后台处理，稍后会出结果' });
+          } else {
+            if (onUpdate) {
+              onUpdate(body);
+            }
+            resolve(body);
+          }
+        })
+        .catch((error) => {
+          if (error.code === 401 || error.code === 404) {
+            // 最终确认拿到 401/404：任务确实不在了，不能当成“还在后台跑”。
+            reject(error);
+            return;
+          }
+          resolve({ ok: false, task_id: taskId, status: 'timeout',
+                    error: '这一轮还在后台处理，稍后会出结果' });
+        });
+    };
     const step = () => {
       if (Date.now() > deadline) {
-        reject({ code: 0, message: '这次等待超时了，可以稍后在记录里查看结果' });
+        settleTimeout();
         return;
       }
       request({ path: '/tasks/' + taskId, timeout: 15000 })
@@ -319,6 +355,7 @@ function reviewProgress() {
 module.exports = {
   request: request,
   login: login,
+  isCloudAuth: isCloudAuth,
   ensureLogin: ensureLogin,
   status: status,
   chat: chat,

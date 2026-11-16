@@ -32,12 +32,14 @@ Page({
         const notes = results[0] || {};
         const mistakes = results[1] || {};
         const progress = results[2] || null;
+        const groups = (progress && progress.progress) || {};
+        const attempts = Object.keys(groups).reduce((total, key) => total + (groups[key].count || 0), 0);
         this.setData({
           notes: notes.notes || [],
           noteTotal: notes.total || 0,
           mistakes: (mistakes.mistakes || []).slice(0, 20),
           mistakeTotal: mistakes.total || 0,
-          progress: progress ? { attempts: (progress.progress || {}).attempts || 0 } : null,
+          progress: progress ? { attempts: attempts } : null,
           loading: false
         });
       })

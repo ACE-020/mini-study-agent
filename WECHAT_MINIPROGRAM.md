@@ -133,6 +133,7 @@ docker push <镜像仓库地址>/study-agent:1
 | 变量 | 值 |
 | --- | --- |
 | `WX_TRUST_CLOUD_HEADER` | `1`（信任平台注入的 `X-WX-OPENID`，这是免 `wx.login` 的关键） |
+| `WX_TRUST_CLOUD_SOURCE` | 可选，填 `wx_client` 时只接受该 `X-WX-SOURCE` 的请求，其余一律 401（**仅来源筛选，不是安全证明**） |
 | `LLM_API_KEY` | 你的模型密钥 |
 | `LLM_MODEL` / `LLM_BASE_URL` | 可选，默认 `deepseek-v4-pro` / `https://api.deepseek.com` |
 | `OCR_MODEL` / `OCR_API_KEY` | 可选，识图用 |
@@ -142,6 +143,8 @@ docker push <镜像仓库地址>/study-agent:1
 | `WX_DEV_LOGIN` | **`0`，绝不能是 1** |
 
 `WX_APPID` / `WX_SECRET` 在路线 B 里**不是身份认证必需的**：身份由 `X-WX-OPENID` 提供。但**内容安全必须要它们**，所以建议一并配上。配了之后同一套代码也能走 `wx.login`（以后接 H5 或自建端会用到）。
+
+**信任 `X-WX-OPENID` 的前提是入口只对微信内开放。** `X-WX-OPENID` 与 `X-WX-SOURCE` 都是请求头，公网入口上任何人都能自己带；`WX_TRUST_CLOUD_SOURCE` 只是把来源范围收窄，不能当作身份证明，也不是第二道安全边界。真正的边界只有一个：**关闭云托管公网访问**。在开关打开之前不要上生产。
 
 云托管调用依赖较新的基础库：`app.js` 会检测 `wx.cloud`，`utils/api.js` 会检测 `wx.cloud.callContainer`，低版本微信上会直接提示"请升级微信"，不会白屏。
 
@@ -167,7 +170,7 @@ docker push <镜像仓库地址>/study-agent:1
 #### 云托管的三个代价
 
 1. **要常驻 1 个实例**才能保证任务不丢，等于有基础费用（按控制台计费页的价格算，不要按"请求数"估）。
-2. **请求体不宜过大**：图片走 `POST /api/v1/uploads/base64`，小程序端会先 `wx.compressImage` 压到 70 质量再传，单张上限 4 MB。不要指望传扫描版 PDF。
+2. **请求体不宜过大**：图片走 `POST /api/v1/uploads/base64`，小程序端会先 `wx.compressImage` 压到 70 质量再传；单张 4 MB、4 张合计 16 MB、请求体上限 24 MB。不要指望传扫描版 PDF。
 3. **冷启动**：实例重启后第一轮对话会慢几秒（要重新加载 Python 和依赖）。
 
 ### 4.3 路线 A：自建服务器（备选）
@@ -177,13 +180,16 @@ docker push <镜像仓库地址>/study-agent:1
 ```bash
 git clone <你的仓库> /opt/study-agent && cd /opt/study-agent
 cp deploy/env.example deploy/.env      # 填 4.1 与 4.2 第 4 步的变量，再加 WX_APPID / WX_SECRET
-docker compose up -d
+# compose 不会自动读取 deploy/.env，必须显式指定
+docker compose --env-file deploy/.env up -d
 
 # Nginx + 证书
 sudo certbot --nginx -d study.example.com
 sudo cp deploy/nginx.conf /etc/nginx/conf.d/study-agent.conf   # 改域名和证书路径
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+> `docker-compose.yml` 是**路线 A 专用**：它强制要求 `WX_APPID` / `WX_SECRET`（走 Bearer 令牌），并显式传 `WX_CONTENT_CHECK`、`WX_TRUST_CLOUD_HEADER=0`。路线 B 不用 compose，变量在云托管控制台配。
 
 要点：
 
@@ -255,8 +261,8 @@ devLogin: false
 
 **其它已知边界**
 
-- 单张图片 8 MB、整批 512 MB、文本 8 万字；云托管的 base64 通道单张限 4 MB、整包 20 MB；
-- 前端轮询 4 分钟超时（`utils/api.js` 的 `pollTask`），超时不会中断服务端任务；
+- 单张图片 8 MB、整批 512 MB、文本 8 万字；云托管的 base64 通道单张 4 MB、4 张合计 16 MB、请求体上限 24 MB；
+- 前端轮询 10 分钟超时（`utils/api.js` 的 `pollTask`）：超时不会中断服务端任务，页面会保留任务句柄，可「继续查看」或「停止」；
 - 服务重启会丢"正在处理"的轮询句柄，但**已保存的笔记、错题不会丢**（写盘是原子替换）。
 
 ---
@@ -277,7 +283,7 @@ devLogin: false
 | POST | `/api/v1/account/delete` | `{confirm:true}` → 删除该用户全部数据，不可恢复 |
 | GET | `/api/v1/notes` · `/notes/<id>` | 笔记列表 / 单篇全文 |
 | GET | `/api/v1/mistakes` | 错题列表 |
-| GET | `/api/v1/review/catalog` · `/review/progress` | 复习范围树 / 进度 |
+| GET | `/api/v1/review/catalog` · `/review/progress` | 复习范围树 / 作答进度（每次作答落盘，重启可读） |
 | POST | `/api/v1/review/select` | 按知识点挑一道原题（同步，不调模型） |
 
 `view` 取值：`organize`（整理）、`notes`（笔记）、`review`（复习）。
@@ -299,6 +305,8 @@ curl -s $BASE/api/v1/tasks/$TASK -H "Authorization: Bearer $TOKEN"
 
 ## 8. 还没做（按优先级）
 
+本分支声明支持的路径：登录 / 状态、上传并带图提交、对话（提交 + 轮询 + 重试 + 取消）、记录读取、复习（目录 / 选题 / 作答进度）、删除账号。下面这些**未实现，不属于本轮范围**：
+
 1. **作答照片 OCR**：现在复习只能文字作答。网页版已有 `make_reader()` 的完整链路，挪到 `wx_api.py` 即可，主要是把 `review_images` 那段搬过来。
 2. **流式输出**：`wx.request` 的 `enableChunked` + `onChunkReceived`，或 `wx.connectSocket`。当前模型是整段返回，价值主要在"等待时的细节进度"，现阶段的轮询已经能用。
 3. **笔记 PDF / Markdown 下载**：小程序打开 PDF 体验差，建议改成"复制 Markdown"（已实现）或生成分享图。
@@ -314,11 +322,13 @@ curl -s $BASE/api/v1/tasks/$TASK -H "Authorization: Bearer $TOKEN"
 | --- | --- |
 | `wx_api.py` | 小程序 API：鉴权、用户隔离、任务轮询、上传 |
 | `wx_security.py` | 微信内容安全（`msg_sec_check`），默认关闭 |
-| `tests/test_wx_api.py` | 接口回归测试（登录、幂等、取消、跨用户隔离、错误脱敏） |
+| `tests/test_wx_api.py` | 接口回归测试（登录、幂等、取消、跨用户隔离、删除隔离、错误脱敏） |
+| `tests/test_wx_security.py` | 内容安全边界（v1 `87014`、v2 `result.suggest`、接口故障放行） |
+| `tests/miniprogram_harness.cjs` · `tests/test_miniprogram_js.py` | 用模拟 `wx` 真实加载小程序脚本，跑自建/云托管两条传输路径与两个页面 |
 | `miniprogram/` | 小程序端：`utils/api.js` 封装请求与轮询，两个页面（整理 / 记录） |
 | `Dockerfile` · `deploy/start.sh` | 容器入口：统一按 `$PORT` 监听（云托管 80，自建 8766），只开 1 worker |
 | `docker-compose.yml` · `deploy/env.example` | 自建部署的环境变量模板，`/data` 必须挂卷 |
-| `.dockerignore` | 构建时排除 `.venv`、`data/`、`.tools/`，否则镜像会大几百 MB |
+| `.dockerignore` | 构建时排除 `.venv`、`data/`、`.tools/`、`.codex/`、`.env*`、`.local-settings*`，避免镜像过大或把本地凭据带进去 |
 | `deploy/nginx.conf` | HTTPS 反代与上传体积配置 |
 | `deploy/study-agent-wx.service` | 不用 Docker 时的 systemd 单元 |
 | `requirements-server.txt` | 服务端依赖（比网页版少了浏览器自动化） |

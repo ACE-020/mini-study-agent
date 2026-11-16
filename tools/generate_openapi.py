@@ -71,6 +71,12 @@ TEXT = {"type": "string"}
 BOOL = {"type": "boolean"}
 FORM_FILE = {"type": "string", "format": "binary"}
 
+# 与 review_progress.py 保持一致；这里不导入业务模块，生成器只依赖标准库。
+REVIEW_OUTCOMES = ["not_answered", "unassessed", "partial", "incorrect", "correct"]
+REVIEW_RESULT_OUTCOMES = ["unassessed", "partial", "incorrect", "correct"]
+REVIEW_ERROR_TAGS = ["concept", "conditions", "method", "formula", "calculation",
+                     "reasoning", "reading", "notation", "unconfirmed"]
+
 
 # ---------------------------------------------------------------------------- 路由说明表
 # 键与 web.py 中的装饰器路径一致（含 <参数>）；缺失的路由会被 --check 报错。
@@ -228,6 +234,39 @@ PATHS = {
                      requestBody=json_body("ReviewSelection"),
                      responses={**ok("当前题", "ReviewSelectionResult"), **err(400, "筛选条件非法"), **err(409, "有请求正在处理中"),
                                 **err(499, "已停止")}),
+    },
+    "/api/review/progress": {
+        "get": dict(summary="复习进度与当前题快照", tags=["复习"],
+                    description="返回本轮复习状态、当前作答记录与按题目聚合的作答进度；只读本地 JSON，不调用模型。",
+                    responses={**ok("复习进度", "ReviewProgressResponse"), **err(400, "做题记录读取失败")}),
+    },
+    "/api/review/history": {
+        "get": dict(summary="做题记录（分页）", tags=["复习"],
+                    description="按题号过滤的作答历史，含每轮作答文本与判定记录；只读本地 JSON。",
+                    parameters=[
+                        param("question_id", "query", "题号（exercise:… / mistake:…）",
+                              dict(TEXT, maxLength=120), required=False),
+                        param("offset", "query", "起始偏移", {"type": "integer", "minimum": 0, "default": 0},
+                              required=False),
+                        param("limit", "query", "每页条数", {"type": "integer", "minimum": 1, "maximum": 100,
+                                                          "default": 20}, required=False),
+                    ],
+                    responses={**ok("作答历史", "ReviewHistory"),
+                               **err(400, "查询范围非法或做题记录读取失败")}),
+    },
+    "/api/review/result": {
+        "post": dict(summary="人工核对做题结果", tags=["复习"],
+                     description="用户确认本题的作答情况；尚未作答返回 400，尚未选题或当前题已变化返回 409。",
+                     requestBody=json_body("ReviewResultRequest"),
+                     responses={**ok("更新后的复习状态", "ReviewResultResponse"),
+                                **err(400, "判定字段非法 / 尚未作答"),
+                                **err(409, "尚未选题 / 当前题已变化 / 有请求正在处理中")}),
+    },
+    "/api/review/end": {
+        "post": dict(summary="结束本轮复习", tags=["复习"],
+                     description="关闭当前作答记录并清空本轮复习状态；已保存的笔记与错题不受影响。",
+                     responses={**ok("结束后的复习状态", "ReviewResultResponse"),
+                                **err(400, "做题记录读取失败"), **err(409, "有请求正在处理中")}),
     },
     "/api/chat": {
         "post": dict(
@@ -751,6 +790,96 @@ SCHEMAS = {
             "selection": {"type": "object"},
             "current_question": {"oneOf": [ref("CurrentQuestion"), {"type": "null"}]},
         },
+    },
+    "ReviewAttempt": {
+        "type": "object",
+        "required": ["id", "question_id", "round_id", "started_at", "updated_at", "outcome",
+                     "assisted", "was_wrong", "error_tags", "turn_count", "independent_correct",
+                     "question_title"],
+        "properties": {
+            "id": TEXT,
+            "question_id": TEXT,
+            "round_id": TEXT,
+            "started_at": {"type": "string", "format": "date-time"},
+            "updated_at": {"type": "string", "format": "date-time"},
+            "closed_at": {"type": ["string", "null"]},
+            "first_answer_at": {"type": ["string", "null"]},
+            "outcome": {"type": "string",
+                        "enum": ["not_answered", "unassessed", "partial", "incorrect", "correct"]},
+            "assisted": BOOL,
+            "was_wrong": BOOL,
+            "error_tags": {"type": "array", "items": {"type": "string", "enum": REVIEW_ERROR_TAGS}},
+            "turn_count": {"type": "integer"},
+            "independent_correct": BOOL,
+            "question_title": TEXT,
+            "turns": {"type": "array", "description": "仅在 /api/review/history 中返回",
+                      "items": {"type": "object", "required": ["at", "request_id", "text"],
+                                "properties": {"at": {"type": "string"}, "request_id": TEXT,
+                                               "text": TEXT}}},
+            "assessments": {"type": "array", "description": "仅在 /api/review/history 中返回",
+                            "items": {"type": "object", "required": ["at", "source", "turn", "outcome",
+                                                                     "assisted", "error_tags", "evidence"],
+                                      "properties": {"at": {"type": "string"},
+                                                     "source": {"type": "string", "enum": ["model", "user"]},
+                                                     "turn": {"type": "integer"},
+                                                     "outcome": {"type": "string", "enum": REVIEW_OUTCOMES},
+                                                     "assisted": BOOL,
+                                                     "error_tags": {"type": "array",
+                                                                    "items": {"type": "string", "enum": REVIEW_ERROR_TAGS}},
+                                                     "evidence": TEXT}}},
+        },
+    },
+    "ReviewSnapshot": {
+        "type": "object", "required": ["round_id", "seen_ids", "current_attempt"],
+        "properties": {
+            "round_id": {"type": ["string", "null"]},
+            "seen_ids": {"type": "array", "items": TEXT},
+            "current_attempt": {"oneOf": [ref("ReviewAttempt"), {"type": "null"}]},
+            "selection": {"oneOf": [ref("ReviewSelection"), {"type": "null"}]},
+            "current_question": {"oneOf": [ref("CurrentQuestion"), {"type": "null"}]},
+        },
+    },
+    "ReviewProgressSummary": {
+        "type": "object", "additionalProperties": {
+            "type": "object", "required": ["count", "last", "error_tags", "assisted_count", "correct_count"],
+            "properties": {"count": {"type": "integer"},
+                           "last": ref("ReviewAttempt"),
+                           "error_tags": {"type": "array", "items": {"type": "string", "enum": REVIEW_ERROR_TAGS}},
+                           "assisted_count": {"type": "integer"},
+                           "correct_count": {"type": "integer"}}},
+    },
+    "ReviewProgressResponse": {
+        "type": "object", "required": ["ok", "review", "progress", "error_types"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "review": ref("ReviewSnapshot"),
+                       "progress": ref("ReviewProgressSummary"),
+                       "error_types": {"type": "object", "additionalProperties": TEXT}},
+    },
+    "ReviewHistory": {
+        "type": "object", "required": ["ok", "total", "attempts"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "total": {"type": "integer"},
+                       "attempts": {"type": "array", "items": ref("ReviewAttempt")}},
+    },
+    "ReviewResultRequest": {
+        "type": "object",
+        "required": ["attempt_id", "outcome", "assisted", "error_tags", "evidence"],
+        "properties": {
+            "attempt_id": dict(TEXT, description="当前题对应的作答记录 id"),
+            "outcome": {"type": "string", "enum": REVIEW_RESULT_OUTCOMES,
+                        "description": "correct=独立答对；incorrect=答错；partial=部分正确；unassessed=暂不判定"},
+            "assisted": dict(BOOL, description="本次作答是否借助了提示或讲解"),
+            "error_tags": {"type": "array", "maxItems": len(REVIEW_ERROR_TAGS),
+                           "items": {"type": "string", "enum": REVIEW_ERROR_TAGS}},
+            "evidence": dict(TEXT, minLength=1, maxLength=1500, description="判定依据"),
+        },
+        "additionalProperties": False,
+    },
+    "ReviewResultResponse": {
+        "type": "object", "required": ["ok", "review", "progress"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "review": ref("ReviewSnapshot"),
+                       "progress": ref("ReviewProgressSummary")},
     },
     "ChatRequest": {
         "type": "object", "required": ["message"],
