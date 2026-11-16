@@ -1,0 +1,64 @@
+<view class="page">
+  <view wx:if="{{error}}" class="notice">{{error}}</view>
+
+  <view class="summary">
+    <view class="stat">
+      <text class="value">{{noteTotal}}</text>
+      <text class="label">篇笔记</text>
+    </view>
+    <view class="stat">
+      <text class="value">{{mistakeTotal}}</text>
+      <text class="label">道错题</text>
+    </view>
+    <view class="stat">
+      <text class="value">{{progress.attempts || 0}}</text>
+      <text class="label">次作答</text>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">笔记</view>
+    <view wx:if="{{!notes.length}}" class="empty">还没有笔记。让整理助手把一道题讲清楚，并说“整理成笔记”。</view>
+    <view
+      wx:for="{{notes}}"
+      wx:key="id"
+      class="card"
+      data-id="{{item.id}}"
+      bindtap="openNote"
+    >
+      <view class="card-title">{{item.topic}}</view>
+      <view class="card-body">{{item.excerpt}}</view>
+      <view class="card-meta">{{item.chars}} 字</view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="section-title">最近的错题</view>
+    <view wx:if="{{!mistakes.length}}" class="empty">还没有错题。答错的题说“记成错题”，会上卡片的答案和错因一起保存。</view>
+    <view wx:for="{{mistakes}}" wx:key="id" class="card plain">
+      <view class="card-title">{{item.topic}}</view>
+      <view class="card-body">{{item.question}}</view>
+      <view class="card-meta">我的答案：{{item.user_answer}}</view>
+    </view>
+  </view>
+
+  <view class="footer">
+    <text>下拉可刷新</text>
+    <text class="danger" bindtap="onDeleteAccount">删除我的全部数据</text>
+  </view>
+
+  <view wx:if="{{detail}}" class="sheet-mask" bindtap="closeDetail">
+    <view class="sheet" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">{{detail.topic}}</text>
+        <text class="sheet-close" bindtap="closeDetail">关闭</text>
+      </view>
+      <scroll-view class="sheet-body" scroll-y>
+        <rich-text nodes="{{detailHtml}}" />
+      </scroll-view>
+      <view class="sheet-foot">
+        <button class="btn" bindtap="copyDetail">复制 Markdown</button>
+      </view>
+    </view>
+  </view>
+</view>

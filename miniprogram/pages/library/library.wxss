@@ -1,0 +1,171 @@
+page {
+  background: #f6f3ec;
+}
+
+.page {
+  padding: 20rpx 24rpx 60rpx;
+  box-sizing: border-box;
+}
+
+.notice {
+  margin-bottom: 20rpx;
+  padding: 18rpx 22rpx;
+  background: #fdece6;
+  color: #a4482c;
+  border-radius: 14rpx;
+  font-size: 26rpx;
+}
+
+.summary {
+  display: flex;
+  background: #fdfcf8;
+  border: 1rpx solid #e8e1d1;
+  border-radius: 20rpx;
+  padding: 26rpx 12rpx;
+  margin-bottom: 28rpx;
+}
+
+.stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.value {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: #2f6f5e;
+}
+
+.label {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: #8a8474;
+}
+
+.section {
+  margin-bottom: 30rpx;
+}
+
+.section-title {
+  font-size: 28rpx;
+  color: #6f6a5c;
+  margin: 0 4rpx 14rpx;
+  letter-spacing: 1rpx;
+}
+
+.empty {
+  padding: 26rpx 24rpx;
+  background: #fbf9f4;
+  border: 1rpx dashed #ded6c4;
+  border-radius: 16rpx;
+  font-size: 26rpx;
+  color: #8a8474;
+  line-height: 1.7;
+}
+
+.card {
+  background: #fdfcf8;
+  border: 1rpx solid #e8e1d1;
+  border-radius: 18rpx;
+  padding: 22rpx 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #22352e;
+  margin-bottom: 8rpx;
+}
+
+.card-body {
+  font-size: 27rpx;
+  color: #55503f;
+  line-height: 1.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.card-meta {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #9a9484;
+}
+
+.footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16rpx;
+  font-size: 23rpx;
+  color: #b3ac9c;
+  padding: 20rpx 0 10rpx;
+}
+
+.footer .danger {
+  font-size: 25rpx;
+  color: #a4482c;
+  padding: 10rpx 0;
+}
+
+.sheet-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(30, 28, 22, 0.42);
+  display: flex;
+  align-items: flex-end;
+  z-index: 20;
+}
+
+.sheet {
+  width: 100%;
+  max-height: 82vh;
+  background: #fdfcf8;
+  border-radius: 26rpx 26rpx 0 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 28rpx 12rpx;
+}
+
+.sheet-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #22352e;
+}
+
+.sheet-close {
+  font-size: 26rpx;
+  color: #2f6f5e;
+}
+
+.sheet-body {
+  flex: 1;
+  padding: 8rpx 28rpx;
+  max-height: 62vh;
+}
+
+.sheet-foot {
+  padding: 18rpx 28rpx 24rpx;
+}
+
+.btn {
+  background: #2f6f5e;
+  color: #ffffff;
+  font-size: 28rpx;
+  border-radius: 999rpx;
+}
