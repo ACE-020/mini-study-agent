@@ -383,6 +383,42 @@ class AccountTests(unittest.TestCase):
                                     headers=self.auth())
         self.assertEqual(response.status_code, 200)
 
+    # ---- 一把 Key 管全部
+
+    def test_personal_key_also_covers_ocr(self):
+        """个人 Key 生效时，图片识别也用同一把 Key，不再要求管理员单独配 OCR Key。"""
+        import base64
+
+        response = self.client.post("/api/v1/me/model",
+                                    json={"api_key": "sk-owner", "model": "deepseek-v4-pro"},
+                                    headers=self.auth())
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        status = response.get_json()["model"]
+        self.assertTrue(status["ocr_configured"], status)
+        self.assertEqual(status["ocr_source"], "user", status)
+        self.assertEqual(status["ocr_model"], "deepseek-flash", status)
+
+        upload = self.client.post("/api/v1/uploads/base64",
+                                  json={"images": [{"data": base64.b64encode(png_bytes(32)).decode()}]},
+                                  headers=self.auth())
+        self.assertEqual(upload.status_code, 200, upload.get_data(as_text=True))
+        image_id = upload.get_json()["image_ids"][0]
+        chat = self.client.post("/api/v1/chat", json={"message": "看图", "image_ids": [image_id]},
+                                headers=self.auth())
+        self.assertEqual(chat.status_code, 202, chat.get_data(as_text=True))
+        deadline = time.time() + 6
+        current = {}
+        while time.time() < deadline:
+            current = self.client.get("/api/v1/tasks/" + chat.get_json()["task_id"],
+                                      headers=self.auth()).get_json()
+            if current["status"] != "running":
+                break
+            time.sleep(0.02)
+        self.assertEqual(current["status"], "done", current)
+        self.assertTrue(any(t["source"] == "user" and t["api_key"] == "sk-owner"
+                            and t["model"] == "deepseek-flash" for t in self.targets),
+                        self.targets)
+
     # ---- 老部署兼容
 
     def test_ocr_only_deployment_still_accepts_images(self):

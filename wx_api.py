@@ -34,6 +34,9 @@ from urllib.request import Request, urlopen
 from flask import Flask, g, jsonify, request
 
 from agent import StudyAgent
+from conversation_store import clear as clear_conversation
+from conversation_store import load as load_conversation
+from conversation_store import save as save_conversation
 from cancellation import CancellationToken, OperationCancelled
 from document_input import MAX_BATCH_BYTES, MAX_TEXT
 from llm import ModelClient, ModelError
@@ -41,7 +44,7 @@ from material_sources import bounded_upload_image, capture_materials
 from review_progress import ERROR_TYPES, ReviewProgress
 from settings import DEFAULT_MODEL, SettingsStore, load_user_environment
 from tools import LocalTools
-from wx_account import (MAX_AVATAR_CHARS, NO_KEY_MESSAGE, USER_MODEL_BASE,
+from wx_account import (MAX_AVATAR_CHARS, NO_KEY_MESSAGE, USER_MODEL_BASE, USER_OCR_MODEL,
                         USER_MODEL_PROVIDER, USER_MODEL_PROVIDER_LABEL, USER_MODEL_SUGGESTIONS,
                         SecretBox, SecretCorrupt, SecretUnavailable, UserAccount, clean_api_key,
                         clean_model, clean_nickname)
@@ -397,9 +400,13 @@ class UserState:
 
     def reset(self) -> None:
         with self.lock:
+            views = list(self.agents)
             self.agents.clear()
             self.images.clear()
             self.image_order.clear()
+        # 内存里清了还不够：磁盘上的上下文也要删，否则重启后旧对话会“复活”。
+        for view in set(views) | set(VIEWS):
+            clear_conversation(self.directory, view)
 
 
 class Registry:
@@ -668,12 +675,16 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
         shared = shared_summary()
         try:
             return account_for(state).model_status(shared_configured=shared["configured"],
-                                                   shared_model=shared["model"])
+                                                   shared_model=shared["model"],
+                                                   shared_ocr_configured=shared["ocr_configured"])
         except ValueError:
             LOG.warning("个人模型配置无法读取 uid=%s", g.uid[:12])
             return {"configured": shared["configured"], "key_saved": False,
                     "source": "server" if shared["configured"] else "",
                     "model": shared.get("model") or DEFAULT_MODEL,
+                    "ocr_model": USER_OCR_MODEL,
+                    "ocr_configured": bool(shared.get("ocr_configured")),
+                    "ocr_source": "server" if shared.get("ocr_configured") else "",
                     "provider": USER_MODEL_PROVIDER, "provider_label": USER_MODEL_PROVIDER_LABEL,
                     "updated_at": 0, "key_error": "个人模型配置无法读取，请重新保存。",
                     "shared_configured": shared["configured"],
@@ -682,16 +693,12 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
     def resolve_model_target(ocr: bool = False, state: UserState | None = None) -> dict | None:
         """返回 {base_url, api_key, model, source}；没有可用配置时返回 None。
 
-        个人 Key 永远绑定 DeepSeek 官方地址：客户端提交的 base_url 一律不接受，
-        管理员自定义域名也只用于共享配置。
+        一把 Key 管全部：个人 Key 生效时，文字和图片识别都用它（地址固定为受信供应商，
+        客户端提交的 base_url 一律不接受）；只有在没有个人 Key 时才回落到管理员的共享配置。
         """
         try:
-            if ocr:
-                values = settings.resolve()
-                return {"base_url": values["ocr_base_url"], "api_key": values["ocr_api_key"],
-                        "model": values["ocr_model"], "source": "server"}
             if state is not None:
-                personal = account_for(state).model_target()
+                personal = account_for(state).model_target(ocr=ocr)
                 if personal:
                     return personal
             values = settings.resolve()
@@ -701,6 +708,10 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
             raise SettingsError(str(exc)) from None
         except ValueError:
             raise SettingsError("模型配置无法读取，请让管理员检查服务端设置。") from None
+        if ocr:
+            # 共享配置只配了 OCR Key 的老部署：这里仍然返回，交给调用方报“缺 Key”。
+            return {"base_url": values["ocr_base_url"], "api_key": values["ocr_api_key"],
+                    "model": values["ocr_model"], "source": "server"}
         if not values["api_key"]:
             return None
         return {"base_url": values["base_url"], "api_key": values["api_key"],
@@ -820,7 +831,7 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
                         "personal_model": summary["key_saved"],
                         "key_error": summary["key_error"],
                         # 只配置了 OCR Key 的老部署：图片那一轮仍然能跑，这里如实说明。
-                        "ocr_configured": shared["ocr_configured"],
+                        "ocr_configured": summary.get("ocr_configured", shared["ocr_configured"]),
                         "settings_hint": "" if configured else NO_KEY_MESSAGE,
                         "mistakes": mistakes,
                         "views": list(VIEWS), "max_images": MAX_IMAGES,
@@ -921,16 +932,20 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
             return None, error("请提交模型配置。")
         if "base_url" in payload:
             return None, error("模型服务地址由管理员配置，小程序不能修改它。")
-        if set(payload) - {"api_key", "model"}:
+        if set(payload) - {"api_key", "model", "ocr_model"}:
             return None, error("模型配置包含未知字段，请刷新小程序后重试。")
         raw_model = payload.get("model")
         model_given = isinstance(raw_model, str) and bool(raw_model.strip())
+        raw_ocr = payload.get("ocr_model")
+        ocr_given = isinstance(raw_ocr, str) and bool(raw_ocr.strip())
         try:
             model = clean_model(raw_model) if model_given else ""
+            ocr_model = clean_model(raw_ocr) if ocr_given else ""
             api_key = clean_api_key(payload.get("api_key"))
         except ValueError as exc:
             return None, error(str(exc))
-        return {"api_key": api_key, "model": model, "model_given": model_given}, None
+        return {"api_key": api_key, "model": model, "model_given": model_given,
+                "ocr_model": ocr_model}, None
 
     @app.post("/api/v1/me/model")
     @require_user
@@ -944,7 +959,7 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
         if blocked:
             return blocked
         try:
-            account_for(state).save_model(values["api_key"], values["model"])
+            account_for(state).save_model(values["api_key"], values["model"], values["ocr_model"])
         except SecretUnavailable as exc:
             return error(str(exc), 503)
         except (SecretCorrupt, ValueError) as exc:
@@ -1143,9 +1158,14 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
             if data["new_problem"]:
                 # 新题等于开新对话：丢掉这个视图的上下文，避免旧题条件串进来。
                 state.agents.pop(data["view"], None)
+                clear_conversation(state.directory, data["view"])
             agent = state.agents.get(data["view"])
             if agent is None:
                 agent = StudyAgent(None, state.tools)
+                # 进程重启后从这里把上一轮上下文接回来（只重放文本，图片用占位符）。
+                restored = load_conversation(state.directory, data["view"])
+                if restored:
+                    agent.messages = restored
                 state.agents[data["view"]] = agent
             agent.trace = lambda event, value: tasks.add_step(task, {
                 "event": event,
@@ -1187,6 +1207,12 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
             tasks.finish(task, "error", error_code="internal", error="服务暂时不可用，请稍后重试。")
         finally:
             task["token"].on_progress = None
+            try:
+                finished = state.agents.get(data["view"])
+                if finished is not None and not state.deleted:
+                    save_conversation(state.directory, data["view"], finished.messages)
+            except OSError:
+                LOG.warning("保存对话上下文失败 uid=%s view=%s", state.key[:12], data["view"])
             state.end()
 
     @app.post("/api/v1/chat")
@@ -1383,6 +1409,8 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
                 agent.inherit_review_round(previous)
             answer = agent.start_review(selection, token)
             state.agents["review"] = agent
+            # 选题也是对话的一部分：落盘后重启仍能接着讲这道题。
+            save_conversation(state.directory, "review", agent.messages)
             return jsonify({"ok": True, "answer": answer, "selection": selection,
                             "current_question": agent.current_question,
                             "review": agent.review_snapshot(),

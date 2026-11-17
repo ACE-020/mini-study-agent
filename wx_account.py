@@ -58,6 +58,10 @@ USER_MODEL_PROVIDER = "deepseek"
 USER_MODEL_PROVIDER_LABEL = "DeepSeek 官方"
 USER_MODEL_SUGGESTIONS = ("deepseek-v4-pro", "deepseek-flash")
 
+# 个人 Key 覆盖全部模型能力：文字用用户选的 model，图片识别默认用这个视觉模型，
+# 两者共用同一把 Key 和同一个受信供应商地址；管理员共享配置只在没有个人 Key 时兜底。
+USER_OCR_MODEL = "deepseek-flash"
+
 PROFILE_FILE = "profile.json"
 MODEL_FILE = "model.json"
 AVATAR_FILE = "avatar.img"
@@ -372,7 +376,8 @@ class UserAccount:
     def model_record(self) -> dict:
         return _read_json(self.model_path)
 
-    def model_status(self, shared_configured: bool = False, shared_model: str = "") -> dict:
+    def model_status(self, shared_configured: bool = False, shared_model: str = "",
+                     shared_ocr_configured: bool = False) -> dict:
         """只回传状态：有没有 Key、模型名、更新时间；不含明文或密文。
 
         结论必须和“这一轮请求实际会怎么走”一致：
@@ -390,6 +395,7 @@ class UserAccount:
             except SecretCorrupt as exc:
                 key_error = str(exc)
         personal_model = record.get("model") if isinstance(record.get("model"), str) and record.get("model") else ""
+        personal_ocr = record.get("ocr_model") if isinstance(record.get("ocr_model"), str) and record.get("ocr_model") else ""
         if key_saved and not key_error:
             configured, source = True, "user"
             model = personal_model or DEFAULT_MODEL
@@ -413,12 +419,15 @@ class UserAccount:
             "updated_at": record.get("updated_at") or 0,
             "key_error": key_error,
             "shared_configured": shared_configured,
+            "ocr_model": personal_ocr or USER_OCR_MODEL,
+            "ocr_configured": (key_saved and not key_error) or shared_ocr_configured,
+            "ocr_source": "user" if (key_saved and not key_error) else ("server" if shared_ocr_configured else ""),
             "models": list(USER_MODEL_SUGGESTIONS),
             "can_edit_base_url": False,
         }
 
-    def save_model(self, api_key: str, model: str) -> dict:
-        """保存/替换个人配置；model 为空表示“不改动已保存的模型”。"""
+    def save_model(self, api_key: str, model: str, ocr_model: str = "") -> dict:
+        """保存/替换个人配置；model / ocr_model 为空表示“不改动已保存的值”。"""
         with self.lock:
             record = self.model_record()
             if api_key:
@@ -429,6 +438,8 @@ class UserAccount:
                 record["model"] = model
             elif not (isinstance(record.get("model"), str) and record["model"]):
                 record["model"] = DEFAULT_MODEL
+            if ocr_model:
+                record["ocr_model"] = ocr_model
             record["updated_at"] = int(time.time())
             record["version"] = 1
             _atomic_write(self.model_path,
@@ -450,14 +461,22 @@ class UserAccount:
             except OSError:
                 raise ValueError("清除没有完成，请稍后重试。") from None
 
-    def model_target(self) -> dict | None:
-        """给 worker 用：返回可用的个人模型目标；没配就返回 None。"""
+    def model_target(self, ocr: bool = False) -> dict | None:
+        """给 worker 用：返回可用的个人模型目标；没配就返回 None。
+
+        一把 Key 管全部：文字用 model，图片识别用 ocr_model，地址固定为同一受信供应商。
+        """
         record = self.model_record()
         sealed = record.get("key")
         if not isinstance(sealed, dict) or not sealed.get("ct"):
             return None
         api_key = self._box().unseal(sealed, self.uid)
-        model = record.get("model") if isinstance(record.get("model"), str) and record.get("model") else DEFAULT_MODEL
+        if ocr:
+            saved_ocr = record.get("ocr_model")
+            model = saved_ocr if isinstance(saved_ocr, str) and saved_ocr else USER_OCR_MODEL
+        else:
+            saved_model = record.get("model")
+            model = saved_model if isinstance(saved_model, str) and saved_model else DEFAULT_MODEL
         return {"base_url": USER_MODEL_BASE, "api_key": api_key, "model": model, "source": "user"}
 
     def _box(self) -> SecretBox:

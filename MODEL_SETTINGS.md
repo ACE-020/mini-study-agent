@@ -29,7 +29,7 @@ Windows 下，API Key 使用当前 Windows 用户的 DPAPI 加密后存入项目
 - 个人 Key 固定发往 DeepSeek 官方地址（`https://api.deepseek.com`），小程序不能提交自定义 `base_url`；管理员自定义域名仍只用于共享配置。
 - 个人 Key 的聊天请求与「测试连接」都不跟随 HTTP 重定向，避免把 `Authorization` 转发到跳转后的地址。
 - 密钥只在服务端以 AES-256-GCM 密文保存（主密钥由 `WX_SETTINGS_SECRET` 或 `WX_TOKEN_SECRET` 经 HKDF 派生），接口、日志、小程序本地缓存都不回传或保存明文。
-- 图片识别仍走管理员配置的 OCR Key；只配置了 `OCR_API_KEY` 的老部署，带图请求照样能用。
+- **一把 Key 管全部**：个人 Key 生效后，文字整理和图片识别（默认 `deepseek-flash`，可用 `ocr_model` 单独指定）都用这把 Key，不再要求管理员单独配 OCR Key；只配置了 `OCR_API_KEY` 的老部署，没有个人 Key 时带图请求照样能用。
 - 删除账号会连头像和个人 Key 一起删除；保存设置期间删除会返回“稍后再试”，不会删到一半又被写回文件。
 - 服务端没装 `cryptography` 时，保存个人 Key 会返回明确错误（其余功能不受影响）；换了加密主密钥导致旧密文解不开时，也会明确提示重新保存。
 
