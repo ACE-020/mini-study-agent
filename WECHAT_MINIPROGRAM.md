@@ -98,6 +98,8 @@ devLogin: true                        // 配合服务端 WX_DEV_LOGIN=1
 6. **服务端依赖**：`Dockerfile` 用 `requirements-server.txt` 构建，已包含个人 Key 加密所需的 `cryptography`；手工部署请先 `pip install -r requirements-server.txt`。缺这个库时只有「设置 → 保存个人 Key」返回“服务端还没有安装加密组件”，默认账号、资料、管理员共享模型都不受影响。
 7. **个人 Key 加密主密钥（可选）**：`WX_SETTINGS_SECRET`，留空则从 `WX_TOKEN_SECRET` 派生，重启不丢。设置过就不要再改——改了等于旧密文解不开，用户需要重新保存一次（接口会明确提示，而不是静默失败）。
 
+> 部署本次「设置页 / 默认账号 / 个人模型 Key」版本（提交 `5206ae8`）时，请逐条对照 `DEPLOY_CHECKLIST_SETTINGS.md`：里面有发布前的密钥决定、环境变量表、部署后 60 秒验证（`/api/v1/me/profile` 必须 200）、真机验收与回滚/故障对照。
+
 > 只有路线 A 才需要额外做域名 ICP 备案；路线 B 不需要域名，也不需要配 request 合法域名。
 
 ### 4.2 路线 B：微信云托管（推荐）
@@ -380,6 +382,7 @@ curl -s -X POST $BASE/api/v1/me/model/clear -H "Authorization: Bearer $TOKEN"
 | `deploy/study-agent-wx.service` | 不用 Docker 时的 systemd 单元 |
 | `requirements-server.txt` | 服务端依赖（比网页版少了浏览器自动化；含 `cryptography`） |
 | `start_wx_api.cmd` | Windows 本地联调启动脚本（带 `WX_DEV_LOGIN=1`） |
+| `DEPLOY_CHECKLIST_SETTINGS.md` | 本次设置页版本的部署核对清单（发布前/后检查、真机验收、回滚对照） |
 
 > 服务端不装 playwright 时，笔记能正常保存，但 PDF 导出会返回"未完成"。小程序端本来也不提供 PDF，忽略即可。
 
