@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/static/app.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/workflow.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/math-keyboard.css?v=20261118-mathlive">
   <script defer src="/static/vendor/marked.umd.js"></script>
   <script defer src="/static/vendor/purify.min.js"></script>
   <script defer src="/static/vendor/katex/katex.min.js"></script>
@@ -19,6 +20,10 @@
   <script defer src="/static/chat-composer.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/chat-queue.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/exercise-math.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/math-keyboard.js?v=20261118-mathlive"></script>
+  <link rel="stylesheet" href="/static/vendor/mathlive/mathlive-fonts.css">
+  <script defer src="/static/vendor/mathlive/mathlive.min.js"></script>
+  <script defer src="/static/math-input-mode.js?v=20261118-mathlive"></script>
   <script defer src="/static/materials.js?v=20261026-review-focus-v20"></script>
   <link rel="stylesheet" href="/static/materials.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/notes.css?v=20261026-review-focus-v20">
@@ -78,6 +83,10 @@
             <section id="source-panel" class="panel input-panel">
               <div class="panel-heading"><div><span class="step-label">原稿</span><h2>图片、笔记、错题，都放这里</h2></div></div>
               <div class="source-tabs" role="group" aria-label="录入方式"><button class="source-tab active" data-source="image" type="button">上传文件</button><button class="source-tab" data-source="text" type="button">直接输入文字</button></div>
+              <div class="input-mode-switch" role="group" aria-label="输入方式">
+                <button class="input-mode-button active" type="button" data-input-mode="text" aria-pressed="true">文字</button>
+                <button class="input-mode-button" type="button" data-input-mode="formula" aria-pressed="false">公式（可视化）</button>
+              </div>
               <div id="image-pane">
                 <label class="drop-zone" id="drop-zone" for="image-input" tabindex="0"><input id="image-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp" class="visually-hidden"><span id="upload-placeholder"><span class="upload-icon"><svg><use href="#i-image"/></svg></span><strong>拖入文件，或点击多选</strong><small>图片、PDF、TXT、Markdown</small></span></label>
                 <div id="input-files" class="file-queue" aria-label="待处理文件"></div>
@@ -87,6 +96,10 @@
               </div>
               <div class="editor-heading"><label id="draft-label" for="draft">原稿文字与补充说明</label><button id="fill-example" class="text-button" type="button">填入示例</button></div>
               <textarea id="draft" maxlength="80000" rows="7" autocomplete="off" placeholder="粘贴笔记、题目和解题过程，也可上传文件读取。&#10;&#10;如果要记错题，请提供你的答案 / 步骤；参考答案如有可一起提供。"></textarea>
+              <div id="formula-pane" class="formula-pane" hidden>
+                <div id="formula-editor-host" class="formula-editor-host"></div>
+                <p class="formula-hint">点下方符号键插入；← → 在槽位间移动，↑ ↓ 在分子/分母、指数、积分上下限之间跳。发送时会自动转成 LaTeX。</p>
+              </div>
               <div class="editor-footer"><span>读取文字插入光标处，可继续修改。</span><span id="draft-count">0 / 80000</span></div>
               <button id="organize-submit" class="button primary full" type="button"><span>交给 AI 整理</span><svg><use href="#i-arrow"/></svg></button>
             </section>
