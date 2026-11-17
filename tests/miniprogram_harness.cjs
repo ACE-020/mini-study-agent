@@ -1,10 +1,11 @@
 // 用模拟的 wx 真实加载小程序模块，验证两条传输路径与两个页面入口。
 // 运行：node tests/miniprogram_harness.cjs
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..', 'miniprogram');
-const calls = { request: [], container: [], upload: [], toast: [] };
+const calls = { request: [], container: [], upload: [], toast: [], switchTab: [] };
 const storage = {};
 
 function url(pathname) {
@@ -18,7 +19,12 @@ function body(pathname) {
       global.__statusUnauthorizedOnce = false;
       return { __status: 401, ok: false, error: '登录已过期' };
     }
-    return { ok: true, configured: true, model: 'test', mistakes: 0, views: ['organize'] };
+    if (global.__statusConfigured === false) {
+      return { ok: true, configured: false, model: '', key_source: '', key_error: '',
+               ocr_configured: !!global.__ocrConfigured };
+    }
+    return { ok: true, configured: true, model: 'test', mistakes: 0, views: ['organize'],
+             ocr_configured: !!global.__ocrConfigured };
   }
   if (pathname === '/chat') {
     if (global.__forceConflict) {
@@ -48,6 +54,51 @@ function body(pathname) {
   if (pathname === '/review/progress') return { ok: true, review: {}, progress: { q1: { count: 3 } } };
   if (pathname === '/conversation/reset') return { ok: true };
   if (pathname === '/account/delete') return { ok: true, deleted: true };
+  if (pathname === '/me/profile') {
+    if (global.__profileMissingOnce) {
+      // 旧服务端没有这个路由：Flask 统一 404 信封
+      global.__profileMissingOnce = false;
+      return { __status: 404, ok: false, error: '接口不存在，请确认小程序版本。' };
+    }
+    if (global.__profileFailOnce) {
+      global.__profileFailOnce = false;
+      return { __status: 500, ok: false, error: '账号准备失败，请重试' };
+    }
+    const nickname = global.__profileNickname || '默认昵称';
+    return { ok: true, account: { id: 'acc-1' }, profile: {
+      nickname: nickname,
+      default_nickname: nickname === '默认昵称',
+      avatar: { kind: 'default', mime: 'image/png', version: 0, data_url: 'DEFAULT-AVATAR' },
+      updated_at: 1
+    } };
+  }
+  if (pathname === '/me/avatar') {
+    return { ok: true, account: { id: 'acc-1' }, profile: {
+      nickname: 'OLD-NICK',
+      default_nickname: false,
+      avatar: { kind: 'custom', mime: 'image/jpeg', version: 7,
+                data_url: 'data:image/jpeg;base64,AVATAR' },
+      updated_at: 2
+    } };
+  }
+  if (pathname === '/me/model') {
+    const saved = !!global.__modelSaved;
+    return { ok: true, model: {
+      configured: true, key_saved: saved, source: saved ? 'user' : 'server',
+      model: global.__modelName || 'deepseek-v4-pro', provider: 'deepseek',
+      provider_label: 'DeepSeek 官方', updated_at: saved ? 3 : 0, key_error: '',
+      shared_configured: true, models: ['deepseek-v4-pro']
+    } };
+  }
+  if (pathname === '/me/model/test') return { ok: true, test: { ok: true, error: '', latency_ms: 12 } };
+  if (pathname === '/me/model/clear') {
+    global.__modelSaved = false;
+    return { ok: true, model: {
+      configured: true, key_saved: false, source: 'server', model: 'deepseek-v4-pro',
+      provider: 'deepseek', provider_label: 'DeepSeek 官方', updated_at: 0, key_error: '',
+      shared_configured: true, models: ['deepseek-v4-pro']
+    } };
+  }
   return { ok: true };
 }
 
@@ -69,6 +120,7 @@ global.wx = {
     success({ code: 'CODE-1' });
   },
   request: (options) => {
+    const method = options.method || 'GET';
     const pathname = options.url.replace(/^https?:\/\/[^/]+/, '').replace('/api/v1', '');
     if (pathname === '/chat' && (failNextChat || global.__chatFailMode === 'fail')) {
       failNextChat = false;
@@ -78,7 +130,37 @@ global.wx = {
         return;
       }
     }
-    calls.request.push({ path: pathname, header: options.header, data: options.data });
+    calls.request.push({ path: pathname, method: method, header: options.header, data: options.data });
+    if (pathname === '/me/model' && method === 'POST') {
+      const data = options.data || {};
+      global.__modelSaved = true;
+      if (data.model) {
+        global.__modelName = data.model;
+      }
+      options.success({ statusCode: 200, data: { ok: true, model: {
+        configured: true, key_saved: true, source: 'user',
+        model: global.__modelName || 'deepseek-v4-pro', provider: 'deepseek',
+        provider_label: 'DeepSeek 官方', updated_at: 4, key_error: '',
+        shared_configured: true, models: ['deepseek-v4-pro']
+      } } });
+      return;
+    }
+    if (pathname === '/me/profile' && method === 'PUT') {
+      const data = options.data || {};
+      const nickname = (data.nickname || '').trim();
+      // 模拟“服务端回包里带着更旧的头像快照”：页面必须只合并昵称字段。
+      const reply = { statusCode: 200, data: { ok: true, account: { id: 'acc-1' }, profile: {
+        nickname: nickname, default_nickname: false,
+        avatar: { kind: 'default', mime: 'image/png', version: 0, data_url: 'DEFAULT-AVATAR' },
+        updated_at: 5
+      } } };
+      if (global.__delayProfilePut) {
+        setTimeout(() => options.success(reply), global.__delayProfilePut);
+      } else {
+        options.success(reply);
+      }
+      return;
+    }
     if (pathname === '/tasks/task-5/cancel') {
       global.__task5Cancelled = true;
       options.success({ statusCode: 200, data: { ok: true, task_id: 'task-5' } });
@@ -111,6 +193,7 @@ global.wx = {
   getFileSystemManager: () => ({ readFile: ({ success }) => success({ data: 'BASE64PAYLOAD' }) }),
   showToast: (options) => calls.toast.push(options.title),
   showModal: ({ success }) => success({ confirm: true }),
+  switchTab: ({ url }) => { calls.switchTab.push(url); },
   stopPullDownRefresh: () => {},
   setClipboardData: () => {},
   chooseMedia: ({ success }) => success({ tempFiles: [{ tempFilePath: '/tmp/a.jpg' }] }),
@@ -130,8 +213,9 @@ global.wx = {
 };
 
 let pageDefinition = null;
+let appDefinition = null;
 global.Page = (definition) => { pageDefinition = definition; };
-global.App = () => {};
+global.App = (definition) => { appDefinition = definition; };
 
 function loadPage(relative) {
   pageDefinition = null;
@@ -147,18 +231,48 @@ function loadPage(relative) {
   return page;
 }
 
+function loadApp(relative) {
+  appDefinition = null;
+  const file = path.join(ROOT, relative);
+  delete require.cache[require.resolve(file)];
+  require(file);
+  assert.ok(appDefinition, relative + ' 应该注册 App');
+  const app = Object.assign({}, appDefinition);
+  app.globalData = Object.assign({}, appDefinition.globalData || {});
+  return app;
+}
+
+// 测试 fixture 的统一开关：显式把配置切到自建 HTTP，并清掉 api 缓存，
+// 让页面 require 到的 api 与 config 都是这一份（用户 config.js 里的云托管配置不能被改）。
+function useSelfHostedHttp() {
+  const configPath = path.join(ROOT, 'config.js');
+  const apiPath = path.join(ROOT, 'utils', 'api.js');
+  delete require.cache[require.resolve(configPath)];
+  const config = require(configPath);
+  config.useCloudContainer = false;
+  config.cloudAuth = false;
+  config.devLogin = true;
+  config.baseUrl = 'http://127.0.0.1:8766';
+  delete require.cache[require.resolve(apiPath)];
+  return require(apiPath);
+}
+
+function assertHttpRequests(tag) {
+  const broken = calls.request.filter((item) => item.path.indexOf('study-agent') === 0
+    || item.path.indexOf('http') === 0);
+  assert.equal(broken.length, 0, tag + ' 的请求必须走 HTTP baseUrl，实际路径：'
+    + JSON.stringify(broken.map((item) => item.path)));
+}
+
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function selfHosted() {
-  const config = require(path.join(ROOT, 'config.js'));
-  config.useCloudContainer = false;
-  config.devLogin = true;
-  config.baseUrl = 'http://127.0.0.1:8766';
-  const api = require(path.join(ROOT, 'utils', 'api.js'));
+  const api = useSelfHostedHttp();
 
   await api.ensureLogin();
   assert.ok(storage.study_agent_token, '登录后应保存令牌');
   assert.ok(calls.request.some((item) => item.path === '/auth/login'), '应走 /auth/login');
+  assertHttpRequests('自建模式');
 
   const status = await api.status();
   assert.equal(status.configured, true);
@@ -201,7 +315,9 @@ async function selfHosted() {
 }
 
 async function cloudRun() {
-  const config = require(path.join(ROOT, 'config.js'));
+  const configPath = path.join(ROOT, 'config.js');
+  delete require.cache[require.resolve(configPath)];
+  const config = require(configPath);
   config.useCloudContainer = true;
   config.cloudAuth = true;
   config.cloudEnv = 'prod';
@@ -249,37 +365,72 @@ async function cloudRun() {
 }
 
 async function appEntry() {
-  const config = require(path.join(ROOT, 'config.js'));
+  // 云托管：init 之后用平台注入的身份第一次请求，就取得/建立默认账号。
+  const configPath = path.join(ROOT, 'config.js');
+  delete require.cache[require.resolve(configPath)];
+  const config = require(configPath);
   config.useCloudContainer = true;
-  const appPath = path.join(ROOT, 'app.js');
-  delete require.cache[require.resolve(appPath)];
-  const apiPath = path.join(ROOT, 'utils', 'api.js');
-  delete require.cache[require.resolve(apiPath)];
-  delete require.cache[require.resolve(path.join(ROOT, 'config.js'))];
-  const config2 = require(path.join(ROOT, 'config.js'));
-  config2.useCloudContainer = true;
-  config2.cloudEnv = 'prod';
-  require(appPath);
-  console.log('ok  app 入口：云托管启动路径可加载');
+  config.cloudAuth = true;
+  config.cloudEnv = 'prod';
+  config.baseUrl = 'study-agent';
+  delete require.cache[require.resolve(path.join(ROOT, 'utils', 'api.js'))];
+
+  const app = loadApp('app.js');
+  const before = calls.container.length;
+  app.onLaunch();
+  await wait(40);
+  assert.equal(app.globalData.profileReady, true, '启动后应取得默认账号');
+  const bootstrap = calls.container.slice(before).find((item) => item.path === '/api/v1/me/profile');
+  assert.ok(bootstrap, '云托管首次业务请求必须是 /api/v1/me/profile');
+  assert.equal(bootstrap.header.Authorization, undefined, '云托管请求不能带自建令牌');
+  assert.equal(app.globalData.profile.nickname, '默认昵称', '默认账号应带稳定昵称');
+
+  // 失败要留错误，并且能重试（设置页的重试入口由此兜底）。
+  global.__profileFailOnce = true;
+  const retryApp = loadApp('app.js');
+  retryApp.onLaunch();
+  await wait(40);
+  assert.equal(retryApp.globalData.profileReady, false);
+  assert.ok(retryApp.globalData.profileError, '失败要留下可展示的错误');
+  global.__profileFailOnce = false;
+  await retryApp.bootstrapProfile();
+  assert.equal(retryApp.globalData.profileReady, true, '重试后应取得账号');
+  assert.equal(retryApp.globalData.profileError, '');
+
+  // 旧服务端没有账号接口：不崩溃，留一条“更新服务端”的可读错误。
+  global.__profileMissingOnce = true;
+  const staleApp = loadApp('app.js');
+  staleApp.onLaunch();
+  await wait(40);
+  assert.equal(staleApp.globalData.profileReady, false);
+  assert.ok(String(staleApp.globalData.profileError).indexOf('服务端版本过旧') >= 0,
+    '旧服务端提示：' + staleApp.globalData.profileError);
+
+  // 第三个 tab 与设置页文件必须齐备。
+  const appJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app.json'), 'utf8'));
+  assert.deepEqual(appJson.pages,
+    ['pages/chat/chat', 'pages/library/library', 'pages/settings/settings']);
+  assert.equal(appJson.tabBar.list.length, 3, '底部应有三个 tab');
+  assert.equal(appJson.tabBar.list[2].pagePath, 'pages/settings/settings');
+  assert.equal(appJson.tabBar.list[2].text, '设置');
+  for (const extension of ['js', 'json', 'wxml', 'wxss']) {
+    assert.ok(fs.existsSync(path.join(ROOT, 'pages/settings/settings.' + extension)),
+      '缺少设置页文件 settings.' + extension);
+  }
+  console.log('ok  app 入口：云托管启动即取默认账号 / 失败可重试 / 第三个 tab 就位');
 }
 
 async function chatPage() {
-  const config = require(path.join(ROOT, 'config.js'));
-  config.useCloudContainer = false;
-  config.devLogin = true;
-  const apiPath = path.join(ROOT, 'utils', 'api.js');
-  delete require.cache[require.resolve(apiPath)];
-  delete require.cache[require.resolve(path.join(ROOT, 'config.js'))];
-  const config2 = require(path.join(ROOT, 'config.js'));
-  config2.useCloudContainer = false;
-  config2.devLogin = true;
-  const api = require(apiPath);
+  const api = useSelfHostedHttp();
   await api.ensureLogin();
 
   const page = loadPage('pages/chat/chat.js');
   page.onLoad();
-  await wait(30);
+  page.onShow();
+  await wait(40);
   assert.equal(page.data.configured, true, '首页应读到服务端状态');
+  assert.equal(page.data.needSettings, false);
+  assertHttpRequests('整理页');
 
   page.onInput({ detail: { value: '2+2 等于几' } });
   page.onSend();
@@ -420,26 +571,203 @@ async function chatPage() {
   await wait(100);
   assert.equal(page.unconfirmed, null, '重置后不应把旧 request_id 带进新对话');
   console.log('ok  整理页：重置清空未确认请求');
+
+  // 缺 Key：明显引导到「设置」，一键可进，草稿不丢
+  global.__statusConfigured = false;
+  page.setData({ pendingTaskId: '', busy: false });
+  page.onShow();
+  await wait(40);
+  assert.equal(page.data.needSettings, true, '没配 Key 要显示引导横幅');
+  const chatCallsBefore = calls.request.filter((item) => item.path === '/chat').length;
+  page.onInput({ detail: { value: '没有 Key 也要发' } });
+  page.onSend();
+  await wait(60);
+  assert.equal(calls.request.filter((item) => item.path === '/chat').length, chatCallsBefore,
+    '缺 Key 不应发起对话请求');
+  assert.equal(page.data.input, '没有 Key 也要发', '缺 Key 时草稿要保留');
+  page.goSettings();
+  assert.equal(calls.switchTab[calls.switchTab.length - 1], '/pages/settings/settings',
+    '横幅必须能一键进入设置页');
+  console.log('ok  整理页：缺 Key 显示引导并可进入设置');
+
+  // 只配置了 OCR Key 的老部署：带图这一轮仍然允许发送
+  global.__ocrConfigured = true;
+  page.onShow();
+  await wait(40);
+  page.setData({ images: [{ id: 'img-1', path: '/tmp/a.jpg' }], input: '带图发送', canSend: true });
+  const beforeOcrSend = calls.request.filter((item) => item.path === '/chat').length;
+  page.onSend();
+  await wait(1500);
+  assert.equal(calls.request.filter((item) => item.path === '/chat').length, beforeOcrSend + 1,
+    '只配置 OCR Key 时带图请求不能被前置检查拦掉');
+  global.__ocrConfigured = false;
+  page.setData({ images: [] });
+
+  // 老后端没有 key_source 等字段：configured 缺省仍按可用处理
+  global.__statusConfigured = undefined;
+  page.onShow();
+  await wait(40);
+  assert.equal(page.data.needSettings, false);
+  console.log('ok  整理页：兼容 OCR-only 老部署与旧状态字段');
 }
 
 async function libraryPage() {
+  useSelfHostedHttp();
   const page = loadPage('pages/library/library.js');
   page.onShow();
   await wait(80);
   assert.equal(page.data.noteTotal, 1, '记录页应读取笔记');
   assert.equal(page.data.mistakeTotal, 2, '记录页应读取错题');
   assert.equal(page.data.progress.attempts, 3, '记录页应从分组汇总作答次数');
+  assert.equal(typeof page.onDeleteAccount, 'undefined', '删号入口只保留在设置页');
+  assertHttpRequests('记录页');
   page.openNote({ currentTarget: { dataset: { id: 'n1' } } });
   await wait(30);
-  console.log('ok  记录页：加载/打开笔记');
+  console.log('ok  记录页：加载/打开笔记/删号入口已移走');
+}
+
+async function settingsPage() {
+  useSelfHostedHttp();
+  global.__modelSaved = false;
+  global.__modelName = 'deepseek-v4-pro';
+  global.__profileNickname = '默认昵称';
+  global.__delayProfilePut = 0;
+
+  const page = loadPage('pages/settings/settings.js');
+  page.onLoad();
+  page.onShow();
+  await wait(80);
+  assert.ok(page.data.profile, '设置页应自动取得默认账号');
+  assert.equal(page.data.profile.nickname, '默认昵称');
+  assert.equal(page.data.nicknameDraft, '默认昵称', '昵称框直接可编辑，不需要先点“修改”');
+  assert.equal(page.data.model.key_saved, false);
+  assert.equal(page.data.modelDraft, 'deepseek-v4-pro');
+  assertHttpRequests('设置页');
+  console.log('ok  设置页：首次打开自动建号并显示默认昵称/头像/模型状态');
+
+  // 头像：选择成功立即上传，没有额外保存步骤
+  const avatarBefore = page.data.profile.avatar.data_url;
+  page.onChooseAvatar({ detail: { avatarUrl: '/tmp/avatar.jpg' } });
+  await wait(100);
+  assert.notEqual(page.data.profile.avatar.data_url, avatarBefore, '头像应更新');
+  assert.equal(page.data.profile.avatar.kind, 'custom');
+  assert.ok(calls.request.some((item) => item.path === '/me/avatar'), '头像应自动上传');
+  console.log('ok  设置页：选完头像立即上传');
+
+  // 昵称：失焦即保存
+  page.onNicknameInput({ detail: { value: '小明' } });
+  page.onNicknameDone({ detail: { value: '小明' } });
+  await wait(60);
+  assert.equal(page.data.profile.nickname, '小明');
+  assert.equal(page.data.nicknameSaving, false);
+  const puts = calls.request.filter((item) => item.path === '/me/profile' && item.method === 'PUT');
+  assert.equal(puts[puts.length - 1].data.nickname, '小明');
+  console.log('ok  设置页：昵称失焦自动保存');
+
+  // 同值不发请求；空白不覆盖
+  const putCount = calls.request.filter((item) => item.path === '/me/profile'
+    && item.method === 'PUT').length;
+  page.onNicknameDone({ detail: { value: '小明' } });
+  await wait(30);
+  assert.equal(calls.request.filter((item) => item.path === '/me/profile'
+    && item.method === 'PUT').length, putCount, '同值不应重复请求');
+  page.onNicknameDone({ detail: { value: '   ' } });
+  await wait(30);
+  assert.equal(calls.request.filter((item) => item.path === '/me/profile'
+    && item.method === 'PUT').length, putCount, '空白不应发请求');
+  assert.equal(page.data.nicknameDraft, '小明', '空白不能覆盖已保存昵称');
+  console.log('ok  设置页：同值不发请求、空白不覆盖');
+
+  // 交叉回包 1：昵称回包（带旧头像快照）晚到，不能把新头像退回去
+  global.__delayProfilePut = 70;
+  page.onNicknameDone({ detail: { value: '小红' } });
+  await wait(10);
+  page.onChooseAvatar({ detail: { avatarUrl: '/tmp/avatar2.jpg' } });
+  await wait(160);
+  assert.equal(page.data.profile.nickname, '小红');
+  assert.equal(page.data.profile.avatar.kind, 'custom', '晚到的昵称回包不能覆盖头像');
+  assert.notEqual(page.data.profile.avatar.data_url, 'DEFAULT-AVATAR', '头像不能退回旧快照');
+  console.log('ok  设置页：交叉回包只合并各自字段');
+
+  // 交叉回包 2：保存中改回旧值仍要入队，最终以用户最后输入为准
+  const savedBefore = page.data.profile.nickname;
+  page.onNicknameDone({ detail: { value: '小蓝' } });
+  await wait(5);
+  page.onNicknameDone({ detail: { value: savedBefore } });
+  await wait(260);
+  const settled = calls.request.filter((item) => item.path === '/me/profile' && item.method === 'PUT');
+  assert.equal(settled[settled.length - 1].data.nickname, savedBefore,
+    '保存中改回旧值也要在上一笔落地后补写');
+  assert.equal(page.data.profile.nickname, savedBefore);
+  global.__delayProfilePut = 0;
+  console.log('ok  设置页：保存中改回旧值仍入队');
+
+  // 模型：保存个人 Key（不回显、不写本地缓存）
+  page.onKeyInput({ detail: { value: 'sk-personal-TEST-KEY' } });
+  page.onModelInput({ detail: { value: 'deepseek-flash' } });
+  page.saveModel();
+  await wait(60);
+  assert.equal(page.data.model.key_saved, true);
+  assert.equal(page.data.model.model, 'deepseek-flash');
+  assert.equal(page.data.keyDraft, '', '保存后输入框要清空');
+  const saved = calls.request.filter((item) => item.path === '/me/model' && item.method === 'POST').pop();
+  assert.equal(saved.data.api_key, 'sk-personal-TEST-KEY');
+  assert.equal(saved.data.base_url, undefined, '客户端不能提交 base_url');
+  const stored = Object.keys(storage).map((key) => String(storage[key])).join('|');
+  assert.ok(stored.indexOf('sk-personal-TEST-KEY') === -1, 'API Key 不能写进本地缓存');
+  assert.ok(JSON.stringify(calls.toast).indexOf('sk-personal-TEST-KEY') === -1);
+  console.log('ok  设置页：保存个人 Key 且不回显/不落缓存');
+
+  page.testModel();
+  await wait(60);
+  assert.equal(page.data.testResult.ok, true);
+  assert.ok(calls.request.some((item) => item.path === '/me/model/test'));
+
+  page.clearModel();
+  await wait(60);
+  assert.equal(page.data.model.key_saved, false);
+  assert.ok(calls.request.some((item) => item.path === '/me/model/clear'));
+  console.log('ok  设置页：测试连接与清除个人 Key');
+
+  // 加载失败 → 重试入口
+  global.__profileFailOnce = true;
+  page.load();
+  await wait(40);
+  assert.ok(page.data.loadError, '加载失败要给出重试入口');
+  page.onRetry();
+  await wait(80);
+  assert.equal(page.data.loadError, '');
+  assert.ok(page.data.profile);
+  console.log('ok  设置页：加载失败可重试');
+
+  // 旧服务端没有 /me/* 路由：提示“更新服务端”，不能把 404 原文抛给用户
+  global.__profileMissingOnce = true;
+  page.load();
+  await wait(50);
+  assert.ok((page.data.loadError || '').indexOf('服务端还是旧版本') >= 0,
+    '旧服务端应提示更新服务端，实际：' + page.data.loadError);
+  page.onRetry();
+  await wait(90);
+  assert.equal(page.data.loadError, '');
+  assert.ok(page.data.profile);
+  console.log('ok  设置页：旧服务端缺接口时提示更新并可重试');
+
+  // 唯一删号入口
+  const beforeDelete = calls.request.filter((item) => item.path === '/account/delete').length;
+  page.onDeleteAccount();
+  await wait(100);
+  assert.equal(calls.request.filter((item) => item.path === '/account/delete').length,
+    beforeDelete + 1);
+  console.log('ok  设置页：唯一的删号入口');
 }
 
 (async () => {
   await selfHosted();
   await cloudRun();
+  await appEntry();
   await chatPage();
   await libraryPage();
-  await appEntry();
+  await settingsPage();
   console.log('ALL PASS');
 })().catch((error) => {
   console.error('FAIL', error && error.stack || error);

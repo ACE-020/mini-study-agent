@@ -1,0 +1,309 @@
+page {
+  background: #f6f3ec;
+}
+
+.page {
+  padding: 22rpx 24rpx 60rpx;
+  box-sizing: border-box;
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20rpx;
+  padding: 18rpx 22rpx;
+  background: #fdece6;
+  border: 1rpx solid #f0cdbf;
+  border-radius: 14rpx;
+}
+
+.notice-text {
+  flex: 1;
+  font-size: 26rpx;
+  color: #a4482c;
+  line-height: 1.6;
+}
+
+.notice-action {
+  margin-left: 18rpx;
+  font-size: 27rpx;
+  color: #2f6f5e;
+}
+
+.loading {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 27rpx;
+  color: #8a8474;
+}
+
+.card {
+  background: #fdfcf8;
+  border: 1rpx solid #e8e1d1;
+  border-radius: 20rpx;
+  padding: 24rpx 26rpx;
+  margin-bottom: 22rpx;
+}
+
+.account-card {
+  display: flex;
+  align-items: center;
+}
+
+.avatar-button {
+  position: relative;
+  width: 128rpx;
+  height: 128rpx;
+  margin: 0 26rpx 0 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  line-height: 1;
+  overflow: visible;
+}
+
+.avatar-button::after {
+  border: none;
+}
+
+.avatar {
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  background: #eae4d6;
+}
+
+.avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48rpx;
+  color: #ffffff;
+  background: #2f6f5e;
+}
+
+.avatar-mask {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 128rpx;
+  height: 128rpx;
+  border-radius: 50%;
+  background: rgba(30, 28, 22, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22rpx;
+  color: #ffffff;
+}
+
+.avatar-badge {
+  position: absolute;
+  right: -2rpx;
+  bottom: -2rpx;
+  width: 42rpx;
+  height: 42rpx;
+  line-height: 38rpx;
+  text-align: center;
+  font-size: 28rpx;
+  color: #ffffff;
+  background: #2f6f5e;
+  border: 3rpx solid #fdfcf8;
+  border-radius: 50%;
+}
+
+.account-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.nickname-input {
+  height: 64rpx;
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #22352e;
+  border-bottom: 1rpx solid #e4ddcd;
+}
+
+.placeholder {
+  color: #b3ac9c;
+  font-weight: 400;
+}
+
+.account-hint {
+  margin-top: 10rpx;
+  font-size: 23rpx;
+  color: #9a9484;
+  line-height: 1.5;
+}
+
+.hint-line {
+  margin: -6rpx 6rpx 22rpx;
+  font-size: 23rpx;
+  color: #9a9484;
+  line-height: 1.7;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14rpx;
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #22352e;
+}
+
+.badge {
+  padding: 4rpx 16rpx;
+  font-size: 22rpx;
+  color: #8a8474;
+  background: #efeade;
+  border-radius: 999rpx;
+}
+
+.badge.ok {
+  color: #2f6f5e;
+  background: #e2efe9;
+}
+
+.model-status {
+  padding: 16rpx 18rpx;
+  margin-bottom: 20rpx;
+  font-size: 25rpx;
+  line-height: 1.7;
+  color: #55503f;
+  background: #f6f3ec;
+  border-radius: 12rpx;
+}
+
+.model-status.warn {
+  color: #a4482c;
+  background: #fdece6;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 18rpx;
+}
+
+.field-label {
+  font-size: 25rpx;
+  color: #6f6a5c;
+  margin-bottom: 8rpx;
+}
+
+.field-input {
+  height: 82rpx;
+  padding: 0 20rpx;
+  font-size: 28rpx;
+  color: #2b2b26;
+  background: #ffffff;
+  border: 1rpx solid #e4ddcd;
+  border-radius: 14rpx;
+}
+
+.field-help {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #9a9484;
+  line-height: 1.6;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 4rpx;
+}
+
+.btn {
+  margin: 0;
+  min-width: 190rpx;
+  font-size: 27rpx;
+  border-radius: 999rpx;
+  line-height: 2.5;
+}
+
+.btn.primary {
+  background: #2f6f5e;
+  color: #ffffff;
+}
+
+.btn.primary[disabled] {
+  background: #c8c2b4;
+  color: #f7f4ec;
+}
+
+.btn.ghost {
+  background: #ffffff;
+  color: #2f6f5e;
+  border: 1rpx solid #cfe0d8;
+}
+
+.test-result {
+  margin-top: 16rpx;
+  padding: 14rpx 18rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+  border-radius: 12rpx;
+}
+
+.test-result.ok {
+  color: #2f6f5e;
+  background: #e2efe9;
+}
+
+.test-result.bad {
+  color: #a4482c;
+  background: #fdece6;
+}
+
+.field-error {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #a4482c;
+  line-height: 1.6;
+}
+
+.link {
+  display: inline-block;
+  margin-top: 18rpx;
+  font-size: 26rpx;
+  color: #2f6f5e;
+  padding: 6rpx 0;
+}
+
+.link.danger {
+  color: #a4482c;
+}
+
+.account-note {
+  display: block;
+  margin: 12rpx 0 4rpx;
+  font-size: 25rpx;
+  color: #55503f;
+  line-height: 1.75;
+}
+
+.delete-note {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #9a9484;
+  line-height: 1.6;
+}
+
+.footer {
+  margin-top: 10rpx;
+  text-align: center;
+  font-size: 25rpx;
+  color: #2f6f5e;
+  padding: 16rpx 0;
+}

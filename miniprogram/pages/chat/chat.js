@@ -19,7 +19,9 @@ Page({
     taskId: '',
     pendingTaskId: '',
     anchor: '',
-    configured: true
+    configured: true,
+    ocrConfigured: false,
+    needSettings: false
   },
 
   onLoad() {
@@ -27,23 +29,44 @@ Page({
     this.unconfirmed = null;
     this.polling = null;
     this.authRetried = false;
+  },
+
+  onShow() {
+    // 从「设置」返回时重新读一次状态：填完 Key 回来横幅要立刻消失。
+    this.refreshStatus();
+  },
+
+  refreshStatus() {
     api.status()
       .then((body) => {
-        if (this.alive) {
-          this.setData({ configured: body.configured !== false });
+        if (!this.alive) {
+          return;
         }
+        const configured = body.configured !== false;
+        this.setData({
+          configured: configured,
+          // 老后端没有这个字段：按 false 处理，行为与旧版一致。
+          ocrConfigured: body.ocr_configured === true,
+          needSettings: !configured || !!body.key_error
+        });
       })
       .catch((error) => {
         if (error.code === 401) {
           return api.login();
         }
-        this.toast(error.message);
+        if (this.alive) {
+          this.toast(error.message);
+        }
         return null;
       });
   },
 
   onUnload() {
     this.alive = false;
+  },
+
+  goSettings() {
+    wx.switchTab({ url: '/pages/settings/settings' });
   },
 
   toast(message) {
@@ -145,8 +168,13 @@ Page({
       return;
     }
     if (!this.data.configured) {
-      this.toast('服务端还没有配置模型 API Key');
-      return;
+      // 只配置了管理员 OCR Key 的老部署：带图这一轮仍然能跑，不要拦。
+      const imagePath = this.data.images.length > 0 && this.data.ocrConfigured;
+      if (!imagePath) {
+        this.setData({ needSettings: true });
+        this.toast('还没有可用的模型 API Key，请到「设置」填写');
+        return;
+      }
     }
     // 同一草稿复用同一个 request_id：提交失败后手动再发不会变成新任务。
     const signature = [this.data.mode, text, this.data.images.map((item) => item.id).join(',')].join('|');
@@ -209,6 +237,12 @@ Page({
         }
         // 提交阶段失败：草稿、request_id 和附件都保留，消息不进入对话。
         this.setData({ busy: false, progressText: '', input: text, canSend: true });
+        if (error.body && error.body.need_model_settings) {
+          // 新后端在缺 Key 时直接拒绝提交：横幅引导去「设置」，草稿仍然保留。
+          this.setData({ configured: false, needSettings: true });
+          this.toast(error.message || '还没有可用的模型 API Key，请到「设置」填写');
+          return;
+        }
         if (error.code === 401 && !api.isCloudAuth()) {
           api.login().then(() => this.toast('登录已刷新，请重新发送')).catch(() => this.toast('登录失败'));
           return;
@@ -290,6 +324,12 @@ Page({
     }
     if (result.status === 'error') {
       this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: '', images: [] });
+      if (result.need_model_settings || result.error_code === 'settings_error') {
+        // 个人 Key 无法解密或没有可用 Key：明确引导到「设置」，不要把内部细节当答案。
+        this.setData({ configured: false, needSettings: true });
+        this.toast(result.error || '模型配置有问题，请到「设置」检查');
+        return;
+      }
       this.appendMessage({ role: 'assistant', text: result.error || '这一轮没有完成', html: markdown.toHtml(result.error || '这一轮没有完成') });
       this.scrollToEnd();
       return;

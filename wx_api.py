@@ -17,6 +17,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -38,8 +39,12 @@ from document_input import MAX_BATCH_BYTES, MAX_TEXT
 from llm import ModelClient, ModelError
 from material_sources import bounded_upload_image, capture_materials
 from review_progress import ERROR_TYPES, ReviewProgress
-from settings import SettingsStore, load_user_environment
+from settings import DEFAULT_MODEL, SettingsStore, load_user_environment
 from tools import LocalTools
+from wx_account import (MAX_AVATAR_CHARS, NO_KEY_MESSAGE, USER_MODEL_BASE,
+                        USER_MODEL_PROVIDER, USER_MODEL_PROVIDER_LABEL, USER_MODEL_SUGGESTIONS,
+                        SecretBox, SecretCorrupt, SecretUnavailable, UserAccount, clean_api_key,
+                        clean_model, clean_nickname)
 from wx_security import ContentSecurity
 
 LOG = logging.getLogger("wx_api")
@@ -54,6 +59,10 @@ MAX_BASE64_BODY = 24 * 1024 * 1024
 MAX_BASE64_TOTAL = MAX_IMAGES * MAX_BASE64_IMAGE_BYTES
 VIEWS = ("organize", "notes", "review")
 SCOPES = ("current", "history")
+
+
+class SettingsError(RuntimeError):
+    """可直接展示给用户的设置错误：不含密钥、服务地址或供应商原始报错。"""
 
 
 # ---------------------------------------------------------------- 配置
@@ -87,6 +96,8 @@ class ApiConfig:
     cloud_source: str = ""
     content_check: bool = False
     token_secret: bytes = b""
+    # 个人模型 Key 的加密主密钥来源；默认沿用持久化的 token secret（重启不丢）。
+    settings_secret: bytes = b""
     token_ttl: int = 7 * 24 * 3600
     max_users: int = 500
     task_ttl: int = 1800
@@ -97,6 +108,8 @@ class ApiConfig:
         directory = Path(data_dir or os.getenv("WX_API_DATA_DIR") or ROOT / "wx-data").resolve()
         directory.mkdir(parents=True, exist_ok=True)
         secret = os.getenv("WX_TOKEN_SECRET", "").strip()
+        token_secret = secret.encode() if secret else _read_secret(directory / ".token-secret")
+        settings_secret = os.getenv("WX_SETTINGS_SECRET", "").strip().encode() or token_secret
         return cls(
             data_dir=directory,
             appid=os.getenv("WX_APPID", "").strip(),
@@ -105,7 +118,8 @@ class ApiConfig:
             trust_cloud_header=os.getenv("WX_TRUST_CLOUD_HEADER", "") in ("1", "true", "yes"),
             cloud_source=os.getenv("WX_TRUST_CLOUD_SOURCE", "").strip(),
             content_check=os.getenv("WX_CONTENT_CHECK", "") in ("1", "true", "yes"),
-            token_secret=secret.encode() if secret else _read_secret(directory / ".token-secret"),
+            token_secret=token_secret,
+            settings_secret=settings_secret,
             token_ttl=int(os.getenv("WX_TOKEN_TTL_DAYS", "7") or 7) * 24 * 3600,
             max_users=int(os.getenv("WX_MAX_USERS", "500") or 500),
         )
@@ -237,6 +251,9 @@ class UserState:
         self.tools = UserTools(LocalTools(directory))
         self.profile = directory / "profile.json"
         self.lock = threading.Lock()
+        # 资料 / 头像 / 个人模型配置的写操作互斥：读改写要合并字段，不能让两次保存互相覆盖。
+        self.account_lock = threading.RLock()
+        self.writers = 0
         self.busy = False
         self.deleted = False
         self.admission: Admission | None = None
@@ -253,10 +270,24 @@ class UserState:
             self.last_seen = time.monotonic()
             return True
 
-    def close(self) -> bool:
-        """删除前占位：与 begin 共用一把锁，保证删除和启动互斥。"""
+    def begin_write(self) -> bool:
+        """资料类写操作占位：与删除互斥，删除进行中一律不写文件。"""
         with self.lock:
-            if self.busy or self.deleted:
+            if self.deleted:
+                return False
+            self.writers += 1
+            self.last_seen = time.monotonic()
+            return True
+
+    def end_write(self) -> None:
+        with self.lock:
+            self.writers = max(0, self.writers - 1)
+            self.last_seen = time.monotonic()
+
+    def close(self) -> bool:
+        """删除前占位：与 begin / begin_write 共用一把锁，保证删除和写操作互斥。"""
+        with self.lock:
+            if self.busy or self.deleted or self.writers:
                 return False
             self.deleted = True
             return True
@@ -315,18 +346,39 @@ class UserState:
             return ""
 
     def remember_openid(self, openid: str) -> None:
-        if not openid or self.openid:
+        if not openid:
             return
-        with self.lock:
-            if self.deleted or self.openid:
+        # 与资料写操作共用 account_lock，并占住写入位：删除不能在“检查后、写回前”插进来。
+        with self.account_lock:
+            if not self.begin_write():
                 return
-            temporary = self.profile.with_name(f".profile-{secrets.token_hex(8)}.tmp")
-            temporary.write_text(json.dumps({"openid": openid}, ensure_ascii=False), encoding="utf-8")
             try:
-                os.chmod(temporary, 0o600)
-            except OSError:
-                pass
-            os.replace(temporary, self.profile)
+                if self.openid:
+                    return
+                record = {}
+                try:
+                    record = json.loads(self.profile.read_text(encoding="utf-8"))
+                except FileNotFoundError:
+                    record = {}
+                except (OSError, ValueError):
+                    LOG.warning("profile.json 无法读取，暂不记录 openid uid=%s", self.key[:12])
+                    return
+                if not isinstance(record, dict):
+                    LOG.warning("profile.json 格式异常，暂不记录 openid uid=%s", self.key[:12])
+                    return
+                if record.get("openid") == openid:
+                    return
+                record["openid"] = openid
+                temporary = self.profile.with_name(f".profile-{secrets.token_hex(8)}.tmp")
+                temporary.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
+                                     encoding="utf-8")
+                try:
+                    os.chmod(temporary, 0o600)
+                except OSError:
+                    pass
+                os.replace(temporary, self.profile)
+            finally:
+                self.end_write()
 
     def end(self) -> None:
         with self.lock:
@@ -383,7 +435,7 @@ class Registry:
             if state.deleted:
                 # 正在删除的状态不能被回收：删除流程还要用它。
                 continue
-            if not state.busy and now - state.last_seen > self.config.user_idle:
+            if not state.busy and not state.writers and now - state.last_seen > self.config.user_idle:
                 del self.users[key]
 
 
@@ -518,6 +570,24 @@ def public_task(task: dict) -> dict:
             "created_at": int(task["created"]), **task["payload"]}
 
 
+def test_error_text(message: str) -> str:
+    """把模型客户端的报错收敛成用户能看懂的结论，绝不转发供应商原文或地址。"""
+    text = message or ""
+    if "HTTP 401" in text or "HTTP 403" in text:
+        return "API Key 无效，或没有这个模型的权限。"
+    if "HTTP 404" in text:
+        return "没有这个模型名称，请检查模型名是否拼写正确。"
+    if "HTTP 429" in text:
+        return "请求过于频繁，请稍后再试。"
+    if "跳转" in text or "跳到其它地址" in text:
+        return "模型服务要求跳转到其它地址，出于安全考虑没有继续，请稍后重试。"
+    if "HTTP" in text:
+        return "模型服务暂时不可用，请稍后再试。"
+    if "超时" in text or "网络" in text:
+        return "网络超时或无法连接到模型服务，请检查网络后重试。"
+    return "测试没有通过，请检查 API Key 与模型名称。"
+
+
 # ---------------------------------------------------------------- 应用
 
 
@@ -536,6 +606,24 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
     tasks = TaskStore(config.task_ttl)
     security = ContentSecurity(config.appid, config.secret, config.content_check)
 
+    # 加密主密钥只构造一次；缺失依赖时把明确错误缓存下来，避免每个请求都重试导入。
+    _secret_state = {"box": None, "error": ""}
+    _secret_lock = threading.Lock()
+
+    def secret_box() -> SecretBox:
+        with _secret_lock:
+            if _secret_state["box"] is not None:
+                return _secret_state["box"]
+            if _secret_state["error"]:
+                raise SecretUnavailable(_secret_state["error"])
+            try:
+                box = SecretBox(config.settings_secret or config.token_secret)
+            except SecretUnavailable as exc:
+                _secret_state["error"] = str(exc)
+                raise SecretUnavailable(str(exc)) from None
+            _secret_state["box"] = box
+            return box
+
     app = Flask(__name__)
     app.config.update(JSON_AS_ASCII=False, MAX_CONTENT_LENGTH=MAX_BATCH_BYTES + 1024 * 1024)
     app.extensions["wx_config"] = config
@@ -545,20 +633,94 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
     def error(message: str, status: int = 400, **extra):
         return jsonify({"ok": False, "error": message, **extra}), status
 
-    def public_settings() -> dict:
-        try:
-            return settings.public()
-        except ValueError as exc:
-            LOG.warning("模型配置无法读取：%s", type(exc).__name__)
-            return {"configured": False}
+    def make_client(ocr: bool = False, state: UserState | None = None):
+        """按“用户个人配置 > 管理员共享配置”取模型；测试仍可注入 client_factory。
 
-    def make_client(ocr: bool = False):
+        ocr=True 的图片识别始终走管理员配置：用户私钥只发它绑定的受信供应商。
+        个人 Key 固定在 DeepSeek 官方地址，显式关闭重定向，避免密钥被带到跳转后的地址。
+        """
+        target = resolve_model_target(ocr=ocr, state=state)
         if client_factory:
-            return client_factory()
-        values = settings.resolve()
-        prefix = "ocr_" if ocr else ""
-        return ModelClient(values[prefix + "base_url"], values[prefix + "api_key"],
-                           values[prefix + "model"], timeout=120)
+            return factory_client(target)
+        if target is None:
+            raise SettingsError(NO_KEY_MESSAGE)
+        if not target["api_key"]:
+            raise SettingsError("图片识别需要管理员配置 OCR 模型的 API Key，请联系管理员。")
+        return ModelClient(target["base_url"], target["api_key"], target["model"], timeout=120,
+                           follow_redirects=target["source"] != "user")
+
+    # ---- 用户级设置（资料 / 头像 / 个人模型 Key） ----
+
+    def account_for(state: UserState) -> UserAccount:
+        return UserAccount(state.directory, state.key, secret_box, lock=state.account_lock)
+
+    def shared_summary() -> dict:
+        try:
+            values = settings.resolve()
+        except ValueError:
+            LOG.warning("管理员模型配置无法读取，按未配置处理")
+            return {"configured": False, "model": "", "ocr_configured": False}
+        return {"configured": bool(values["api_key"]), "model": values["model"],
+                "ocr_configured": bool(values["ocr_api_key"])}
+
+    def safe_model_status(state: UserState) -> dict:
+        """个人模型配置的状态视图；文件损坏时也只回清楚的状态，不抛 500。"""
+        shared = shared_summary()
+        try:
+            return account_for(state).model_status(shared_configured=shared["configured"],
+                                                   shared_model=shared["model"])
+        except ValueError:
+            LOG.warning("个人模型配置无法读取 uid=%s", g.uid[:12])
+            return {"configured": shared["configured"], "key_saved": False,
+                    "source": "server" if shared["configured"] else "",
+                    "model": shared.get("model") or DEFAULT_MODEL,
+                    "provider": USER_MODEL_PROVIDER, "provider_label": USER_MODEL_PROVIDER_LABEL,
+                    "updated_at": 0, "key_error": "个人模型配置无法读取，请重新保存。",
+                    "shared_configured": shared["configured"],
+                    "models": list(USER_MODEL_SUGGESTIONS), "can_edit_base_url": False}
+
+    def resolve_model_target(ocr: bool = False, state: UserState | None = None) -> dict | None:
+        """返回 {base_url, api_key, model, source}；没有可用配置时返回 None。
+
+        个人 Key 永远绑定 DeepSeek 官方地址：客户端提交的 base_url 一律不接受，
+        管理员自定义域名也只用于共享配置。
+        """
+        try:
+            if ocr:
+                values = settings.resolve()
+                return {"base_url": values["ocr_base_url"], "api_key": values["ocr_api_key"],
+                        "model": values["ocr_model"], "source": "server"}
+            if state is not None:
+                personal = account_for(state).model_target()
+                if personal:
+                    return personal
+            values = settings.resolve()
+        except SecretUnavailable as exc:
+            raise SettingsError(str(exc)) from None
+        except SecretCorrupt as exc:
+            raise SettingsError(str(exc)) from None
+        except ValueError:
+            raise SettingsError("模型配置无法读取，请让管理员检查服务端设置。") from None
+        if not values["api_key"]:
+            return None
+        return {"base_url": values["base_url"], "api_key": values["api_key"],
+                "model": values["model"], "source": "server"}
+
+    def factory_client(target):
+        """兼容两种测试注入：无参工厂（旧）与接收目标配置的工厂（可断言选了哪个模型）。"""
+        try:
+            parameters = inspect.signature(client_factory).parameters
+            accepts = any(item.kind in (item.POSITIONAL_ONLY, item.POSITIONAL_OR_KEYWORD)
+                          for item in parameters.values())
+        except (TypeError, ValueError):
+            accepts = False
+        return client_factory(target) if accepts else client_factory()
+
+    def write_guard(state: UserState):
+        """资料类写操作的统一响应：删除进行中直接 410，不在已冻结的目录上写文件。"""
+        if state.begin_write():
+            return None
+        return error("这个账号的数据已删除，请重新进入小程序。", 410)
 
     # ---- 鉴权 ----
 
@@ -635,13 +797,32 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
     @require_user
     def status():
         state = registry.get(g.uid, g.get("openid", ""))
-        config_ = public_settings()
+        shared = shared_summary()
+        summary = safe_model_status(state)
         try:
             mistakes = len(state.tools.list_mistakes().get("mistakes", []))
         except (ValueError, OSError):
             mistakes = 0
-        return jsonify({"ok": True, "configured": bool(client_factory) or config_.get("configured", False),
-                        "model": config_.get("model", ""), "mistakes": mistakes,
+        configured = bool(client_factory) or summary["configured"]
+        if summary["key_error"]:
+            # 个人 Key 读不出来时，任何请求都会以设置错误失败（不会偷偷改用共享 Key），
+            # 所以这里也必须报告“未配置”，否则前端会显示可用却发不出去。
+            configured = False
+        # 报告“这一轮实际会用哪个模型”：个人 Key 可用时是用户选的，否则是管理员的共享模型。
+        if summary["source"] == "user":
+            model_name = summary["model"]
+        elif summary["source"] == "server":
+            model_name = shared["model"]
+        else:
+            model_name = ""
+        return jsonify({"ok": True, "configured": configured, "model": model_name,
+                        "key_source": summary["source"],
+                        "personal_model": summary["key_saved"],
+                        "key_error": summary["key_error"],
+                        # 只配置了 OCR Key 的老部署：图片那一轮仍然能跑，这里如实说明。
+                        "ocr_configured": shared["ocr_configured"],
+                        "settings_hint": "" if configured else NO_KEY_MESSAGE,
+                        "mistakes": mistakes,
                         "views": list(VIEWS), "max_images": MAX_IMAGES,
                         "content_check": security.enabled,
                         "max_chars": MAX_TEXT})
@@ -650,6 +831,187 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
     @require_user
     def me():
         return jsonify({"ok": True, "user": {"id": g.uid[:12]}})
+
+    def profile_response(state: UserState):
+        view = account_for(state).profile_view()
+        return jsonify({"ok": True, "account": {"id": g.uid[:12]}, "profile": view})
+
+    @app.get("/api/v1/me/profile")
+    @require_user
+    def me_profile():
+        """首次打开自动建立/取得同一个默认账号：不需要手机号、密码或头像。"""
+        state = registry.get(g.uid, g.get("openid", ""))
+        blocked = write_guard(state)
+        if blocked:
+            return blocked
+        try:
+            return profile_response(state)
+        except ValueError as exc:
+            return error(str(exc), 500)
+        finally:
+            state.end_write()
+
+    @app.put("/api/v1/me/profile")
+    @require_user
+    def update_me_profile():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) - {"nickname"}:
+            return error("请提交要保存的昵称。")
+        try:
+            nickname = clean_nickname(payload.get("nickname"))
+        except ValueError as exc:
+            return error(str(exc))
+        state = registry.get(g.uid, g.get("openid", ""))
+        allowed, notice = security.check_text(g.get("openid", "") or state.openid, nickname)
+        if not allowed:
+            return error(notice)
+        blocked = write_guard(state)
+        if blocked:
+            return blocked
+        try:
+            account_for(state).update_nickname(nickname)
+            return profile_response(state)
+        except ValueError as exc:
+            return error(str(exc), 500)
+        finally:
+            state.end_write()
+
+    @app.post("/api/v1/me/avatar")
+    @require_user
+    def update_me_avatar():
+        """上传自定义头像：只收 base64 图片，校验真实格式后重编码保存。"""
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) - {"data"}:
+            return error("请提交头像图片。")
+        encoded = payload.get("data")
+        if not isinstance(encoded, str) or not encoded:
+            return error("头像图片内容为空，请重新选择。")
+        if len(encoded) > MAX_AVATAR_CHARS:
+            return error("头像图片超过 2 MB，请换一张或先压缩。", 413)
+        if encoded.startswith("data:"):
+            encoded = encoded.split(",", 1)[-1]
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            return error("头像数据不完整，请重新选择。")
+        state = registry.get(g.uid, g.get("openid", ""))
+        blocked = write_guard(state)
+        if blocked:
+            return blocked
+        try:
+            account_for(state).save_avatar(raw)
+            return profile_response(state)
+        except ValueError as exc:
+            return error(str(exc))
+        finally:
+            state.end_write()
+
+    @app.get("/api/v1/me/model")
+    @require_user
+    def me_model():
+        state = registry.get(g.uid, g.get("openid", ""))
+        return jsonify({"ok": True, "model": safe_model_status(state)})
+
+    def model_payload():
+        """个人模型配置的入参校验：绝不接受 base_url，也不在缺省时替换已保存的模型。"""
+        payload = request.get_json(silent=True)
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return None, error("请提交模型配置。")
+        if "base_url" in payload:
+            return None, error("模型服务地址由管理员配置，小程序不能修改它。")
+        if set(payload) - {"api_key", "model"}:
+            return None, error("模型配置包含未知字段，请刷新小程序后重试。")
+        raw_model = payload.get("model")
+        model_given = isinstance(raw_model, str) and bool(raw_model.strip())
+        try:
+            model = clean_model(raw_model) if model_given else ""
+            api_key = clean_api_key(payload.get("api_key"))
+        except ValueError as exc:
+            return None, error(str(exc))
+        return {"api_key": api_key, "model": model, "model_given": model_given}, None
+
+    @app.post("/api/v1/me/model")
+    @require_user
+    def save_me_model():
+        """"保存/替换个人 API Key：只落密文，任何响应都不回传 Key。"""
+        values, failure = model_payload()
+        if failure:
+            return failure
+        state = registry.get(g.uid, g.get("openid", ""))
+        blocked = write_guard(state)
+        if blocked:
+            return blocked
+        try:
+            account_for(state).save_model(values["api_key"], values["model"])
+        except SecretUnavailable as exc:
+            return error(str(exc), 503)
+        except (SecretCorrupt, ValueError) as exc:
+            return error(str(exc))
+        finally:
+            state.end_write()
+        return jsonify({"ok": True, "model": safe_model_status(state)})
+
+    @app.post("/api/v1/me/model/clear")
+    @require_user
+    def clear_me_model():
+        state = registry.get(g.uid, g.get("openid", ""))
+        blocked = write_guard(state)
+        if blocked:
+            return blocked
+        try:
+            account_for(state).clear_model()
+        except ValueError as exc:
+            return error(str(exc))
+        finally:
+            state.end_write()
+        return jsonify({"ok": True, "model": safe_model_status(state)})
+
+    @app.post("/api/v1/me/model/test")
+    @require_user
+    def test_me_model():
+        """用已保存（或本次提交）的个人 Key 试连一次；只回结论，不回供应商原文。"""
+        values, failure = model_payload()
+        if failure:
+            return failure
+        state = registry.get(g.uid, g.get("openid", ""))
+        api_key, model = values["api_key"], values["model"]
+        if not api_key:
+            # 只测已保存的 Key：模型名优先用本次提交的，否则沿用保存时的模型。
+            try:
+                target = account_for(state).model_target()
+            except SecretUnavailable as exc:
+                return error(str(exc), 503)
+            except SecretCorrupt as exc:
+                return error(str(exc))
+            except ValueError:
+                return error("个人模型配置无法读取，请重新保存。")
+            if not target:
+                return jsonify({"ok": True, "test": {
+                    "ok": False, "error": "还没有保存个人 API Key，请先填写再测试。", "latency_ms": 0}})
+            api_key, model = target["api_key"], model or target["model"]
+        elif not model:
+            # 只换 Key 没填模型：不能被默认模型覆盖掉用户已保存的模型名。
+            try:
+                model = account_for(state).model_name()
+            except ValueError:
+                model = DEFAULT_MODEL
+        started = time.monotonic()
+        try:
+            client = ModelClient(USER_MODEL_BASE, api_key, model, timeout=15, retries=0,
+                                 follow_redirects=False)
+            client.complete([{"role": "user", "content": "回复 ok"}])
+        except ModelError as exc:
+            LOG.info("个人模型测试失败：%s", type(exc).__name__)
+            return jsonify({"ok": True, "test": {"ok": False, "error": test_error_text(str(exc)),
+                                                 "latency_ms": int((time.monotonic() - started) * 1000)}})
+        except Exception:
+            LOG.exception("个人模型测试出现未预期错误")
+            return jsonify({"ok": True, "test": {"ok": False, "error": "测试没有通过，请稍后重试。",
+                                                 "latency_ms": int((time.monotonic() - started) * 1000)}})
+        return jsonify({"ok": True, "test": {"ok": True, "error": "",
+                                             "latency_ms": int((time.monotonic() - started) * 1000)}})
 
     # ---- 资料上传 ----
 
@@ -789,7 +1151,7 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
                 "event": event,
                 "name": value.get("name") if isinstance(value, dict) else None,
                 "ok": value.get("ok") if isinstance(value, dict) else None})
-            agent.client = make_client(ocr=bool(images))
+            agent.client = make_client(ocr=bool(images), state=state)
             agent.web_links = True
             if data["exercise_id"]:
                 selected = next((item for item in state.tools.list_exercises()
@@ -809,6 +1171,10 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
                                   **({"review": agent.review_snapshot()} if data["view"] == "review" else {})})
         except OperationCancelled as exc:
             tasks.finish(task, "cancelled", error=str(exc), error_code="cancelled")
+        except SettingsError as exc:
+            # 个人 Key 缺失/无法解密：明确引导到「设置」，不要伪装成普通模型报错。
+            tasks.finish(task, "error", error_code="settings_error", error=str(exc),
+                         payload={"need_model_settings": True})
         except ModelError as exc:
             tasks.finish(task, "error", error_code="model_error",
                          error=f"{exc} 已保存的错题和笔记不受影响。")
@@ -838,6 +1204,18 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
         if existing:
             # 已结束/正在跑的同 ID 任务：直接返回，不再开第二个。
             return jsonify(public_task(existing)), 202 if existing["status"] == "running" else 200
+        if not client_factory:
+            # 完全没有 Key 时不开任务：直接告诉用户去「设置」填写，而不是等模型调用失败。
+            # 图片请求走的是可独立配置的 OCR Key：只配置 OCR 的老部署仍然能提交图片。
+            wants_ocr = bool(data["image_ids"])
+            try:
+                available = resolve_model_target(ocr=wants_ocr, state=state)
+            except SettingsError:
+                available = True  # 有配置但读不出来：交给 worker 报明确的设置错误
+            if available is None:
+                message = ("图片识别需要管理员配置 OCR 模型的 API Key，请联系管理员。"
+                           if wants_ocr else NO_KEY_MESSAGE)
+                return error(message, 409, need_model_settings=not wants_ocr)
         role, admission = state.begin_admission(request_id)
         if role == "deleted":
             return error("这个账号的数据已删除，请重新进入小程序。", 410)
@@ -936,8 +1314,9 @@ def create_api(config: ApiConfig | None = None, client_factory=None,
         state = registry.get(g.uid, g.get("openid", ""))
         # 删除期间注册表仍保留这同一个状态（不提前 drop）：同用户请求拿到它只会被冻结，
         # 不会创建第二个 UserState，也不会启动新任务去用正要删除的目录。
+        # 资料/头像/个人 Key 也在这一个目录里：删目录即一并清掉，不需要逐个文件处理。
         if not state.close():
-            return error("正在处理上一轮，请先停止再删除。", 409)
+            return error("正在处理这一轮或正在保存设置，请稍后再删除。", 409)
         try:
             shutil.rmtree(state.directory)
         except OSError:

@@ -51,6 +51,11 @@ wx_api.py（Flask）
 前置：Python 环境已按 `WEB_GUIDE.md` 建好（`.venv` 存在），并且配了模型 Key。
 
 ```powershell
+# 0) 装依赖（含设置页个人 Key 需要的 cryptography）
+.\.venv\Scripts\python.exe -m pip install -r requirements-server.txt
+```
+
+```powershell
 # 1) 起接口服务（脚本里已带 WX_DEV_LOGIN=1，只用于本地）
 .\start_wx_api.cmd
 # 等价于：.\.venv\Scripts\python.exe wx_api.py --host 0.0.0.0 --port 8766
@@ -90,6 +95,8 @@ devLogin: true                        // 配合服务端 WX_DEV_LOGIN=1
 3. **小程序备案**：在微信后台提交，通信管理局审核，通常 1–20 个工作日。**没备案不能发布**。
 4. **隐私保护指引**：收集 openid、学习内容（题目 / 笔记 / 错题）、图片，用途写"提供学习整理服务"，并写明会把内容发送给第三方模型服务。
 5. 拿 `AppSecret`：「开发管理 → 开发设置」，只填到服务端，不要进小程序代码。
+6. **服务端依赖**：`Dockerfile` 用 `requirements-server.txt` 构建，已包含个人 Key 加密所需的 `cryptography`；手工部署请先 `pip install -r requirements-server.txt`。缺这个库时只有「设置 → 保存个人 Key」返回“服务端还没有安装加密组件”，默认账号、资料、管理员共享模型都不受影响。
+7. **个人 Key 加密主密钥（可选）**：`WX_SETTINGS_SECRET`，留空则从 `WX_TOKEN_SECRET` 派生，重启不丢。设置过就不要再改——改了等于旧密文解不开，用户需要重新保存一次（接口会明确提示，而不是静默失败）。
 
 > 只有路线 A 才需要额外做域名 ICP 备案；路线 B 不需要域名，也不需要配 request 合法域名。
 
@@ -273,7 +280,14 @@ devLogin: false
 | --- | --- | --- |
 | GET | `/healthz` | 存活检查（不需要令牌） |
 | POST | `/api/v1/auth/login` | `{code}` → `{token, expires_at}` |
-| GET | `/api/v1/status` | 是否配好模型、题库规模 |
+| GET | `/api/v1/status` | 是否配好模型、当前模型来源（`user` / `server`）、题库规模 |
+| GET | `/api/v1/me/profile` | 取得/建立当前微信身份的默认账号（稳定昵称、圆形头像、是否默认） |
+| PUT | `/api/v1/me/profile` | `{nickname}` → 保存自定义昵称（合并写，保留 profile 其它字段） |
+| POST | `/api/v1/me/avatar` | `{data}`（base64）→ 校验真实图片后保存头像 |
+| GET | `/api/v1/me/model` | 个人模型状态：是否已保存、模型名、来源、错误（**不含密钥**） |
+| POST | `/api/v1/me/model` | `{api_key?, model?}` → 保存/替换个人 Key（只落 AEAD 密文） |
+| POST | `/api/v1/me/model/test` | 用已保存或本次提交的 Key 试连一次，只返回结论 |
+| POST | `/api/v1/me/model/clear` | 清除个人 Key，回到管理员共享模型 |
 | POST | `/api/v1/uploads` | `multipart` 字段 `files`，1–4 张，返回 `image_ids`（路线 A） |
 | POST | `/api/v1/uploads/base64` | `{images:[{data}]}`，1–4 张、单张 4 MB（云托管用，`callContainer` 不能发 multipart） |
 | POST | `/api/v1/chat` | `{message, view, request_id?, image_ids?}` → 202 `{task_id}` |
@@ -288,6 +302,26 @@ devLogin: false
 
 `view` 取值：`organize`（整理）、`notes`（笔记）、`review`（复习）。
 
+### 7.1 第三个 tab：账号与个人模型配置
+
+底部第三个 tab「设置」把账号、资料和个人模型 Key 放在一起，页面行为对应关系：
+
+| 用户动作 | 请求 | 说明 |
+| --- | --- | --- |
+| 首次进入（或从整理页返回） | `GET /me/profile` + `GET /me/model` | 用云托管注入身份或已有 `wx.login` 会话直接建/取默认账号，不填手机号、密码、头像 |
+| 点圆形头像 | `POST /me/avatar` | `open-type="chooseAvatar"`，选完立即上传并保存，没有“保存头像”按钮 |
+| 改昵称后离开输入框 | `PUT /me/profile` | `type="nickname"` 可复用微信推荐昵称；失焦/完成即保存 |
+| 保存 Key / 测试 / 清除 | `POST /me/model` · `/test` · `/clear` | 状态只显示“已保存/未保存”，任何响应都不回显密钥 |
+
+服务端约束（改代码时必须保持）：
+
+1. **密钥只写不读**：`api_key` 只出现在请求体里，落盘是 AES-256-GCM 密文（密钥由 `WX_SETTINGS_SECRET` 或 `WX_TOKEN_SECRET` 经 HKDF 派生，附加认证数据绑定 UID），接口与日志都不回传。
+2. **地址不可由客户端指定**：个人 Key 固定发往 DeepSeek 官方地址，客户端提交 `base_url` 直接 400；管理员自定义域名仍只用于共享配置。
+3. **不跟随重定向**：个人 Key 的聊天与“测试连接”都禁用 3xx 跳转，避免把 `Authorization` 转发到别的地址；管理员/网页版保持原有默认行为。
+4. **图片仍走管理员 OCR 配置**：带图那一轮用管理员配置的 OCR Key，用户私钥只发它绑定的受信供应商。只配置了 `OCR_API_KEY` 的老部署，图片仍可提交；没有文本 Key 时文字聊天返回 409 + `need_model_settings`。
+5. **账号独有、删号即清**：头像与 `model.json` 都在该用户目录里，`/account/delete` 删目录时一并清除；删除与资料写入互斥，正在保存时删除返回 409。
+6. **共享模型是默认来源**：个人 Key 不存在或已清除时用管理员的 `LLM_*`；个人 Key 存在但解不开时明确报设置错误（不静默改用共享 Key），`/status` 也同步报告 `configured=false`。
+
 一次性验证脚本：
 
 ```bash
@@ -299,20 +333,30 @@ TASK=$(curl -s -X POST $BASE/api/v1/chat -H "Authorization: Bearer $TOKEN" \
        -H 'Content-Type: application/json' -d '{"message":"2+2 等于几","view":"organize"}' \
        | python -c 'import sys,json;print(json.load(sys.stdin)["task_id"])')
 curl -s $BASE/api/v1/tasks/$TASK -H "Authorization: Bearer $TOKEN"
+
+# 账号与个人模型设置（响应里不应出现任何 Key 原文）
+curl -s $BASE/api/v1/me/profile -H "Authorization: Bearer $TOKEN"
+curl -s $BASE/api/v1/me/model   -H "Authorization: Bearer $TOKEN"
+curl -s -X POST $BASE/api/v1/me/model -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d '{"api_key":"sk-你的Key","model":"deepseek-v4-pro"}'
+curl -s -X POST $BASE/api/v1/me/model/test -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d '{}'
+curl -s -X POST $BASE/api/v1/me/model/clear -H "Authorization: Bearer $TOKEN"
 ```
 
 ---
 
 ## 8. 还没做（按优先级）
 
-本分支声明支持的路径：登录 / 状态、上传并带图提交、对话（提交 + 轮询 + 重试 + 取消）、记录读取、复习（目录 / 选题 / 作答进度）、删除账号。下面这些**未实现，不属于本轮范围**：
+本分支声明支持的路径：登录 / 状态、上传并带图提交、对话（提交 + 轮询 + 重试 + 取消）、记录读取、复习（目录 / 选题 / 作答进度）、默认账号与资料（头像 / 昵称）、个人模型 Key 配置、删除账号。下面这些**未实现，不属于本轮范围**：
 
-1. **作答照片 OCR**：现在复习只能文字作答。网页版已有 `make_reader()` 的完整链路，挪到 `wx_api.py` 即可，主要是把 `review_images` 那段搬过来。
-2. **流式输出**：`wx.request` 的 `enableChunked` + `onChunkReceived`，或 `wx.connectSocket`。当前模型是整段返回，价值主要在"等待时的细节进度"，现阶段的轮询已经能用。
-3. **笔记 PDF / Markdown 下载**：小程序打开 PDF 体验差，建议改成"复制 Markdown"（已实现）或生成分享图。
-4. **订阅消息**：长任务完成提醒（要走订阅消息授权，不是随手就能推）。
-5. **多端同步**：同一份数据在网页版和小程序都能看。现在两边目录不同（网页版 `data/`，小程序 `data/users/...`），要对齐得先统一用户体系。
-6. **支付/额度**：免费试用额度、按次计费。
+1. **记录页扩充与公式渲染**：笔记对比、错题筛选、LaTeX/公式展示是后续单独任务，本轮不动 `miniprogram/utils/markdown.js` 与网页版交互。
+2. **作答照片 OCR**：现在复习只能文字作答。网页版已有 `make_reader()` 的完整链路，挪到 `wx_api.py` 即可，主要是把 `review_images` 那段搬过来。
+3. **流式输出**：`wx.request` 的 `enableChunked` + `onChunkReceived`，或 `wx.connectSocket`。当前模型是整段返回，价值主要在"等待时的细节进度"，现阶段的轮询已经能用。
+4. **笔记 PDF / Markdown 下载**：小程序打开 PDF 体验差，建议改成"复制 Markdown"（已实现）或生成分享图。
+5. **订阅消息**：长任务完成提醒（要走订阅消息授权，不是随手就能推）。
+6. **多端同步**：同一份数据在网页版和小程序都能看。现在两边目录不同（网页版 `data/`，小程序 `data/users/...`），要对齐得先统一用户体系。
+7. **支付/额度**：免费试用额度、按次计费。
 
 ---
 
@@ -320,18 +364,21 @@ curl -s $BASE/api/v1/tasks/$TASK -H "Authorization: Bearer $TOKEN"
 
 | 文件 | 作用 |
 | --- | --- |
-| `wx_api.py` | 小程序 API：鉴权、用户隔离、任务轮询、上传 |
+| `wx_api.py` | 小程序 API：鉴权、用户隔离、任务轮询、上传、账号/设置接口 |
+| `wx_account.py` | 默认账号资料、头像校验与重编码、个人模型 Key 的 AEAD 加密存储 |
+| `llm.py` | 模型客户端；个人 Key 走 `follow_redirects=False` 的受限通道 |
 | `wx_security.py` | 微信内容安全（`msg_sec_check`），默认关闭 |
 | `tests/test_wx_api.py` | 接口回归测试（登录、幂等、取消、跨用户隔离、删除隔离、错误脱敏） |
+| `tests/test_wx_settings.py` | 设置回归：默认账号、旧 profile 无损、两用户隔离、密文与不回显、个人模型选择、清除、坏密文、删除并发、重定向不跟随 |
 | `tests/test_wx_security.py` | 内容安全边界（v1 `87014`、v2 `result.suggest`、接口故障放行） |
-| `tests/miniprogram_harness.cjs` · `tests/test_miniprogram_js.py` | 用模拟 `wx` 真实加载小程序脚本，跑自建/云托管两条传输路径与两个页面 |
-| `miniprogram/` | 小程序端：`utils/api.js` 封装请求与轮询，两个页面（整理 / 记录） |
+| `tests/miniprogram_harness.cjs` · `tests/test_miniprogram_js.py` | 用模拟 `wx` 真实加载小程序脚本，跑自建/云托管两条传输路径与三个页面（含设置页回包竞态） |
+| `miniprogram/` | 小程序端：`utils/api.js` 封装请求与轮询，三个页面（整理 / 记录 / 设置） |
 | `Dockerfile` · `deploy/start.sh` | 容器入口：统一按 `$PORT` 监听（云托管 80，自建 8766），只开 1 worker |
 | `docker-compose.yml` · `deploy/env.example` | 自建部署的环境变量模板，`/data` 必须挂卷 |
 | `.dockerignore` | 构建时排除 `.venv`、`data/`、`.tools/`、`.codex/`、`.env*`、`.local-settings*`，避免镜像过大或把本地凭据带进去 |
 | `deploy/nginx.conf` | HTTPS 反代与上传体积配置 |
 | `deploy/study-agent-wx.service` | 不用 Docker 时的 systemd 单元 |
-| `requirements-server.txt` | 服务端依赖（比网页版少了浏览器自动化） |
+| `requirements-server.txt` | 服务端依赖（比网页版少了浏览器自动化；含 `cryptography`） |
 | `start_wx_api.cmd` | Windows 本地联调启动脚本（带 `WX_DEV_LOGIN=1`） |
 
 > 服务端不装 playwright 时，笔记能正常保存，但 PDF 导出会返回"未完成"。小程序端本来也不提供 PDF，忽略即可。
@@ -353,8 +400,14 @@ curl -s $BASE/api/v1/tasks/$TASK -H "Authorization: Bearer $TOKEN"
 - [ ] 上传 4 张大图不报 413
 - [ ] 服务重启后，笔记和错题还在
 - [ ] `WX_CONTENT_CHECK=1` 时，敏感输入被拦住
-- [ ] 「记录」页底部「删除我的全部数据」能删掉，删完后记录页归零
-- [ ] 隐私保护指引与实际收集字段一致
+- [ ] 首次进「设置」不需要任何输入，就能看到圆形头像和稳定默认昵称
+- [ ] 点头像可换成微信头像、改昵称离开输入框即自动保存；不设置资料也能正常聊天
+- [ ] 保存个人 Key 后「测试连接」通过，整理页的对话确实用个人模型；清除后回到管理员共享模型
+- [ ] 任何响应、日志、磁盘文件里都搜不到 Key 原文；小程序本地缓存里也没有
+- [ ] 没配 Key 时，整理页有「去设置」入口，点一下能进设置页，草稿不丢
+- [ ] 「设置」里「删除我的全部数据」能删掉，删完后头像与个人 Key 一并清除、记录页归零
+- [ ] 只配置了 `LLM_API_KEY` 的老部署行为不变；只配置 `OCR_API_KEY` 时带图请求仍可提交
+- [ ] 隐私保护指引与实际收集字段一致（含头像与个人模型 Key）
 
 **云托管专项**
 

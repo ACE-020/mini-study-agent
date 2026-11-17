@@ -332,6 +332,53 @@ function resetConversation() {
   return request({ path: '/conversation/reset', method: 'POST' });
 }
 
+// ---- 账号资料 / 个人模型配置 ----
+// 密钥只在这个进程内存里传给服务端：不写 wx.setStorage，不拼进 URL，也不回显。
+
+function profile() {
+  return ensureLogin().then(() => request({ path: '/me/profile' }));
+}
+
+function updateProfile(data) {
+  return ensureLogin().then(() => request({ path: '/me/profile', method: 'PUT', data: data }));
+}
+
+function uploadAvatar(filePath) {
+  return ensureLogin()
+    .then(() => compressImage(filePath))
+    .then((path) => readBase64(path))
+    .then((data) => {
+      if (!data) {
+        throw { code: 0, message: '没有读到头像图片，请重新选择' };
+      }
+      if (data.length > 3 * 1024 * 1024) {
+        throw { code: 0, message: '这张头像太大，请换一张或先压缩' };
+      }
+      return request({
+        path: '/me/avatar',
+        method: 'POST',
+        data: { data: data },
+        timeout: 40000
+      });
+    });
+}
+
+function modelSettings() {
+  return ensureLogin().then(() => request({ path: '/me/model' }));
+}
+
+function saveModelSettings(data) {
+  return ensureLogin().then(() => request({ path: '/me/model', method: 'POST', data: data }));
+}
+
+function testModelSettings(data) {
+  return ensureLogin().then(() => request({ path: '/me/model/test', method: 'POST', data: data, timeout: 30000 }));
+}
+
+function clearModelSettings() {
+  return ensureLogin().then(() => request({ path: '/me/model/clear', method: 'POST', data: {} }));
+}
+
 function deleteAccount() {
   return request({ path: '/account/delete', method: 'POST', data: { confirm: true } });
 }
@@ -363,6 +410,13 @@ module.exports = {
   pollTask: pollTask,
   uploadImage: uploadImage,
   resetConversation: resetConversation,
+  profile: profile,
+  updateProfile: updateProfile,
+  uploadAvatar: uploadAvatar,
+  modelSettings: modelSettings,
+  saveModelSettings: saveModelSettings,
+  testModelSettings: testModelSettings,
+  clearModelSettings: clearModelSettings,
   deleteAccount: deleteAccount,
   notes: notes,
   noteDetail: noteDetail,

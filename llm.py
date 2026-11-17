@@ -5,7 +5,7 @@
 import json
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 
 #为这里的报错定义一个名字
@@ -13,8 +13,21 @@ class ModelError(RuntimeError):
     pass
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    """拒绝跟随任何 3xx：不做第二次请求，也就不会把 Authorization 带到别的地址。
+
+    返回 None 会让 urllib 抛出 HTTPError(3xx)，调用方按普通 HTTP 错误处理。
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_NO_REDIRECT_OPENER = build_opener(_NoRedirect())
+
+
 class ModelClient:
-    def __init__(self, base_url, api_key, model, timeout=30, retries=2):
+    def __init__(self, base_url, api_key, model, timeout=30, retries=2, follow_redirects=True):
         if not all((base_url, api_key, model)): #如果参数不齐
             raise ModelError("请先在网页的‘模型设置’中保存 API Key，或设置 LLM_* 环境变量。")
         #将参数保存为属性
@@ -25,6 +38,8 @@ class ModelClient:
         self.model = model
         self.timeout = timeout
         self.retries = retries
+        # 管理员/网页版沿用历史行为（默认跟随重定向）；个人固定供应商的 Key 显式关闭。
+        self.follow_redirects = bool(follow_redirects)
 
     @classmethod
     def from_env(cls):
@@ -32,6 +47,11 @@ class ModelClient:
         load_user_environment() #检测用户是否在环境变量、注册表中更改
         config = SettingsStore().resolve() #获取配置文件
         return cls(config["base_url"], config["api_key"], config["model"], timeout=120)
+
+    def _open(self, request):
+        if self.follow_redirects:
+            return urlopen(request, timeout=self.timeout)
+        return _NO_REDIRECT_OPENER.open(request, timeout=self.timeout)
 
     def complete(self, messages, tools=None, cancel_token=None):
         body = {"model": self.model, "messages": messages, "stream": False}
@@ -49,7 +69,7 @@ class ModelClient:
                 "Authorization": "Bearer " + self.api_key,
             }) #请求
             try:
-                with urlopen(request, timeout=self.timeout) as response:
+                with self._open(request) as response:
                     body = json.load(response)
                 #发起请求，等待相应
                 if cancel_token:
@@ -63,6 +83,9 @@ class ModelClient:
                 # 不输出请求头或服务端原始正文，避免把密钥写进错误信息。
                 code = exc.code
                 exc.close()
+                if 300 <= code < 400:
+                    # 受限模式不接受跳转：不重试、不跟随，直接失败。
+                    raise ModelError("模型服务要求跳到其它地址，出于安全考虑已停止本次请求。") from None
                 if code not in (408, 429) and not 500 <= code < 600:
                     raise ModelError(f"模型 API 返回 HTTP {code}；请检查配置或账户权限。") from None
                 failure = f"模型 API 暂不可用（HTTP {code}）"
