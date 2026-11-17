@@ -847,5 +847,89 @@ class ConcurrencyTests(unittest.TestCase):
         self.assertEqual(list(profiles[0].parent.glob("*.tmp")), [], "不应残留临时文件")
 
 
+class ConversationPersistenceTests(unittest.TestCase):
+    """对话上下文要能扛住进程重启：否则用户第二天进来，模型就“忘了刚才的题”。"""
+
+    def setUp(self):
+        self.directory = workdir()
+        self.addCleanup(shutil.rmtree, self.directory, True)
+
+    def build(self, seen):
+        class Recording:
+            def complete(self, messages, tools=None):
+                seen.append(messages)
+                return {"role": "assistant", "content": "记下了"}
+
+        config = ApiConfig(data_dir=self.directory, dev_login=True, token_secret=b"test-secret",
+                           token_ttl=3600, task_ttl=60)
+        return create_api(config, client_factory=lambda: Recording())
+
+    def login(self, client):
+        response = client.post("/api/v1/auth/login", json={"code": "dev:carol"})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response.get_json()["token"]
+
+    def ask(self, client, token, text):
+        headers = {"Authorization": "Bearer " + token}
+        response = client.post("/api/v1/chat", json={"message": text}, headers=headers)
+        self.assertEqual(response.status_code, 202, response.get_data(as_text=True))
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            data = client.get("/api/v1/tasks/" + response.get_json()["task_id"], headers=headers).get_json()
+            if data["status"] != "running":
+                return data
+            time.sleep(0.02)
+        self.fail("任务没有在限定时间内结束")
+
+    def test_context_survives_restart(self):
+        seen = []
+        client = self.build(seen).test_client()
+        self.ask(client, self.login(client), "原题：证明 e^x>=ex")
+
+        # 模拟进程重启：同一个数据目录，新建一个应用实例。
+        seen_after = []
+        client = self.build(seen_after).test_client()
+        self.ask(client, self.login(client), "继续，用欧拉公式拆")
+
+        replay = json.dumps(seen_after[-1], ensure_ascii=False)
+        self.assertIn("证明 e^x>=ex", replay, "重启后应把上一轮原题带进上下文")
+        self.assertIn("继续，用欧拉公式拆", replay)
+
+    def test_reset_clears_saved_context(self):
+        seen = []
+        client = self.build(seen).test_client()
+        token = self.login(client)
+        self.ask(client, token, "原题：先记住这句话")
+        headers = {"Authorization": "Bearer " + token}
+        self.assertEqual(client.post("/api/v1/conversation/reset", headers=headers).status_code, 200)
+
+        seen_after = []
+        client = self.build(seen_after).test_client()
+        self.ask(client, self.login(client), "重新开始")
+        replay = json.dumps(seen_after[-1], ensure_ascii=False)
+        self.assertNotIn("先记住这句话", replay, "reset 之后旧上下文不能再被读回来")
+
+    def test_images_are_saved_as_placeholder_and_first_problem_is_pinned(self):
+        from conversation_store import load, save, trim
+
+        messages = [
+            {"role": "system", "content": "系统提示"},
+            {"role": "user", "content": [{"type": "text", "text": "这道题怎么做"},
+                                         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}]},
+            {"role": "assistant", "content": "先看第一步"},
+        ]
+        save(self.directory, "organize", messages)
+        dumped = json.dumps(load(self.directory, "organize"), ensure_ascii=False)
+        self.assertIn("[图片]", dumped)
+        self.assertNotIn("data:image", dumped, "图片二进制不能落盘")
+
+        long_history = [{"role": "system", "content": "s"}, {"role": "user", "content": "原题"}]
+        long_history += [{"role": "assistant" if index % 2 else "user", "content": "第%d句" % index}
+                         for index in range(20)]
+        kept = trim(long_history, max_messages=6, max_chars=10000)
+        self.assertEqual(kept[1]["content"], "原题", "第一条用户消息（原题）不能被裁掉")
+        self.assertLessEqual(len(kept), 6)
+
+
 if __name__ == "__main__":
     unittest.main()
