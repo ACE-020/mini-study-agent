@@ -4,3 +4,6 @@ Flask>=3.1,<4
 Pillow>=11,<14
 PyMuPDF>=1.25,<2
 gunicorn>=23,<24
+# 用户个人模型 API Key 的加密存储（AES-256-GCM + HKDF）。缺失时只有“保存个人 Key”
+# 的接口返回明确错误，默认账号/资料/聊天（管理员共享模型）不受影响。
+cryptography>=42,<47
