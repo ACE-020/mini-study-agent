@@ -31,7 +31,8 @@ Latex.prototype.onParse = function (node, vm) {
                 name: 'span',
                 attrs: {},
                 l: 'T',
-                f: 'display:inline-block',
+                // 公式太长时只让这一行公式自己横向滚动，而不是整段对话一起滚
+                f: 'display:inline-block;max-width:100%;overflow-x:auto;overflow-y:hidden;vertical-align:middle',
                 children: nodes
               })
             } else {
@@ -42,7 +43,7 @@ Latex.prototype.onParse = function (node, vm) {
               children.push({
                 name: 'div',
                 attrs: {
-                  style: 'text-align:center'
+                  style: 'text-align:center;overflow-x:auto;overflow-y:hidden'
                 },
                 children: nodes
               })
