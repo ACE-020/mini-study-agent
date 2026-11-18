@@ -1,7 +1,8 @@
 {
   "pages": [
     "pages/chat/chat",
-    "pages/library/library"
+    "pages/library/library",
+    "pages/settings/settings"
   ],
   "window": {
     "navigationBarTitleText": "知错 · 学习整理",
@@ -17,7 +18,8 @@
     "borderStyle": "white",
     "list": [
       { "pagePath": "pages/chat/chat", "text": "整理" },
-      { "pagePath": "pages/library/library", "text": "记录" }
+      { "pagePath": "pages/library/library", "text": "记录" },
+      { "pagePath": "pages/settings/settings", "text": "设置" }
     ]
   },
   "style": "v2",

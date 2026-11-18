@@ -6,3 +6,7 @@ prompt_toolkit>=3,<4
 # 笔记 PDF 备用排版与字体/文本核验（复用已安装 Chrome / Edge）
 playwright>=1.50,<2
 PyMuPDF>=1.25,<2
+
+# 小程序账号设置里的个人模型 Key 加密（服务端 AES-256-GCM）；本地跑
+# tests/test_wx_settings.py 也需要它。
+cryptography>=42,<47

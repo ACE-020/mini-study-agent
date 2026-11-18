@@ -1,0 +1,115 @@
+<view class="page">
+  <view wx:if="{{loadError}}" class="notice">
+    <text class="notice-text">{{loadError}}</text>
+    <text class="notice-action" bindtap="onRetry">重试</text>
+  </view>
+
+  <view wx:if="{{loading && !profile}}" class="loading">
+    <text>正在用当前微信身份准备账号…</text>
+  </view>
+
+  <view wx:if="{{profile}}" class="card account-card">
+    <button class="avatar-button" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar" hover-class="none">
+      <image
+        wx:if="{{profile.avatar.data_url}}"
+        class="avatar"
+        src="{{profile.avatar.data_url}}"
+        mode="aspectFill"
+      />
+      <view wx:else class="avatar avatar-fallback">知</view>
+      <view wx:if="{{avatarUploading}}" class="avatar-mask"><text>上传中</text></view>
+      <view wx:else class="avatar-badge">＋</view>
+    </button>
+
+    <view class="account-main">
+      <input
+        class="nickname-input"
+        type="nickname"
+        value="{{nicknameDraft}}"
+        maxlength="24"
+        placeholder="给自己起个昵称"
+        placeholder-class="placeholder"
+        bindinput="onNicknameInput"
+        bindblur="onNicknameDone"
+        bindconfirm="onNicknameDone"
+      />
+      <view class="account-hint">
+        <text wx:if="{{nicknameSaving}}">正在保存昵称…</text>
+        <text wx:elif="{{profile.default_nickname}}">这是默认昵称，点一下就能改</text>
+        <text wx:else>点昵称可改，离开输入框自动保存</text>
+      </view>
+      <view wx:if="{{nicknameError}}" class="field-error">{{nicknameError}}</view>
+      <view wx:if="{{avatarError}}" class="field-error">{{avatarError}}</view>
+    </view>
+  </view>
+
+  <view wx:if="{{profile}}" class="hint-line">
+    <text>点一下头像可以用微信头像，昵称框里也能直接选微信昵称；不设置也不影响聊天。</text>
+  </view>
+
+  <view class="card">
+    <view class="card-head">
+      <text class="card-title">API Key / 模型配置</text>
+      <text wx:if="{{model && model.key_saved}}" class="badge ok">已保存</text>
+      <text wx:else class="badge">未保存</text>
+    </view>
+
+    <view class="model-status {{model && model.key_error ? 'warn' : ''}}">
+      <text wx:if="{{model && model.key_error}}">{{model.key_error}}</text>
+      <text wx:elif="{{model && model.key_saved}}">使用你自己的 Key（{{model.provider_label}} · {{model.model}}）。密钥只保存在服务端，不会显示。</text>
+      <text wx:elif="{{model && model.shared_configured}}">还没有个人 Key，当前使用管理员配置的共享模型。</text>
+      <text wx:else>还没有可用的模型 API Key，填写后才能开始整理论文或题目。</text>
+    </view>
+
+    <view class="field">
+      <text class="field-label">模型名称</text>
+      <input
+        class="field-input"
+        value="{{modelDraft}}"
+        bindinput="onModelInput"
+        placeholder="deepseek-v4-pro"
+        placeholder-class="placeholder"
+        maxlength="120"
+      />
+    </view>
+
+    <view class="field">
+      <text class="field-label">API Key</text>
+      <input
+        class="field-input"
+        password
+        value="{{keyDraft}}"
+        bindinput="onKeyInput"
+        placeholder="{{model && model.key_saved ? '已保存；要替换时粘贴新的 Key' : '粘贴 API Key'}}"
+        placeholder-class="placeholder"
+        maxlength="8000"
+      />
+      <text class="field-help">只会发往 {{model && model.provider_label ? model.provider_label : 'DeepSeek 官方'}}（地址由服务端固定，小程序不能改）。</text>
+    </view>
+
+    <view class="row-actions">
+      <button class="btn primary" bindtap="saveModel" loading="{{modelSaving}}" disabled="{{modelSaving}}">保存并使用</button>
+      <button class="btn ghost" bindtap="testModel" loading="{{modelTesting}}" disabled="{{modelTesting || modelSaving}}">测试连接</button>
+    </view>
+
+    <view wx:if="{{testResult}}" class="test-result {{testResult.ok ? 'ok' : 'bad'}}">
+      <text wx:if="{{testResult.ok}}">连接正常（{{testResult.latency_ms}} ms）</text>
+      <text wx:else>{{testResult.error}}</text>
+    </view>
+
+    <view wx:if="{{modelError}}" class="field-error">{{modelError}}</view>
+
+    <text wx:if="{{model && model.key_saved}}" class="link danger" bindtap="clearModel">{{clearing ? '清除中…' : '清除个人 Key'}}</text>
+  </view>
+
+  <view class="card">
+    <text class="card-title">账号</text>
+    <text class="account-note">数据只属于当前这个微信账号。换手机用同一个微信进入，会自动回到同一个账号，不需要手机号或密码。</text>
+    <text class="link danger" bindtap="onDeleteAccount">{{deleting ? '删除中…' : '删除我的全部数据'}}</text>
+    <text class="delete-note">会删除笔记、错题、做题记录、头像，以及服务端的个人模型 API Key，无法恢复。</text>
+  </view>
+
+  <view class="footer">
+    <text bindtap="onGoChat">回到「整理」继续用</text>
+  </view>
+</view>

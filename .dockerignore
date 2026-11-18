@@ -14,3 +14,13 @@ node_modules
 tests/browser_*.cjs
 deploy/.env
 *.log
+
+# 本地凭据与工具配置：绝不进镜像
+.codex
+.env
+.env.*
+.local-settings.json
+.local-settings-*.tmp
+.model-settings.json
+.token-secret
+*.token-secret
