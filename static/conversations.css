@@ -1,0 +1,281 @@
+/* 历史对话面板：桌面三栏（会话 / 原稿 / 讨论），窄屏折叠成顶部横排 / 单列。 */
+
+.workspace-grid.with-conversations {
+  grid-template-columns: 208px minmax(0, 1fr) minmax(0, 1.18fr);
+}
+
+/* 原稿面板被「收起原稿」折叠时，会话列表仍然保留 */
+.workspace-grid.with-conversations.source-collapsed {
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.workspace-grid.with-conversations.source-collapsed #source-panel {
+  display: none;
+}
+
+.conversation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px 14px;
+  align-self: start;
+  position: sticky;
+  top: 88px;
+  max-height: calc(100dvh - 120px);
+}
+
+.conversation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+}
+
+.conversation-head h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #273249;
+  white-space: nowrap;
+}
+
+.conversation-head .button {
+  min-height: 30px;
+  padding: 4px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.conversation-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  max-height: min(58vh, 560px);
+}
+
+.conversation-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: #fafbfe;
+  border-left: 2px solid transparent;
+}
+
+.conversation-item:hover {
+  background: #f5f4fc;
+  border-color: #e6e2f6;
+}
+
+.conversation-item.active {
+  background: #eeebfc;
+  border-color: #ded6fa;
+  border-left: 2px solid #6558c9;
+}
+
+.conversation-open {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 6px 8px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+
+.conversation-open:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 1px;
+}
+
+.conversation-title {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #2f3850;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-item.active .conversation-title {
+  color: #4b3ba0;
+  font-weight: 600;
+}
+
+.conversation-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8a90a2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-spinner {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border: 1.5px solid #c8bcf0;
+  border-top-color: #6558c9;
+  border-radius: 50%;
+  animation: conversation-spin 0.8s linear infinite;
+}
+
+.conversation-finished {
+  color: #2f7a52;
+}
+
+@keyframes conversation-spin {
+  to { transform: rotate(360deg); }
+}
+
+.conversation-delete {
+  flex: none;
+  align-self: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #9aa0b0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.conversation-delete:hover:not(:disabled) {
+  color: #a13b36;
+  background: #fbeceb;
+}
+
+.conversation-delete:disabled {
+  color: #c8cbd6;
+  cursor: not-allowed;
+}
+
+.conversation-delete:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 1px;
+}
+
+.conversation-empty {
+  padding: 14px 8px;
+  border: 1px dashed #dde1ec;
+  border-radius: 9px;
+  color: #8a90a2;
+  font-size: 12px;
+  text-align: center;
+}
+
+.conversation-hint {
+  flex: none;
+  margin: 0;
+  color: #9aa0b0;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+@media (max-width: 1280px) {
+  .workspace-grid.with-conversations {
+    grid-template-columns: 176px minmax(0, 1fr) minmax(0, 1.18fr);
+  }
+
+  .workspace-grid.with-conversations.source-collapsed {
+    grid-template-columns: 176px minmax(0, 1fr);
+  }
+
+  .conversation-panel {
+    padding: 16px 12px;
+  }
+
+  .conversation-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 1100px) {
+  .workspace-grid.with-conversations {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-grid.with-conversations.source-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conversation-panel {
+    position: static;
+    max-height: none;
+    padding: 14px 16px;
+  }
+
+  .conversation-head {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .conversation-list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-height: none;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .conversation-item {
+    flex: 0 0 168px;
+    max-width: 200px;
+    border-left-width: 1px;
+  }
+
+  .conversation-item.active {
+    border-left-width: 1px;
+  }
+
+  .conversation-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .workspace-grid.with-conversations,
+  .workspace-grid.with-conversations.source-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conversation-panel {
+    padding: 12px 14px;
+  }
+
+  .conversation-item {
+    flex-basis: 150px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-spinner {
+    animation: none;
+  }
+}

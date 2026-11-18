@@ -9,7 +9,7 @@ function draftChatEntry(view){
  if(chatQueue.items.length>=10){composerFeedback(view,"待发送消息已满，请先处理队列。",true);return null;}
  if([...chatQueue.items.flatMap(item=>item.attachments),...attachments].reduce((sum,item)=>sum+item.file.size,0)>64*1024*1024){composerFeedback(view,"待发送图片超过 64 MB，请先发送或移除部分图片。",true);return null;}
  const entry={id:crypto.randomUUID(),view,text:text||"请检查图片中我对当前题的作答，并继续一步步引导。",editorText:text,
-   displayText:text||"图片作答",attachments,options:view==="analysis"?{selection:selectionRefs()}: {},blocked:false,editing:false};
+   displayText:text||"图片作答",attachments,conversationId:view==="organize"&&typeof conversationStore!=="undefined"?conversationStore.activeId:undefined,options:view==="analysis"?{selection:selectionRefs()}: {},blocked:false,editing:false};
  editor.value="";
  if(view==="review"){answerAttachments.length=0;renderAnswerImages();}
  return entry;
@@ -23,9 +23,11 @@ function submitQueuedDraft(view){
 async function pumpChatQueue(){
  if(state.busy||chatQueue.dispatching||chatQueue.paused||chatQueue.steering)return;
  const entry=chatQueue.items[0];if(!entry||entry.blocked||entry.editing)return;
+ // 按对话路由：该对话正忙时不派发（不同对话的请求可以并行）
+ if(entry.view==="organize"&&entry.conversationId&&typeof conversationCache==="function"){const target=conversationCache(entry.conversationId);if(target&&target.busy)return;}
  if(entry.view==="analysis"&&JSON.stringify(entry.options.selection)!==JSON.stringify(selectionRefs())){entry.blocked=true;composerFeedback("analysis","所选内容已变化，待发送问题已保留；请确认选择后重试，或移除这条消息。",true);renderChatQueues();return;}
  chatQueue.dispatching=true;chatQueue.items.shift();renderChatQueues();
- try{await sendMessage(entry.text,entry.view,`${entry.view}-follow`,entry.editorText,{...entry.options,attachments:entry.attachments,displayText:entry.displayText});}
+ try{await sendMessage(entry.text,entry.view,`${entry.view}-follow`,entry.editorText,{...entry.options,attachments:entry.attachments,displayText:entry.displayText,...(entry.conversationId?{conversationId:entry.conversationId}:{})});}
  finally{chatQueue.dispatching=false;renderChatQueues();void pumpChatQueue();}
 }
 function queueEntrySummary(entry){return (entry.editorText||"图片作答")+(entry.attachments.length?` · ${entry.attachments.length} 张图片`:"");}
@@ -44,7 +46,7 @@ function safeReleaseQueuedImage(image){
 function renderChatQueues(){
  for(const view of ["organize","review","analysis"]){
   const panel=document.querySelector(`[data-chat-queue="${view}"]`);if(!panel)continue;
-  const entries=chatQueue.items.filter(item=>item.view===view);panel.hidden=!entries.length;panel.replaceChildren();if(!entries.length)continue;
+  const entries=chatQueue.items.filter(item=>item.view===view&&(view!=="organize"||!item.conversationId||item.conversationId===conversationStore.activeId));panel.hidden=!entries.length;panel.replaceChildren();if(!entries.length)continue;
   const header=make("div","chat-queue-header"),title=make("strong","",`待发送 ${entries.length}`);header.append(title);
   if(chatQueue.paused){const resume=make("button","text-button","继续发送");resume.type="button";resume.addEventListener("click",()=>{chatQueue.paused=false;renderChatQueues();void pumpChatQueue();});header.append(make("span","queue-paused","已暂停"),resume);}
   panel.append(header);const list=make("div","chat-queue-list");panel.append(list);
@@ -75,6 +77,8 @@ function pauseChatQueue(){chatQueue.paused=true;renderChatQueues();}
 async function steerDraft(view){if(!canDraftChat())return;const entry=draftChatEntry(view);if(entry)await steerQueuedEntry(entry);}
 async function steerQueuedEntry(entry){
  if(chatQueue.steering)return;
+ // 排队项属于别的对话时，先切回该对话才能立即发送
+ if(entry.view==="organize"&&entry.conversationId&&entry.conversationId!==conversationStore.activeId){if(!chatQueue.items.includes(entry))chatQueue.items.push(entry);renderChatQueues();return;}
  const operation=state.operation;
  if(state.busy&&(operation?.type!=="chat"||operation.view!==entry.view)){if(!chatQueue.items.includes(entry))chatQueue.items.push(entry);renderChatQueues();return;}
  if(state.busy&&(operation.attachments?.length||0)+entry.attachments.length>20){if(!chatQueue.items.includes(entry))chatQueue.items.push(entry);composerFeedback(entry.view,"本轮附图较多，请等待完成后发送这条补充。",true);renderChatQueues();return;}
@@ -90,7 +94,7 @@ function retainFailedChat(operation){
  if(operation.editTarget!==`${operation.view}-follow`)return false;
  const editor=$(`#${operation.view}-follow`),hasDraft=editor.value.trim()||(operation.view==="review"&&answerAttachments.length);
  if(!hasDraft){editor.value=operation.editorText;if(operation.view==="review"){answerAttachments.push(...operation.attachments);renderAnswerImages();}renderChatQueues();return true;}
- chatQueue.items.unshift({id:crypto.randomUUID(),view:operation.view,text:operation.message,editorText:operation.editorText,displayText:operation.editorText||"图片作答",options:operation.chatOptions,attachments:operation.attachments,blocked:true,editing:false});
+ chatQueue.items.unshift({id:crypto.randomUUID(),view:operation.view,text:operation.message,editorText:operation.editorText,displayText:operation.editorText||"图片作答",conversationId:operation.conversationId,options:operation.chatOptions,attachments:operation.attachments,blocked:true,editing:false});
  renderChatQueues();return true;
 }
 function chatRequestFinished(operation){

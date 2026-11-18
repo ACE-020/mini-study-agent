@@ -137,6 +137,48 @@ PATHS = {
                      description="清空本会话的对话上下文、临时图片与待确认方案；已保存的笔记/错题/题库不受影响。请求处理中返回 409。",
                      responses={**ok("已清除"), **err(409, "有请求正在处理中")}),
     },
+    "/api/conversations": {
+        "get": dict(
+            summary="历史对话列表", tags=["对话"],
+            description="按创建时间倒序（最新在前）返回本浏览器的全部对话摘要；active 是最近一次使用的对话 id。",
+            responses={**ok("对话列表（conversations 与 active）", "ConversationListResponse")},
+        ),
+        "post": dict(
+            summary="新建对话", tags=["对话"],
+            description="可带 title；新对话立即成为 active。每个浏览器会话最多 20 个对话，超出返回 400。",
+            requestBody=json_body("ConversationCreate", required=False),
+            responses={**ok("新对话（active 与 conversation）", "ConversationResponse"), **err(400, "标题非法或对话数量已达上限")},
+        ),
+    },
+    "/api/conversations/<identity>": {
+        "get": dict(
+            summary="对话详情（含消息与上传区）", tags=["对话"],
+            description="返回摘要、messages（user/assistant/error/notice）与 intake（草稿文字、已上传原图 id）。用于刷新后恢复对话。",
+            parameters=[param("identity", "path", "对话 id", TEXT)],
+            responses={**ok("对话详情", "ConversationDetailResponse"), **err(404, "对话不存在或已删除")},
+        ),
+        "patch": dict(
+            summary="保存对话标题或草稿", tags=["对话"],
+            description="只保存标题（≤60 字）或上传区草稿文字（≤80000 字），不涉及模型请求；该对话处理中也允许保存草稿。",
+            parameters=[param("identity", "path", "对话 id", TEXT)],
+            requestBody=json_body("ConversationPatch"),
+            responses={**ok("更新后的摘要", "ConversationSummaryResponse"), **err(400, "字段非法"), **err(404, "对话不存在或已删除")},
+        ),
+        "delete": dict(
+            summary="删除对话", tags=["对话"],
+            description="删除该对话的消息、上传原图与上下文；处理中返回 409。删除最后一个对话时会自动新建一个空对话并设为 active，返回新的 active。",
+            parameters=[param("identity", "path", "对话 id", TEXT)],
+            responses={**ok("已删除（active 为新的当前对话）"), **err(404, "对话不存在或已删除"), **err(409, "对话正在处理中")},
+        ),
+    },
+    "/api/conversations/<identity>/activate": {
+        "post": dict(
+            summary="切换到某个对话", tags=["对话"],
+            description="把该对话设为 active；之后不带 conversation_id 的组织请求都会落到它上面。",
+            parameters=[param("identity", "path", "对话 id", TEXT)],
+            responses={**ok("已切换", "ConversationResponse"), **err(404, "对话不存在或已删除")},
+        ),
+    },
     "/api/desktop/status": {
         "get": dict(summary="桌面版实例标识（仅 exe 模式）", tags=["系统"],
                     description="由 desktop.py 在 create_app() 之后注册，仅桌面版（exe）提供；源码版 web.py 不提供此接口。重复双击 exe 时用它核对端口上的服务身份。",
@@ -234,15 +276,15 @@ PATHS = {
             summary="与学习助手对话（核心接口）", tags=["对话"],
             description=(
                 "所有对话页共用的接口，按 view 区分：\n"
-                "- organize：整理混合原稿（笔记 + 错题），可带图片；\n"
+                "- organize：整理混合原稿（笔记 + 错题），可带图片；按对话隔离上下文与锁，不同对话可并行处理；\n"
                 "- notes：整理笔记；\n"
                 "- review：复习答疑，只看当前题，可附图作答；\n"
                 "- analysis：分析勾选的笔记/错题/题目，可生成待确认的删除/合并方案。\n"
-                "同一会话同时只允许一个请求（否则 409）；用 request_id 停止或轮询进度。"
-                "停止返回 499，context_retained=true 表示已保留上下文可继续对话。"
+                "同一对话同时只允许一个请求（否则 409）；review/notes/analysis 仍是会话级串行。"
+                "用 request_id 停止或轮询进度。停止返回 499，context_retained=true 表示已保留上下文可继续对话。"
             ),
             requestBody=json_body("ChatRequest"),
-            responses={**ok("回答与事件轨迹", "ChatResponse"), **err(400, "参数非法"), **err(404, "指定的题目不存在"),
+            responses={**ok("回答与事件轨迹", "ChatResponse"), **err(400, "参数非法"), **err(404, "指定的题目或对话不存在"),
                        **err(409, "有请求正在处理中 / 图片过期 / 记录已变更"), **err(499, "已停止（可带 context_retained）"),
                        **err(502, "模型服务失败"), **err(503, "会话过多")},
         )
@@ -265,6 +307,7 @@ PATHS = {
                          "files": {"type": "array", "items": FORM_FILE},
                          "page_range": dict(TEXT, description="PDF 页码范围，如 1-8 或 1,3,5-8"),
                          "keep_image_ids": dict(TEXT, description="JSON 数组字符串：保留的旧图片 id"),
+                         "conversation_id": dict(TEXT, description="整理页的目标对话；省略则用当前 active 对话"),
                          "request_id": dict(TEXT, description="前端请求编号"),
                      }, required=["files"]),
                      responses={**ok("读取结果", "IntakeReadResult"), **err(400, "文件或页码非法"), **err(409, "有请求正在处理中"),
@@ -277,6 +320,7 @@ PATHS = {
                          "files": {"type": "array", "items": FORM_FILE},
                          "page_range": TEXT,
                          "keep_image_ids": TEXT,
+                         "conversation_id": dict(TEXT, description="整理页的目标对话；省略则用当前 active 对话"),
                          "request_id": TEXT,
                      }, required=["files"]),
                      responses={**ok("原页与元数据", "IntakePrepareResult"), **err(400, "文件或页码非法"), **err(409, "有请求正在处理中"), **err(499, "已停止")}),
@@ -757,6 +801,8 @@ SCHEMAS = {
         "properties": {
             "message": dict(TEXT, minLength=1, maxLength=80000),
             "request_id": dict(TEXT, maxLength=100, description="前端生成的编号；用于停止与进度轮询"),
+            "conversation_id": dict(TEXT, maxLength=100,
+                                    description="仅 organize：本轮所属对话；省略则用当前 active 对话"),
             "view": {"type": "string", "enum": ["organize", "review", "notes", "analysis"], "default": "organize"},
             "scope": {"type": "string", "enum": ["current", "history"], "default": "current",
                       "description": "current=围绕当前题；history=明确的历史错题复习"},
@@ -779,7 +825,83 @@ SCHEMAS = {
             "events": {"type": "array", "items": ref("StudyEvent")},
             "proposals": {"type": "array", "items": ref("Proposal"), "description": "需要用户再次确认的删除/合并方案"},
             "current_question": {"oneOf": [ref("CurrentQuestion"), {"type": "null"}]},
+            "conversation_id": dict(TEXT, description="仅 organize：本轮消息记入的对话 id"),
         },
+    },
+    "ConversationSummary": {
+        "type": "object",
+        "description": "历史对话摘要：列表与详情共用。busy 表示该对话是否有请求在处理。",
+        "required": ["id", "title", "created_at", "updated_at", "busy", "message_count"],
+        "properties": {
+            "id": {"type": "string", "description": "对话 id（token_urlsafe(12)）"},
+            "title": {"type": "string", "maxLength": 60, "description": "标题；首条用户消息会自动取前 18 字"},
+            "created_at": {"type": "string", "format": "date-time"},
+            "updated_at": {"type": "string", "format": "date-time"},
+            "busy": {"type": "boolean", "description": "按对话隔离的锁是否被占用"},
+            "message_count": {"type": "integer", "minimum": 0, "description": "已记录的消息条数（每个对话最多保留最近 200 条）"},
+        },
+        "additionalProperties": False,
+    },
+    "ConversationMessage": {
+        "type": "object", "description": "对话中的一条消息；notice = 已停止，error = 本轮失败。",
+        "required": ["role", "text", "at"],
+        "properties": {
+            "role": {"type": "string", "enum": ["user", "assistant", "error", "notice"]},
+            "text": {"type": "string"},
+            "at": {"type": "string", "format": "date-time"},
+        },
+        "additionalProperties": False,
+    },
+    "ConversationIntake": {
+        "type": "object", "description": "该对话上传区：草稿文字与该对话自己的原图 id（按对话隔离）。",
+        "required": ["text", "image_ids", "image_count"],
+        "properties": {
+            "text": {"type": "string", "description": "草稿文字（前端用 PATCH 保存）"},
+            "image_ids": {"type": "array", "items": {"type": "string"}},
+            "image_count": {"type": "integer", "minimum": 0},
+        },
+        "additionalProperties": False,
+    },
+    "ConversationDetail": {
+        "allOf": [ref("ConversationSummary"), {"type": "object", "required": ["messages", "intake"],
+                  "properties": {"messages": {"type": "array", "items": ref("ConversationMessage")},
+                                 "intake": ref("ConversationIntake")}}],
+    },
+    "ConversationCreate": {
+        "type": "object",
+        "properties": {"title": dict(TEXT, maxLength=60, description="省略则使用「新对话」")},
+        "additionalProperties": False,
+    },
+    "ConversationPatch": {
+        "type": "object",
+        "description": "只保存标题或上传区草稿；两者都可省略各自的字段。",
+        "properties": {
+            "title": dict(TEXT, minLength=1, maxLength=60),
+            "intake_text": dict(TEXT, maxLength=80000, description="上传区草稿文字"),
+        },
+        "additionalProperties": False,
+    },
+    "ConversationListResponse": {
+        "type": "object", "required": ["ok", "active", "conversations"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "active": {"type": "string", "description": "当前 active 对话 id"},
+                       "conversations": {"type": "array", "items": ref("ConversationSummary")}},
+    },
+    "ConversationSummaryResponse": {
+        "type": "object", "required": ["ok", "conversation"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "conversation": ref("ConversationSummary")},
+    },
+    "ConversationResponse": {
+        "type": "object", "required": ["ok", "active", "conversation"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "active": {"type": "string"},
+                       "conversation": ref("ConversationSummary")},
+    },
+    "ConversationDetailResponse": {
+        "type": "object", "required": ["ok", "conversation"],
+        "properties": {"ok": {"type": "boolean", "const": True},
+                       "conversation": ref("ConversationDetail")},
     },
     "AssignmentUpload": {"type": "object", "required": ["ok", "image_ids"],
                          "properties": {"ok": {"type": "boolean", "const": True},
@@ -801,8 +923,9 @@ SCHEMAS = {
                        "pages": {"type": "array", "items": {"type": "object"}},
                        "metadata": {"type": "object"}},
     },
-    "ClearBody": {"type": "object", "properties": {"preview_ids": {"type": "array", "maxItems": 20,
-                                                                  "items": {"type": "string", "maxLength": 100}}}},
+    "ClearBody": {"type": "object", "properties": {
+        "preview_ids": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 100}},
+        "conversation_id": dict(TEXT, description="整理页目标对话；省略则用当前 active 对话")}},
     "MaterialText": {"type": "object", "required": ["ok", "text", "pages"],
                      "properties": {"ok": {"type": "boolean", "const": True}, "text": {"type": "string"},
                                     "pages": {"type": "array", "items": ref("PageInfo")}}},
@@ -913,7 +1036,7 @@ SCHEMAS = {
 
 
 # ---------------------------------------------------------------------------- 从源码读取路由
-ROUTE_RE = re.compile(r'@app\.(get|post)\(\s*"([^"]+)"')
+ROUTE_RE = re.compile(r'@app\.(get|post|patch|delete)\(\s*"([^"]+)"')
 ROUTE_ANY_RE = re.compile(r'@app\.route\(\s*"([^"]+)",\s*methods=\[([^\]]+)\]')
 NAME_RE = re.compile(r'^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(', re.MULTILINE)
 
