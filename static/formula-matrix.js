@@ -27,7 +27,8 @@
     busy: false,
     pendingLatex: "",
     onInsert: null,
-    onClose: null
+    onClose: null,
+    openToken: 0
   };
 
   function el(tag, className, text) {
@@ -286,6 +287,7 @@
   // 每次打开都重新问一次 /api/status：用户可能刚在「模型设置」里存好 Key，
   // 面板不能因为第一次读到「未配置」就永久锁死（之前的缓存版就是这么坏的）。
   async function loadConfigState() {
+    const token = state.openToken;
     let configured = false;
     try {
       const response = await fetch("/api/status", { cache: "no-store" });
@@ -294,6 +296,8 @@
     } catch (error) {
       configured = false;
     }
+    // 面板已关闭或已重新打开时，丢弃上一轮的配置结果。
+    if (token !== state.openToken || panel.hidden) return;
     state.configured = configured;
     nodes.textarea.disabled = !configured;
     nodes.aiButton.disabled = !configured || state.busy;
@@ -320,6 +324,8 @@
 
   function open(options) {
     if (!panel) panel = build();
+    state.openToken += 1;
+    const token = state.openToken;
     state.onInsert = options && options.onInsert;
     state.onClose = (options && options.onClose) || null;
     state.busy = false;
@@ -330,6 +336,8 @@
     document.addEventListener("keydown", onKeydown);
     loadConfigState();
     window.setTimeout(function () {
+      // 30ms 内就取消时，这个定时器不能再把焦点抢回已隐藏的面板。
+      if (panel.hidden || token !== state.openToken) return;
       nodes.rowsInput.focus({ preventScroll: true });
       nodes.rowsInput.select();
     }, 30);
@@ -337,6 +345,7 @@
 
   function closePanel() {
     if (!panel) return;
+    state.openToken += 1;
     panel.hidden = true;
     document.removeEventListener("keydown", onKeydown);
     const onClose = state.onClose;

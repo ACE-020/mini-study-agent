@@ -35,7 +35,7 @@ python -m venv .venv
 - 公式模式用 **MathLive 0.111.4**（自托管于 `static/vendor/mathlive/`，不加载外部 CDN）做真实 TeX 排版：分式上下叠放、根号钩子与横线相连、积分/求和上下限按 TeX 规则定位，不再用 HTML 盒子近似。
 - 符号键插入带占位符的结构模板（`\frac{#@}{#?}`、`\int_{#?}^{#?}{#@}` 等）；键盘面板上的 ◀ ▲ ▼ ▶ 在分子/分母、指数、积分上下限之间移动光标，物理方向键与 Tab 同样可用。
 - 编辑器与 `#draft` 双向同步：`#draft.value` 始终是「普通文字 + `$...$` LaTeX」，提交给模型的仍是标准 LaTeX；切回文字模式、填入示例、清空、OCR 写入都会同步；模型处理中（只读）会镜像到编辑器。
-- `文字` 模式的符号键盘行为保持不变（仍插入 LaTeX 源码文本），现有浏览器验收用例与提交链路不受影响。
+- `文字` 模式的符号键盘会先识别已有公式：在 `$...$` / `$$...$$` / `\(...\)` / `\[...\]` 内只插 LaTeX 源码，在普通文字处自动包一层 `$...$`（矩阵等环境用 `$$...$$`）；字面 `%`、`{`、`}` 插入 `\%`、`\{`、`\}`，`{ }` 仍是结构分组键。提交链路只认 `#draft`，行为不变。
 
 实现入口：`static/math-keyboard.js`、`static/math-keyboard.css`、`static/math-input-mode.js`、`static/vendor/mathlive/`；`static/app.js` 仅在 `updateDraft()` 末尾增加一行同步钩子。第三方许可（MathLive MIT、随附 KaTeX 字体 SIL OFL 1.1）见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
@@ -48,7 +48,7 @@ python -m venv .venv
 | ![公式输入移动端](docs/math-input/formula-mobile.png) | 移动端 390×844 |
 | ![旧引擎与 MathLive 对比](docs/math-input/css-engine-vs-mathlive.png) | 同一公式：旧自研 CSS 引擎（左）与 MathLive（右） |
 
-已知边界：MathLive 是数学字段，公式模式直接输入中文会被当作数学字符（退出时按普通文字还原），大段中文原稿仍建议用文字模式；多行原稿进入公式模式时换行会归一化为空格；序列化可能出现 `\frac47` 这类 MathLive 短形式（合法 LaTeX，KaTeX 可渲染）；行列式键仍使用 `pmatrix` 模板。`static/math-field.js` / `static/math-field.css` 是上一版自研渲染引擎，已不再被任何页面引用，可在确认稳定后删除。
+已知边界：MathLive 是数学字段，公式模式直接输入中文会被当作数学字符（退出时按普通文字还原），大段中文原稿仍建议用文字模式；`$$...$$`、`\[...\]` 与只改公式的往返会保留原定界符和换行，直接在编辑器里改文字段时换行仍会归一化为空格；序列化可能出现 `\frac47` 这类 MathLive 短形式（合法 LaTeX，KaTeX 可渲染）；行列式键仍使用 `pmatrix` 模板。`static/math-field.js` / `static/math-field.css` 是上一版自研渲染引擎，已不再被任何页面引用，可在确认稳定后删除。
 
 ## 微信小程序接入
 
