@@ -30,13 +30,12 @@ function missing(name, actual, needle) {
 check('inline e^x', latex.renderMath('e^x \\ge e x', false),
       '<span style="font-family:Georgia,serif;font-size:30rpx;color:#1f3d33;white-space:nowrap;">eˣ ≥ e x</span>');
 
-// 2) 分式：上下两行 + 横线（不是 (a)/(b)）
+// 2) 分式：一行写完，但对“原子”操作数不加多余括号
 const frac = latex.renderMath('\\frac{a+b}{2}', false);
-contains('frac inline-block', frac, 'display:inline-block');
-contains('frac top row', frac, '>a+b<');
-contains('frac bar', frac, 'border-bottom:1px solid');
-contains('frac bottom row', frac, '>2<');
-missing('frac no parentheses', frac, '(a+b)');
+contains('frac complex wrapped', frac, '(a+b)/2');
+const atomic = latex.renderMath('\\frac{1}{|A|}A^{*}', false);
+contains('frac atomic bare', atomic, '1/|A|');
+missing('frac no stray parens', atomic, '(1)');
 
 // 3) 根号 + 上标
 check('sqrt', latex.renderMath('\\sqrt{x^2+1}', false).includes('√(x²+1)'), true);
