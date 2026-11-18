@@ -315,6 +315,17 @@
   outline: none;
 }
 
+/* 长公式横向滚动。
+   MathLive 内部 .ML__content 默认 overflow-x:hidden，超出宽度的内容会被直接裁掉，
+   外层 .formula-editor-host 的 overflow-x:auto 因此永远触发不了，只能靠移动光标去看。
+   这里只放开内部容器的横向滚动：MathLive 自己会把滚动位置跟着光标走，
+   比撑宽 math-field 让外层滚动更可靠（撑宽后光标会跑到可视区外）。 */
+.formula-editor-host math-field::part(content) {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
 .formula-editor-host math-field::part(menu-toggle),
 .formula-editor-host math-field::part(virtual-keyboard-toggle) {
   display: none;

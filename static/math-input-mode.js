@@ -322,6 +322,22 @@
     mf.addEventListener("input", function () {
       handleFieldChange(mf, textarea);
     });
+    // 长公式横向滚动：浏览器不会把纵向滚轮自动转成横向（只会滚整页），
+    // 而 MathLive 的内容区又缺少可见的滚动条，用户只能挪光标看前面。
+    // 这里在有横向溢出时把滚轮转成内容的横向滚动；Ctrl+滚轮留给缩放，不拦。
+    mf.addEventListener(
+      "wheel",
+      function (event) {
+        if (event.ctrlKey) return;
+        const content = mf.shadowRoot && mf.shadowRoot.querySelector(".ML__content");
+        if (!content || content.scrollWidth <= content.clientWidth + 2) return;
+        const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+        if (!delta) return;
+        content.scrollLeft += delta;
+        event.preventDefault();
+      },
+      { passive: false }
+    );
     setLatex(mf, mixedToLatex(textarea ? textarea.value : ""));
     setReadOnly(mf, textarea ? textarea.readOnly || textarea.disabled : false);
     return mf;
