@@ -89,10 +89,50 @@ class ValidateLatexTests(unittest.TestCase):
             validate_latex("这是一个矩阵")
 
     def test_rejects_forbidden_commands(self):
+        # 白名单模式下这些一律是「未列出的命令」，都会被拒
         for bad in ("\\input{/etc/passwd}", "\\write18{rm -rf /}", "\\usepackage{evil}"):
             latex = "\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}" + bad
             with self.assertRaises(ValueError, msg=bad):
                 validate_latex(latex)
+
+    def test_rejects_macro_definitions(self):
+        # review 意见 1：原来的黑名单漏了 \def / \newcommand 这类宏定义
+        for bad in ("\\def\\x{1}", "\\newcommand{\\y}{2}", "\\renewcommand{\\z}{3}",
+                    "\\let\\a\\b", "\\catcode`\\@=11"):
+            latex = "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}" + bad
+            with self.assertRaises(ValueError, msg=bad):
+                validate_latex(latex)
+
+    def test_unknown_command_is_named_in_error(self):
+        with self.assertRaises(ValueError) as ctx:
+            validate_latex("\\begin{pmatrix}\\foo&1\\\\2&3\\end{pmatrix}")
+        self.assertIn("\\foo", str(ctx.exception))
+
+    def test_accepts_one_by_one(self):
+        # review 意见 2：一阶行列式是单个元素，不该被「缺少 & 或换行」误杀
+        latex = r"\begin{vmatrix}a\end{vmatrix}"
+        self.assertEqual(validate_latex(latex), latex)
+        one = r"\begin{vmatrix}2\end{vmatrix}"
+        self.assertEqual(validate_latex(one), one)
+
+    def test_rejects_ragged_rows(self):
+        with self.assertRaises(ValueError):
+            validate_latex(r"\begin{pmatrix}1&2\\3\end{pmatrix}")
+
+    def test_accepts_common_math_commands(self):
+        latex = r"\begin{pmatrix}\frac{1}{2}&\sqrt{3}\\\alpha&x^{2}\le\infty\end{pmatrix}"
+        self.assertEqual(validate_latex(latex), latex)
+
+    def test_accepts_realistic_model_output(self):
+        latex = (
+            r"\begin{vmatrix}1&0&\cdots&0\\0&1&\cdots&0\\"
+            r"\vdots&\vdots&\ddots&\vdots\\0&0&\cdots&1\end{vmatrix}"
+        )
+        self.assertEqual(validate_latex(latex), latex)
+
+    def test_accepts_spacing_and_row_separator(self):
+        latex = r"\begin{pmatrix}1&2\\[2pt]3&4\end{pmatrix}"
+        self.assertEqual(validate_latex(latex), latex)
 
     def test_rejects_two_environments(self):
         latex = PMATRIX + PMATRIX
@@ -105,8 +145,9 @@ class ValidateLatexTests(unittest.TestCase):
             validate_latex(latex)
 
     def test_rejects_body_without_separators(self):
+        # 单格现在合法（1×1），但「一格都没有」仍然要拒
         with self.assertRaises(ValueError):
-            validate_latex("\\begin{pmatrix}1\\end{pmatrix}")
+            validate_latex(r"\begin{pmatrix}\end{pmatrix}")
 
 
 class DescriptionTests(unittest.TestCase):

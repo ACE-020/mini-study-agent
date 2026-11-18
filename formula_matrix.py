@@ -23,23 +23,68 @@ ALLOWED_ENVIRONMENTS = (
 MAX_LATEX_LENGTH = 2000
 MAX_DESCRIPTION_LENGTH = 300
 
-# 这些命令出现在「矩阵公式」里没有正当用途，出现即判为不合格。
-FORBIDDEN_COMMANDS = (
-    "\\write18",
-    "\\input",
-    "\\include",
-    "\\openout",
-    "\\readline",
-    "\\catcode",
-    "\\csname",
-    "\\immediate",
-    "\\usepackage",
-    "\\href",
-    "\\url",
-)
+# 允许出现的命令白名单。
+#
+# 为什么是白名单而不是黑名单：黑名单永远会漏——\\def、\\newcommand、\\let、
+# \\catcode 这些当初都没拦（见 review 意见 1）。白名单是「没列出来的一律不许用」，
+# 漏的是反向的（冷门符号被拒），失败方向更安全。
+#
+# 现在 KaTeX / MathLive 只渲染、不执行 TeX，风险还低；但一旦接上「LaTeX → 编译 PDF」，
+# 黑名单就是真的执行入口，所以这里按白名单写。
+# 代价：模型用到冷门命令时会被拒，前端提示重试，换句话描述即可。
+ALLOWED_COMMANDS = frozenset({
+    # 结构
+    "begin", "end", "left", "right", "middle", "displaystyle",
+    # 定界符
+    "lbrace", "rbrace", "langle", "rangle", "lvert", "rvert", "lVert", "rVert",
+    "vert", "Vert", "mid", "lfloor", "rfloor", "lceil", "rceil",
+    # 分式、根式、组合数
+    "frac", "dfrac", "tfrac", "cfrac", "sqrt", "binom", "dbinom", "tbinom",
+    # 重音与上下线
+    "overline", "underline", "overrightarrow", "overleftarrow",
+    "hat", "bar", "vec", "dot", "ddot", "tilde", "widehat", "widetilde",
+    # 字体与文本
+    "text", "mathrm", "mathbf", "mathit", "mathbb", "mathcal", "mathsf", "mathtt",
+    "operatorname", "boldsymbol",
+    # 省略号
+    "cdots", "ldots", "dots", "vdots", "ddots", "dotsb", "dotsc", "dotsm", "dotsi",
+    # 运算符
+    "times", "cdot", "div", "pm", "mp", "ast", "star", "circ", "bullet", "oplus", "otimes",
+    # 关系
+    "le", "leq", "ge", "geq", "ne", "neq", "approx", "sim", "simeq", "cong", "equiv",
+    "propto", "ll", "gg", "in", "notin", "ni", "subset", "supset", "subseteq",
+    "supseteq", "cup", "cap", "setminus", "emptyset", "varnothing",
+    # 箭头
+    "to", "gets", "rightarrow", "leftarrow", "leftrightarrow", "Rightarrow",
+    "Leftarrow", "Leftrightarrow", "mapsto", "implies", "iff",
+    # 微积分与大型运算符
+    "sum", "prod", "coprod", "int", "iint", "iiint", "oint", "lim", "limsup",
+    "liminf", "partial", "nabla", "infty", "prime",
+    # 函数名
+    "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+    "ln", "log", "lg", "exp", "max", "min", "sup", "inf", "det", "dim", "ker",
+    "gcd", "mod", "bmod", "pmod",
+    # 小写希腊字母
+    "alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta",
+    "theta", "vartheta", "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron",
+    "pi", "varpi", "rho", "varrho", "sigma", "varsigma", "tau", "upsilon",
+    "phi", "varphi", "chi", "psi", "omega",
+    # 大写希腊字母
+    "Gamma", "Delta", "Theta", "Lambda", "Xi", "Pi", "Sigma", "Upsilon",
+    "Phi", "Psi", "Omega",
+    # 杂项
+    "angle", "triangle", "square", "Box", "degree",
+    # 间距、换行与转义字符
+    "quad", "qquad", " ", ",", ";", ":", "!", "-", "/",
+    "#", "%", "&", "_", "$", "{", "}", "\\",
+})
+
+# 提取命令名：\frac -> frac；\\ -> \；\, -> ,
+_COMMAND_RE = re.compile(r"\\([A-Za-z]+|.)", re.S)
 
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*|\s*```\s*$")
 _ENV_RE = re.compile(r"\\begin\s*\{([A-Za-z]+)\}(.*)\\end\s*\{\1\}", re.S)
+_ROW_SPLIT_RE = re.compile(r"\\\\")
 
 KIND_LABELS = {"matrix": "矩阵", "determinant": "行列式"}
 
@@ -100,6 +145,31 @@ def extract_latex(raw):
     return text
 
 
+def extract_commands(latex):
+    """取出用到的全部命令名，供白名单比对。"""
+
+    return {match.group(1) for match in _COMMAND_RE.finditer(latex or "")}
+
+
+def matrix_shape(body):
+    """返回 (行数, 列数)。
+
+    一阶行列式（1×1）是合法输入，所以不再要求「必须出现 & 或换行」——
+    改成检查各行格子数是否一致，单行单格自然通过（见 review 意见 2）。
+    """
+
+    text = (body or "").strip()
+    while text.endswith("\\\\"):
+        text = text[:-2].rstrip()
+    if not text:
+        raise ValueError("生成的矩阵是空的，请换个说法重试。")
+    rows = _ROW_SPLIT_RE.split(text)
+    counts = [len(row.split("&")) for row in rows]
+    if len(set(counts)) != 1:
+        raise ValueError("生成的矩阵各行格子数不一致，请重试。")
+    return len(rows), counts[0]
+
+
 def validate_latex(latex):
     """确认结果确实是一个可用的矩阵环境，否则抛 ValueError。"""
 
@@ -111,11 +181,6 @@ def validate_latex(latex):
     if len(text) > MAX_LATEX_LENGTH:
         raise ValueError("生成的公式过长，请把描述写得更简洁。")
 
-    lowered = text.lower()
-    for command in FORBIDDEN_COMMANDS:
-        if command in lowered:
-            raise ValueError("生成的公式包含不允许的命令，已拦截。")
-
     match = _ENV_RE.search(text)
     if not match:
         raise ValueError("模型返回的不是矩阵环境，请重试。")
@@ -125,9 +190,11 @@ def validate_latex(latex):
     if text.count("\\begin") != 1 or text.count("\\end") != 1:
         raise ValueError("生成的公式结构不完整，请重试。")
 
-    body = match.group(2)
-    if "&" not in body and "\\\\" not in body:
-        raise ValueError("生成的公式不像矩阵（缺少 & 或换行），请重试。")
+    unknown = sorted(extract_commands(text) - ALLOWED_COMMANDS)
+    if unknown:
+        raise ValueError(f"生成的公式包含不支持的命令 \\{unknown[0]}，请重试。")
+
+    matrix_shape(match.group(2))
     return text
 
 
@@ -154,4 +221,3 @@ def generate(client, description, kind="matrix"):
     text, kind = validate_description(description, kind)
     reply = client.complete(build_messages(text, kind))
     return validate_latex(extract_latex(_read_content(reply)))
-
