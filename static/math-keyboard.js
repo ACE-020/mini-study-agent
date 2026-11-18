@@ -173,8 +173,15 @@
       label: "矩阵",
       full: "矩阵与几何",
       keys: [
-        k("矩阵", "\\begin{pmatrix}$0&\\\\&\\\\\\end{pmatrix}", "2×2 矩阵", "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}"),
-        k("行列式", "\\begin{vmatrix}$0&\\\\&\\\\\\end{vmatrix}", "2×2 行列式", "\\begin{vmatrix}a&b\\\\c&d\\end{vmatrix}"),
+        {
+          // 入口键：不直接插入 2×2，而是打开面板让用户选行列数或描述规律
+          label: "矩阵",
+          insert: "",
+          aria: "矩阵或行列式：可选行列数，也可用一句话描述规律",
+          title: "插入矩阵 / 行列式",
+          tex: "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}",
+          action: "matrix-dialog"
+        },
         k("向量", "\\vec{$0}", "向量", "\\vec{a}"),
         k("上划线", "\\overline{$0}", "上划线", "\\overline{a}"),
         k("∠", "\\angle $0", "角", "\\angle"),
@@ -215,9 +222,6 @@
     "\\int_{$0}^{} $0\\,dx": "\\int_{#?}^{#?}{#@}",
     "\\sum_{$0}^{} $0": "\\sum_{#?}^{#?}{#@}",
     "\\prod": "\\prod_{#?}^{#?}{#@}",
-    "\\begin{pmatrix}$0&\\\\&\\\\\\end{pmatrix}": "\\begin{pmatrix}#@&\\\\&\\\\\\end{pmatrix}",
-    // MathLive 没有 vmatrix 的键面结构，行列式沿用 pmatrix（报告里已说明）
-    "\\begin{vmatrix}$0&\\\\&\\\\\\end{vmatrix}": "\\begin{pmatrix}#@&\\\\&\\\\\\end{pmatrix}",
     "\\vec{$0}": "\\vec{#@}",
     "\\overline{$0}": "\\overline{#@}"
   };
@@ -581,23 +585,73 @@
 
   /* ---------- 插入逻辑 ---------- */
 
+  /* ---------- 矩阵 / 行列式入口 ---------- */
+
+  function handleAction(instance, key, button) {
+    if (key.action !== "matrix-dialog") return;
+    const dialog = window.formulaMatrix;
+    if (!dialog || typeof dialog.open !== "function") {
+      showHint(instance, "矩阵面板未就绪");
+      return;
+    }
+    flash(button);
+    dialog.open({
+      kind: "matrix",
+      onInsert: function (payload) {
+        applyMatrix(instance, payload, button);
+      },
+      onClose: function () {
+        // 关掉面板后把焦点还给原输入框，用户可以接着打字
+        if (instance.kind === "formula") {
+          const api = formulaApi();
+          if (api && typeof api.focus === "function") api.focus();
+        } else if (instance.field) {
+          instance.field.focus({ preventScroll: true });
+        }
+      }
+    });
+  }
+
+  function applyMatrix(instance, payload, button) {
+    if (!payload) return;
+    if (instance.kind === "formula") {
+      const api = formulaApi();
+      if (!api) {
+        showHint(instance, "公式编辑器未就绪");
+        return;
+      }
+      const ok = api.insertChip({ template: payload.template });
+      showHint(instance, ok ? "已插入矩阵" : "公式编辑器未就绪");
+      return;
+    }
+    insertTextAtCursor(instance, payload.text, button);
+  }
+
   function insertKey(instance, key, button) {
+    if (key.action) {
+      handleAction(instance, key, button);
+      return;
+    }
     if (instance.kind === "formula") {
       insertIntoFormula(instance, key, button);
       return;
     }
+    insertTextAtCursor(instance, key.insert, button);
+  }
+
+  function insertTextAtCursor(instance, insert, button) {
     const field = instance.field;
     const value = field.value;
     const start = Math.min(field.selectionStart == null ? value.length : field.selectionStart, value.length);
     const end = Math.min(Math.max(field.selectionEnd == null ? start : field.selectionEnd, start), value.length);
     const selected = value.slice(start, end);
-    const parts = key.insert.split("$0");
+    const parts = insert.split("$0");
     let text;
     let caret;
 
     if (parts.length === 1) {
       // 没有光标占位：普通替换/插入
-      text = key.insert;
+      text = insert;
       caret = start + text.length;
     } else if (selected) {
       // 有选区：把选中文字包进 $0 的位置，光标落到整段插入内容之后
