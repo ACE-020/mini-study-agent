@@ -49,6 +49,9 @@ window-check.json
 .tools/
 experiments/document-pipeline/work/
 
+# 本地验收/自测截图与临时产物
+/artifacts/
+
 # Keep every personal learning record and future data file local.
 /data/
 .env.*
