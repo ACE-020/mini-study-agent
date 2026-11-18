@@ -30,7 +30,7 @@
     <block wx:for="{{messages}}" wx:key="index">
       <view id="msg-{{index}}" class="row {{item.role}}">
         <view class="bubble {{item.role}}" bindlongpress="onCopy" data-text="{{item.text}}">
-          <rich-text wx:if="{{item.role === 'assistant'}}" nodes="{{item.html}}" />
+          <mp-html wx:if="{{item.role === 'assistant'}}" content="{{item.text}}" markdown />
           <text wx:else user-select>{{item.text}}</text>
         </view>
       </view>

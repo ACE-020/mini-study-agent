@@ -1,6 +1,10 @@
 const api = require('../../utils/api.js');
 const markdown = require('../../utils/markdown.js');
 
+const THREAD_KEY = 'chat_threads_v1';
+const PENDING_KEY = 'chat_pending_v1';
+const MAX_THREAD_MESSAGES = 40;
+
 Page({
   data: {
     modes: [
@@ -29,11 +33,86 @@ Page({
     this.unconfirmed = null;
     this.polling = null;
     this.authRetried = false;
+    this.restoreThread();
   },
 
   onShow() {
     // 从「设置」返回时重新读一次状态：填完 Key 回来横幅要立刻消失。
     this.refreshStatus();
+    // 页面被重建过（切走再回来、系统回收）时，把对话从本地缓存接回来。
+    if (!this.data.messages.length) {
+      this.restoreThread();
+    }
+    this.resumePending();
+  },
+
+  // ---- 本地缓存：切 tab 或页面重建后，看到的对话不能凭空消失 ----
+
+  threads() {
+    try {
+      const value = wx.getStorageSync(THREAD_KEY);
+      return value && typeof value === 'object' ? value : {};
+    } catch (error) {
+      return {};
+    }
+  },
+
+  saveThread(mode) {
+    const target = mode || this.data.mode;
+    try {
+      const all = this.threads();
+      const messages = (this.data.messages || []).slice(-MAX_THREAD_MESSAGES);
+      if (messages.length) {
+        all[target] = messages;
+      } else {
+        delete all[target];
+      }
+      wx.setStorageSync(THREAD_KEY, all);
+    } catch (error) {
+      // 存不下不影响这一轮对话
+    }
+  },
+
+  restoreThread(mode) {
+    const target = mode || this.data.mode;
+    const messages = this.threads()[target];
+    if (Array.isArray(messages) && messages.length) {
+      this.setData({ messages: messages, anchor: 'thread-end' });
+    }
+  },
+
+  savePending(taskId) {
+    try {
+      if (taskId) {
+        wx.setStorageSync(PENDING_KEY, { mode: this.data.mode, taskId: taskId });
+      } else {
+        wx.removeStorageSync(PENDING_KEY);
+      }
+    } catch (error) {
+      // 忽略：缓存失败最多是切页后需要手动「继续查看」
+    }
+  },
+
+  pendingTask() {
+    try {
+      const value = wx.getStorageSync(PENDING_KEY);
+      return value && value.taskId ? value : null;
+    } catch (error) {
+      return null;
+    }
+  },
+
+  resumePending() {
+    const pending = this.pendingTask();
+    if (!pending || pending.mode !== this.data.mode) {
+      return;
+    }
+    if (this.data.busy || this.data.taskId || this.data.pendingTaskId) {
+      return;
+    }
+    // 页面重建后服务端任务往往还在：接着轮询，跑完把答案补进对话，而不是让“正在思考”凭空消失。
+    this.setData({ busy: true, progressText: '继续等待这一轮…', taskId: pending.taskId });
+    this.pollAttached(pending.taskId);
   },
 
   refreshStatus() {
@@ -83,12 +162,19 @@ Page({
       return;
     }
     const mode = event.currentTarget.dataset.key;
+    if (mode === this.data.mode) {
+      return;
+    }
     if (mode === 'review' && this.data.images.length) {
       // 复习作答图片要走 OCR 转写，小程序端还没接，先清掉，别让用户白等。
       this.toast('复习暂不支持图片作答，已清空所选图片');
       this.setData({ images: [] });
     }
-    this.setData({ mode: mode });
+    // 每个视图在服务端是独立上下文，界面也按视图各存一份，切回来还是原来那段对话。
+    this.saveThread();
+    this.setData({ mode: mode, messages: [], anchor: '' });
+    this.restoreThread(mode);
+    this.resumePending();
   },
 
   onChooseImage() {
@@ -152,6 +238,7 @@ Page({
   appendMessage(message) {
     const messages = this.data.messages.concat([message]);
     this.setData({ messages: messages, anchor: 'msg-' + (messages.length - 1) });
+    this.saveThread();
   },
 
   scrollToEnd() {
@@ -198,6 +285,7 @@ Page({
       activeTaskId = taskId;
       this.authRetried = false;
       this.setData({ taskId: taskId });
+      this.savePending(taskId);
       return this.pollAttached(taskId);
     };
 
@@ -284,6 +372,7 @@ Page({
     if (error && error.code === 404) {
       // 任务已经不存在（服务重启或被清理）：释放句柄，允许重新发送。
       this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: '' });
+      this.savePending('');
       this.toast('这一轮已经不存在，可以重新发送');
       return;
     }
@@ -304,6 +393,7 @@ Page({
 
   keepTask(taskId, message) {
     this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: taskId });
+    this.savePending(taskId);
     this.toast(message);
   },
 
@@ -314,16 +404,19 @@ Page({
     if (result.status === 'timeout') {
       // 任务还在服务端跑：保留句柄，允许“继续查看”或“停止”，不要谎称可以随意重发。
       this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: result.task_id || '' });
+      this.savePending(result.task_id || '');
       this.toast('这一轮还没结束，可继续查看或停止');
       return;
     }
     if (result.status === 'cancelled') {
       this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: '', images: [] });
+      this.savePending('');
       this.toast('已停止这一轮');
       return;
     }
     if (result.status === 'error') {
       this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: '', images: [] });
+      this.savePending('');
       if (result.need_model_settings || result.error_code === 'settings_error') {
         // 个人 Key 无法解密或没有可用 Key：明确引导到「设置」，不要把内部细节当答案。
         this.setData({ configured: false, needSettings: true });
@@ -342,6 +435,7 @@ Page({
       question: result.current_question || null
     });
     this.setData({ busy: false, progressText: '', taskId: '', pendingTaskId: '', images: [] });
+    this.savePending('');
     this.scrollToEnd();
   },
 
@@ -404,6 +498,8 @@ Page({
             // 换了新对话，未确认的提交编号也要作废，否则会把旧 request_id 带进新对话。
             this.unconfirmed = null;
             this.setData({ messages: [], anchor: '', pendingTaskId: '' });
+            this.saveThread();
+            this.savePending('');
           })
           .catch((error) => this.toast(error.message));
       }

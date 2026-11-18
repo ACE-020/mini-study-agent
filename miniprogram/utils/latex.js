@@ -53,6 +53,32 @@ const SUBSCRIPTS = {
 
 const COMBINING = { hat: '\u0302', bar: '\u0304', overline: '\u0304', vec: '\u20D7', dot: '\u0307' };
 
+// 分式的排法：
+//   'linear' = 一行写完，如 1/|A|、(a+b)/2（rich-text 丢掉 display 样式时最稳）
+//   'stack'  = 上下两行 + 横线（只有确认设备支持 display:inline-block 才用）
+// 实测：微信 rich-text 会把 display:block 丢掉，分式塌成 "1|A|"，所以默认 linear。
+const FRACTION_LAYOUT = 'linear';
+
+// 只看“能不能直接跟在 / 旁边而不产生歧义”
+const ATOMIC = /^[A-Za-z0-9|()[\]{}√π∞′⁰¹²³⁴⁵⁶⁷⁸⁹ₙₖₐ]+$/;
+
+function plainText(html) {
+  return String(html || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+}
+
+function fractionHtml(numerator, denominator) {
+  if (FRACTION_LAYOUT === 'stack') {
+    return '<span style="display:inline-block;vertical-align:middle;text-align:center;margin:0 4rpx;line-height:1.2">'
+      + '<span style="display:block;border-bottom:1px solid #5b6b62;padding:0 8rpx">' + numerator + '</span>'
+      + '<span style="display:block;padding:0 8rpx">' + denominator + '</span>'
+      + '</span>';
+  }
+  const top = plainText(numerator).replace(/\s+/g, '');
+  const bottom = plainText(denominator).replace(/\s+/g, '');
+  const wrap = (value) => (ATOMIC.test(value) ? value : '(' + value + ')');
+  return wrap(top) + '/' + wrap(bottom);
+}
+
 function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')
@@ -144,7 +170,7 @@ function render(source) {
           const second = group(text, cursor);
           if (second) {
             index = second.next;
-            out += '(' + render(first.body).trim() + ')/(' + render(second.body).trim() + ')';
+            out += fractionHtml(render(first.body), render(second.body));
             continue;
           }
         }
@@ -372,4 +398,4 @@ function restore(html, rendered) {
   return String(html || '').replace(pattern, (whole, index) => rendered[Number(index)] || '');
 }
 
-module.exports = { extract, restore, renderMath, render };
+module.exports = { extract, restore, renderMath, render, FRACTION_LAYOUT };
