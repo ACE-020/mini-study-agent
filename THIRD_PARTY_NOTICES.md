@@ -5,6 +5,8 @@
 - Marked：`static/vendor/marked-LICENSE.txt`
 - DOMPurify：`static/vendor/dompurify-LICENSE.txt`
 - KaTeX 及其随附网页字体：`static/vendor/katex-LICENSE.txt`
+- MathLive 0.111.4（MIT）：`static/vendor/mathlive/LICENSE.txt`，位于 `static/vendor/mathlive/mathlive.min.js`
+- MathLive 随附的 KaTeX 网页字体（KaTeX/MathLive 项目，SIL Open Font License 1.1）：`static/vendor/mathlive/fonts/`，样式表 `static/vendor/mathlive/mathlive-fonts.css`
 
 Python 依赖通过 `requirements.txt` 安装，不把虚拟环境复制进仓库。本机 OCR 与文档实验工具、模型权重没有包含在源码中；另行安装时遵循各项目自己的许可。
 

@@ -1,0 +1,762 @@
+/* 数学符号键盘 · GeoGebra / Desmos 风格
+   面板在文档流内（position: static），不会盖住任何按钮；类名统一 .mk- 前缀。 */
+
+@keyframes mk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mk-panel {
+  box-sizing: border-box;
+  position: static;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 100%;
+  min-width: 0;
+  max-height: 240px;
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 12px;
+  background: var(--white, #fff);
+  box-shadow: 0 6px 18px #2c2e5910;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--ink, #252b3b);
+  overflow: hidden;
+}
+
+.mk-panel[hidden] {
+  display: none;
+}
+
+.mk-panel.is-open {
+  animation: mk-rise .18s ease-out;
+}
+
+.mk-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: none;
+}
+
+.mk-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--line, #e8eaf1);
+}
+
+.mk-tab {
+  flex: none;
+  padding: 4px 6px 5px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: #8b90a2;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: 6px 6px 0 0;
+}
+
+.mk-tab:hover {
+  color: var(--purple-dark, #5144b1);
+  background: #f7f5fd;
+}
+
+.mk-tab[aria-selected="true"] {
+  color: var(--purple, #6558c9);
+  border-bottom-color: var(--purple, #6558c9);
+  background: #eeebfc;
+  font-weight: 600;
+}
+
+.mk-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: #9a9fb0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mk-close:hover {
+  color: var(--purple-dark, #5144b1);
+  border-color: #ddd6f5;
+  background: #f2f0fb;
+}
+
+.mk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 6px;
+  padding: 1px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.mk-key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 34px;
+  padding: 2px 3px;
+  border: 1px solid #eef0f6;
+  border-radius: 7px;
+  background: #fbfbfd;
+  color: #444a5c;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.mk-key:hover {
+  background: #f2f0fb;
+  border-color: #ddd6f5;
+  color: #5144b1;
+}
+
+.mk-key.is-pressed {
+  background: #e9e4fb;
+  border-color: #c8bcf0;
+  color: #5144b1;
+}
+
+.mk-key .katex {
+  font-size: .95em;
+  white-space: nowrap;
+}
+
+.mk-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  padding: 4px 2px 0;
+  color: #a8a8b8;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.mk-hint {
+  flex: none;
+  color: var(--purple, #6558c9);
+  white-space: nowrap;
+}
+
+.mk-panel button:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 2px;
+}
+
+@media (max-width: 820px) {
+  .mk-panel {
+    max-height: 260px;
+  }
+
+  .mk-tab {
+    font-size: 12px;
+    padding: 5px 8px 6px;
+  }
+
+  .mk-grid {
+    grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  }
+
+  .mk-key {
+    min-height: 38px;
+  }
+
+  .mk-foot {
+    font-size: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-panel.is-open {
+    animation: none;
+  }
+
+  .mk-key {
+    transition: none;
+  }
+}
+
+/* ---------- 公式可视化输入：输入方式切换 / 公式编辑器外框 ---------- */
+
+.input-mode-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin: 2px 0 10px;
+  padding: 3px;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 10px;
+  background: #f7f7fb;
+  font-family: inherit;
+}
+
+.input-mode-button {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted, #7c8293);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 5px 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+
+.input-mode-button:hover:not(:disabled) {
+  color: var(--purple-dark, #5144b1);
+  background: var(--white, #fff);
+}
+
+.input-mode-button.active {
+  background: var(--white, #fff);
+  color: var(--purple, #6558c9);
+  font-weight: 600;
+  box-shadow: 0 1px 3px #2c2e5914;
+}
+
+.input-mode-button:disabled {
+  color: #b3b6c2;
+  cursor: not-allowed;
+}
+
+.input-mode-button:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 1px;
+}
+
+.formula-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 6px 0 10px;
+}
+
+.formula-pane[hidden] {
+  display: none;
+}
+
+.formula-editor-host {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 10px;
+  background: var(--white, #fff);
+  font-family: inherit;
+  overflow-x: auto;
+  cursor: text;
+}
+
+.formula-editor-host:focus-within {
+  border-color: #c8bcf0;
+  box-shadow: 0 0 0 3px #eeebfc;
+}
+
+/* MathLive 渲染（真实 TeX 排版）；外框由 .formula-editor-host 负责，这里去掉它自带的边框 */
+.formula-editor-host math-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink, #252b3b);
+  font-family: inherit;
+  font-size: 24px;
+  line-height: 2.1;
+  --caret-color: #6558c9;
+  --selection-background-color: #eeebfc;
+  --contains-highlight-background-color: #f2f0fb;
+}
+
+.formula-editor-host math-field:focus {
+  outline: none;
+}
+
+/* 长公式横向滚动。
+   MathLive 内部 .ML__content 默认 overflow-x:hidden，超出宽度的内容会被直接裁掉，
+   外层 .formula-editor-host 的 overflow-x:auto 因此永远触发不了，只能靠移动光标去看。
+   这里只放开内部容器的横向滚动：MathLive 自己会把滚动位置跟着光标走，
+   比撑宽 math-field 让外层滚动更可靠（撑宽后光标会跑到可视区外）。
+   注意：这段依赖 MathLive 内部 DOM —— ::part(content) 对应它的 .ML__content。
+   依赖版本锁在 static/vendor/mathlive（0.111.4）。升级 MathLive 时必须回归这一项，
+   否则滚动会静默失效（内容重新被裁掉，但不会有任何报错）。 */
+.formula-editor-host math-field::part(content) {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+
+.formula-editor-host math-field::part(menu-toggle),
+.formula-editor-host math-field::part(virtual-keyboard-toggle) {
+  display: none;
+}
+
+.formula-follow-pane .formula-editor-host math-field {
+  min-height: 64px;
+  font-size: 20px;
+  line-height: 2;
+}
+
+.formula-hint {
+  margin: 0;
+  color: #a8a8b8;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+/* 公式模式下隐藏文字输入框，但 #draft 仍留在 DOM 里供 app.js 读写与提交 */
+.formula-mode #draft {
+  display: none;
+}
+
+/* ---------- 公式键盘的方向键控制盘 ---------- */
+
+.mk-arrows {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #eef0f6;
+}
+
+.mk-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
+  min-height: 28px;
+  padding: 0 2px;
+  border: 1px solid #eef0f6;
+  border-radius: 7px;
+  background: #fbfbfd;
+  color: #444a5c;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+}
+
+.mk-arrow:hover {
+  background: #f2f0fb;
+  border-color: #ddd6f5;
+  color: #5144b1;
+}
+
+.mk-arrow.is-pressed {
+  background: #e9e4fb;
+  border-color: #c8bcf0;
+  color: #5144b1;
+  transform: translateY(1px);
+}
+
+.mk-arrow:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 2px;
+}
+
+.mk-arrows-label {
+  margin-left: 2px;
+  color: #a8a8b8;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+/* ---------- 对话补充框的「∑ 公式」按钮与内嵌编辑区 ---------- */
+
+.composer-formula-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid #ded8ee;
+  border-radius: 8px;
+  background: #f8f6ff;
+  padding: 6px 11px;
+  color: #514397;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.composer-formula-toggle:hover:not(:disabled) {
+  background: #eee8ff;
+}
+
+.composer-formula-toggle[aria-expanded="true"] {
+  background: #eee8ff;
+  border-color: #c8bcf0;
+  color: #5144b1;
+}
+
+.composer-formula-toggle:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 2px;
+}
+
+.formula-follow-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 6px 0;
+}
+
+.formula-follow-pane[hidden] {
+  display: none;
+}
+
+.formula-follow-pane .formula-editor-host {
+  min-height: 96px;
+}
+
+@media (max-width: 820px) {
+  .mk-arrow {
+    flex-basis: 38px;
+    min-height: 32px;
+  }
+
+  .input-mode-button {
+    font-size: 13px;
+    padding: 6px 14px;
+  }
+
+  .formula-editor-host math-field {
+    font-size: 21px;
+    min-height: 84px;
+  }
+}
+
+@media (max-width: 480px) {
+  .composer-formula-toggle {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+
+  .formula-editor-host math-field {
+    font-size: 19px;
+    line-height: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-arrow,
+  .input-mode-button {
+    transition: none;
+  }
+
+  .mk-arrow.is-pressed {
+    transform: none;
+  }
+}
+
+
+/* ---------- 矩阵 / 行列式插入面板（.fmx-） ---------- */
+
+.fmx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: #1e21301f;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--ink, #252b3b);
+}
+
+.fmx-backdrop[hidden] {
+  display: none;
+}
+
+.fmx-panel {
+  box-sizing: border-box;
+  width: min(520px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 12px;
+  background: var(--white, #fff);
+  box-shadow: 0 12px 32px #2c2e5926;
+}
+
+.fmx-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line, #e8eaf1);
+}
+
+.fmx-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fmx-close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted, #7c8293);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.fmx-close:hover {
+  background: #f2f1f8;
+  color: var(--ink, #252b3b);
+}
+
+.fmx-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.fmx-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fmx-label {
+  font-size: 12px;
+  color: var(--muted, #7c8293);
+}
+
+.fmx-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 10px;
+  background: #f7f7fb;
+  align-self: flex-start;
+}
+
+.fmx-seg-button {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted, #7c8293);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 16px;
+  cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+
+.fmx-seg-button.active {
+  background: var(--white, #fff);
+  color: var(--purple, #6558c9);
+  font-weight: 600;
+  box-shadow: 0 1px 3px #2c2e5914;
+}
+
+.fmx-seg-button:focus-visible,
+.fmx-primary:focus-visible,
+.fmx-ghost:focus-visible {
+  outline: 3px solid #b9aff3;
+  outline-offset: 1px;
+}
+
+.fmx-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fmx-size input {
+  box-sizing: border-box;
+  width: 64px;
+  padding: 6px 8px;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: var(--white, #fff);
+}
+
+.fmx-times {
+  color: var(--muted, #7c8293);
+  font-size: 13px;
+}
+
+.fmx-primary {
+  appearance: none;
+  border: 1px solid #5a4dc0;
+  border-radius: 8px;
+  background: var(--purple, #6558c9);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.fmx-primary:hover:not(:disabled) {
+  background: #574ac0;
+}
+
+.fmx-primary:disabled {
+  background: #c7c3e2;
+  border-color: #c7c3e2;
+  cursor: not-allowed;
+}
+
+.fmx-ghost {
+  appearance: none;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 8px;
+  background: var(--white, #fff);
+  color: var(--ink, #252b3b);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.fmx-ghost:hover:not(:disabled) {
+  border-color: #c8bcf0;
+  color: var(--purple-dark, #5144b1);
+}
+
+.fmx-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted, #7c8293);
+  font-size: 12px;
+}
+
+.fmx-divider::before,
+.fmx-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line, #e8eaf1);
+}
+
+.fmx-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line, #e8eaf1);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: inherit;
+  resize: vertical;
+}
+
+.fmx-textarea:disabled {
+  background: #f7f7fb;
+  color: #a9adba;
+  cursor: not-allowed;
+}
+
+.fmx-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fmx-status {
+  font-size: 12px;
+  color: var(--muted, #7c8293);
+}
+
+.fmx-status.is-error {
+  color: #b4392f;
+}
+
+.fmx-preview {
+  padding: 10px 12px;
+  border: 1px dashed var(--line, #e8eaf1);
+  border-radius: 8px;
+  background: #fbfbfe;
+  overflow-x: auto;
+  font-size: 15px;
+}
+
+.fmx-preview[hidden] {
+  display: none;
+}
+
+.fmx-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.fmx-actions[hidden] {
+  display: none;
+}
+
+@media (max-width: 520px) {
+  .fmx-backdrop {
+    padding: 10px;
+    align-items: flex-end;
+  }
+
+  .fmx-panel {
+    width: 100%;
+    max-height: calc(100vh - 20px);
+  }
+}
