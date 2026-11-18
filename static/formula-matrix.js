@@ -12,6 +12,9 @@
   const KIND_LABEL = { matrix: "矩阵", determinant: "行列式" };
   const MAX_SIZE = 6;
   const MIN_SIZE = 1;
+  // 模型调用可能卡住（网络、服务端排队）。超时就主动中断，
+  // 否则按钮会永远停在「正在生成…」，用户只能刷新页面。
+  const AI_TIMEOUT_MS = 25000;
 
   let panel = null;
   let nodes = null;
@@ -246,11 +249,16 @@
     }
     resetPreview();
     setBusy(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(function () {
+      controller.abort();
+    }, AI_TIMEOUT_MS);
     try {
       const response = await fetch("/api/formula/matrix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: description, kind: state.kind })
+        body: JSON.stringify({ description: description, kind: state.kind }),
+        signal: controller.signal
       });
       const data = await response.json().catch(function () {
         return {};
@@ -262,8 +270,13 @@
       showPreview(data.latex);
       setStatus("已生成，确认后点插入");
     } catch (error) {
-      setStatus(error.message || "生成失败，请稍后重试。", true);
+      if (error && error.name === "AbortError") {
+        setStatus("生成超时（25 秒），请重试。", true);
+      } else {
+        setStatus(error.message || "生成失败，请稍后重试。", true);
+      }
     } finally {
+      window.clearTimeout(timer);
       setBusy(false);
     }
   }
