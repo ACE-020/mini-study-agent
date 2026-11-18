@@ -120,6 +120,20 @@ PATHS = {
             responses={**ok("当前设置（settings）", "SettingsResponse"), **err(400, "模型名称非法"), **err(409, "有请求正在处理中")},
         )
     },
+    "/api/formula/matrix": {
+        "post": dict(
+            summary="按描述生成矩阵 / 行列式的 LaTeX", tags=["公式"],
+            description=(
+                "把一句自然语言描述转成矩阵或行列式环境。只返回 LaTeX，不写任何数据；"
+                "结果已做校验（限定 pmatrix / bmatrix / vmatrix / matrix / smallmatrix 等环境，"
+                "拦截 \\input、\\write18 一类命令）。未配置模型时直接返回 400。"
+            ),
+            requestBody=json_body("FormulaMatrixInput"),
+            responses={**ok("生成结果（latex）", "FormulaMatrixResponse"),
+                       **err(400, "描述为空、过长或生成的公式不合法"),
+                       **err(502, "模型服务不可用")},
+        )
+    },
     "/api/settings/test": {
         "post": dict(
             summary="测试连接", tags=["系统"],
@@ -593,6 +607,21 @@ SCHEMAS = {
             "ocr_backend": {"type": "string", "enum": ["auto", "local", "remote"]},
             "api_key": {"type": "string", "maxLength": 8000},
             "ocr_api_key": {"type": "string", "maxLength": 8000},
+        },
+    },
+    "FormulaMatrixInput": {
+        "type": "object", "required": ["description"],
+        "properties": {
+            "description": {"type": "string", "maxLength": 300, "description": "对矩阵或行列式的自然语言描述"},
+            "kind": {"type": "string", "enum": ["matrix", "determinant"], "default": "matrix"},
+        },
+        "additionalProperties": False,
+    },
+    "FormulaMatrixResponse": {
+        "type": "object", "required": ["ok", "latex"],
+        "properties": {
+            "ok": {"type": "boolean", "const": True},
+            "latex": {"type": "string", "description": "校验通过的 LaTeX 矩阵环境"},
         },
     },
     "ModelSwitch": {"type": "object", "required": ["model"],

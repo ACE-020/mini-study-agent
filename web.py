@@ -28,6 +28,7 @@ from note_skill import note_rules
 from note_exports import note_reply
 from document_input import DocumentReader, MAX_BATCH_BYTES, MAX_TEXT
 from library import validate_refs, fingerprint
+from formula_matrix import generate as generate_matrix_latex
 from file_preview import PdfPreviews
 from library_export import export_collection
 from math_text import normalize_math_markdown
@@ -354,6 +355,30 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 return jsonify(ok=True, settings=settings.set_model(payload["model"]))
             except (ValueError, OSError) as exc:
                 return error(str(exc))
+
+    @app.post("/api/formula/matrix")
+    def formula_matrix():
+        """把一句自然语言描述转成矩阵 / 行列式的 LaTeX。
+
+        只做转写，不碰题库与笔记；返回的 LaTeX 由 formula_matrix 模块校验，
+        前端插入前还会再预览一次。
+        """
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return error("请求格式有误。")
+        try:
+            if not client_factory and not settings.public()["configured"]:
+                return error("请先在「模型设置」保存 API Key，再使用自然语言生成。")
+            latex = generate_matrix_latex(
+                make_client(),
+                payload.get("description"),
+                payload.get("kind") or "matrix",
+            )
+            return jsonify(ok=True, latex=latex)
+        except ValueError as exc:
+            return error(str(exc))
+        except ModelError as exc:
+            return error(str(exc), 502)
 
     @app.post("/api/settings/test")
     def test_settings():
