@@ -53,6 +53,26 @@ const SUBSCRIPTS = {
 
 const COMBINING = { hat: '\u0302', bar: '\u0304', overline: '\u0304', vec: '\u20D7', dot: '\u0307' };
 
+// 分式的排法：
+//   'stack'  = 真正的上下两行 + 中间一条横线（rich-text 支持 display:inline-block/block 时最好看）
+//   'linear' = 一行写完，如 1/|A|、n(n+1)/2（万一样式被丢弃时更安全）
+const FRACTION_LAYOUT = 'stack';
+
+function plainText(html) {
+  return String(html || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+}
+
+function fractionHtml(numerator, denominator) {
+  if (FRACTION_LAYOUT === 'linear') {
+    const wrap = (value) => (/[+\-*/=<>]| /.test(value) ? '(' + value + ')' : value);
+    return wrap(plainText(numerator)) + '/' + wrap(plainText(denominator));
+  }
+  return '<span style="display:inline-block;vertical-align:middle;text-align:center;margin:0 4rpx;line-height:1.2">'
+    + '<span style="display:block;border-bottom:1px solid #5b6b62;padding:0 8rpx">' + numerator + '</span>'
+    + '<span style="display:block;padding:0 8rpx">' + denominator + '</span>'
+    + '</span>';
+}
+
 function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')
@@ -144,7 +164,7 @@ function render(source) {
           const second = group(text, cursor);
           if (second) {
             index = second.next;
-            out += '(' + render(first.body).trim() + ')/(' + render(second.body).trim() + ')';
+            out += fractionHtml(render(first.body), render(second.body));
             continue;
           }
         }
@@ -372,4 +392,4 @@ function restore(html, rendered) {
   return String(html || '').replace(pattern, (whole, index) => rendered[Number(index)] || '');
 }
 
-module.exports = { extract, restore, renderMath, render };
+module.exports = { extract, restore, renderMath, render, FRACTION_LAYOUT };

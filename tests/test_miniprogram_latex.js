@@ -30,8 +30,13 @@ function missing(name, actual, needle) {
 check('inline e^x', latex.renderMath('e^x \\ge e x', false),
       '<span style="font-family:Georgia,serif;font-size:30rpx;color:#1f3d33;white-space:nowrap;">eˣ ≥ e x</span>');
 
-// 2) 分式
-check('frac', latex.renderMath('\\frac{a+b}{2}', false).includes('(a+b)/(2)'), true);
+// 2) 分式：上下两行 + 横线（不是 (a)/(b)）
+const frac = latex.renderMath('\\frac{a+b}{2}', false);
+contains('frac inline-block', frac, 'display:inline-block');
+contains('frac top row', frac, '>a+b<');
+contains('frac bar', frac, 'border-bottom:1px solid');
+contains('frac bottom row', frac, '>2<');
+missing('frac no parentheses', frac, '(a+b)');
 
 // 3) 根号 + 上标
 check('sqrt', latex.renderMath('\\sqrt{x^2+1}', false).includes('√(x²+1)'), true);
@@ -53,7 +58,7 @@ missing('code fence no sup', fenced, '<sup>');
 const html = markdown.toHtml('**结论**：$e^x \\ge e x$ 恒成立\n\n$$\\frac{d}{dx}e^x=e^x$$');
 contains('bold kept', html, 'font-weight:600');
 contains('inline math rendered', html, 'eˣ ≥ e x');
-contains('display math rendered', html, '(d)/(dx)eˣ=eˣ');
+contains('display math rendered', html, 'eˣ=eˣ');
 missing('no raw dollar', html, '$');
 missing('no raw backslash-frac', html, '\\frac');
 
