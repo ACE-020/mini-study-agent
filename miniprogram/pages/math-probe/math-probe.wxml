@@ -1,0 +1,6 @@
+<view class="page">
+  <view class="hint">渲染检查：公式应该出现真正的分数线、上下限和数学字体。若正常，说明换渲染器成功。</view>
+  <view class="card">
+    <mp-html content="{{sample}}" markdown />
+  </view>
+</view>

@@ -353,7 +353,7 @@ curl -s -X POST $BASE/api/v1/me/model/clear -H "Authorization: Bearer $TOKEN"
 
 本分支声明支持的路径：登录 / 状态、上传并带图提交、对话（提交 + 轮询 + 重试 + 取消）、记录读取、复习（目录 / 选题 / 作答进度）、默认账号与资料（头像 / 昵称）、个人模型 Key 配置、删除账号。下面这些**未实现，不属于本轮范围**：
 
-1. **记录页扩充**：笔记对比、错题筛选仍是后续任务；**公式渲染已在对话与记录页补上**——`miniprogram/utils/latex.js` 把 `$...$` / `$$...$$` / `\(...\)` / `\[...\]` 转成可读文本（`e^x` → `eˣ`、`\frac{a}{b}` → `(a)/(b)`、`\sqrt{x}` → `√(x)`，希腊字母与运算符直接换成 Unicode），没有引 towxml/KaTeX（小程序 `rich-text` 不加载外部 CSS，KaTeX 的排版在拿不到样式时会错位）。代价是分式与矩阵只有线性写法，不是专业排版。
+1. **记录页扩充**：笔记对比、错题筛选仍是后续任务；**公式渲染已换成真正的排版**——对话气泡与记录页不再用 `rich-text`（它不加载外部 CSS、还会丢掉 `display` 布局，分式只能塌成一行），改为 `components/mp-html`（WXML 节点渲染器）+ `markdown`（marked）+ `latex`（KaTeX/katex-mini）两个插件，KaTeX 样式与 woff2 字体以 base64 内嵌在 `katex.wxss` 里，不依赖任何外部域名。`utils/latex.js` 仍保留作纯文本兜底（`FRACTION_LAYOUT='linear'`），组件不可用时还能退化成 `1/(n+1)` 这种写法。
 2. **作答照片 OCR**：现在复习只能文字作答。网页版已有 `make_reader()` 的完整链路，挪到 `wx_api.py` 即可，主要是把 `review_images` 那段搬过来。
 3. **流式输出**：`wx.request` 的 `enableChunked` + `onChunkReceived`，或 `wx.connectSocket`。当前模型是整段返回，价值主要在"等待时的细节进度"，现阶段的轮询已经能用。
 4. **笔记 PDF / Markdown 下载**：小程序打开 PDF 体验差，建议改成"复制 Markdown"（已实现）或生成分享图。

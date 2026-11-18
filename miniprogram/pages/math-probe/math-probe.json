@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "渲染检查",
+  "usingComponents": {
+    "mp-html": "../../components/mp-html/index"
+  }
+}

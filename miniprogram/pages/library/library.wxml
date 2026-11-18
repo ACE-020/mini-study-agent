@@ -54,7 +54,7 @@
         <text class="sheet-close" bindtap="closeDetail">关闭</text>
       </view>
       <scroll-view class="sheet-body" scroll-y>
-        <rich-text nodes="{{detailHtml}}" />
+        <mp-html content="{{detail.content}}" markdown />
       </scroll-view>
       <view class="sheet-foot">
         <button class="btn" bindtap="copyDetail">复制 Markdown</button>
