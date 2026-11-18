@@ -8,11 +8,73 @@ function make(tag,className,text){const node=document.createElement(tag);if(clas
 function notify(text,error=false,view=state.operation?.view||state.view){state.notices[view]={text,error};renderNotice();}
 function renderNotice(){const info=state.notices[state.view]||{};const node=$("#notice");node.textContent=info.text||"";node.hidden=!info.text;node.classList.toggle("error",Boolean(info.error));}
 async function api(path,options={}){let response;try{response=await fetch(path,options);}catch(error){throw new Error("无法连接本机服务，请确认网页服务仍在运行。原有输入保留，可修改后重试。");}let data;try{data=await response.json();}catch(error){throw new Error("服务返回的内容无法读取，请稍后重试。");}if(!response.ok||!data.ok){const error=new Error(data.error||"操作未完成。");error.events=data.events;error.cancelled=Boolean(data.cancelled);error.contextRetained=Boolean(data.context_retained);error.status=response.status;throw error;}return data;}
-function formatMath(element){if(!window.renderMathInElement)return;renderMathInElement(element,{delimiters:[{left:"$$",right:"$$",display:true},{left:"\\[",right:"\\]",display:true},{left:"\\(",right:"\\)",display:false},{left:"$",right:"$",display:false}],throwOnError:false,trust:false,strict:"ignore"});}
-function rich(element,value){let text=String(value||"").replace(/^\s*```(?:markdown|md)\s*\n([\s\S]*?)\n```\s*$/i,"$1");text=text.replace(/```(?:math|latex|tex)\s*\n([\s\S]*?)\n```/gi,(_,math)=>"\n$$\n"+math+"\n$$\n");
- const formulas=[];const pattern=/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)[^\n$]+?\$(?!\$)|\\begin\{(aligned|align\*?|equation\*?|cases|pmatrix|bmatrix|vmatrix)\}[\s\S]*?\\end\{\1\}/g;
- const protectedText=text.replace(pattern,(formula,...args)=>{const offset=args.at(-2);if(/(?:^|\n)[ \t]*>[ \t]*$/.test(text.slice(0,offset)))formula=formula.replace(/\n[ \t]*>[ \t]?/g,"\n");const bare=formula.startsWith("\\begin");formula=formula.replace(/\\(begin|end)\{align\*?\}/g,"\\$1{aligned}").replace(/\\(?:begin|end)\{equation\*?\}/g,"");if(bare)formula="$$\n"+formula+"\n$$";formulas.push(formula);return `STUDYMATH${formulas.length-1}TOKEN`;});
- if(window.marked&&window.DOMPurify){let html=DOMPurify.sanitize(marked.parse(protectedText,{breaks:true}),{FORBID_TAGS:["img","iframe","object","script","style"]});html=html.replace(/STUDYMATH(\d+)TOKEN/g,(token,index)=>{if(formulas[index]===undefined)return token;const safe=make("span","",formulas[index]);return safe.innerHTML;});element.innerHTML=html;element.querySelectorAll("a").forEach(a=>{a.target="_blank";a.rel="noopener noreferrer";});}else element.textContent=text;formatMath(element);}
+let richSerial=0;
+function richNonce(){richSerial+=1;return richSerial.toString(36).toUpperCase()+Math.random().toString(36).slice(2,8).toUpperCase();}
+function richInlineMath(source,next){if(!source||source.includes("\n"))return false;if(/^\s|\s$/.test(source))return false;if(next&&/[0-9]/.test(next))return false;return true;}
+function richFind(text,start,closer,limit){const stop=limit===undefined?text.length:Math.min(text.length,limit);for(let i=start;i<stop;i+=1){if(text.startsWith(closer,i))return i;if(text[i]==="\\")i+=1;}return -1;}
+function richEnvironment(name){return /^(?:aligned|align\*?|equation\*?|cases|pmatrix|bmatrix|vmatrix|array|matrix|gathered)$/.test(name);}
+function richMathValue(source,display,raw){let tex=source;if(display&&/^\\begin\{/.test(tex))tex=tex.replace(/\\(begin|end)\{align\*?\}/g,"\\$1{aligned}").replace(/\\(?:begin|end)\{equation\*?\}/g,"");return {tex:tex,raw:raw||source};}
+function richStripQuote(source,text,start){return /(?:^|\n)[ \t]*>[ \t]*$/.test(text.slice(0,start))?source.replace(/\n[ \t]*>[ \t]?/g,"\n"):source;}
+function richProtect(text,parts,mathPrefix,tokenEnd){
+ let out="",i=0;
+ const math=(source,display,raw,start)=>{source=richStripQuote(source,text,start);const value=richMathValue(source,display,raw);parts.push({tex:value.tex,raw:value.raw,display:display});return mathPrefix+(parts.length-1)+tokenEnd;};
+ while(i<text.length){
+  if(text.startsWith("~~~",i)&&(i===0||text[i-1]==="\n")){const end=text.indexOf("~~~",i+3);const stop=end<0?text.length:end+3;out+=text.slice(i,stop);i=stop;continue;}
+  if(text.startsWith("```",i)){const end=text.indexOf("```",i+3);const stop=end<0?text.length:end+3;out+=text.slice(i,stop);i=stop;continue;}
+  if(text[i]==="`"){let n=1;while(text[i+n]==="`")n+=1;const fence="`".repeat(n);const end=text.indexOf(fence,i+n);const stop=end<0?text.length:end+n;out+=text.slice(i,stop);i=stop;continue;}
+  if((i===0||text[i-1]==="\n")&&((text[i]===" "&&text[i+1]===" "&&text[i+2]===" "&&text[i+3]===" ")||text[i]==="\t")){const end=text.indexOf("\n",i);const stop=end<0?text.length:end;out+=text.slice(i,stop);i=stop;continue;}
+  if(text[i]==="<"&&/^<(pre|code)\b/i.test(text.slice(i,i+8))){const match=/^<(pre|code)\b/i.exec(text.slice(i,i+8));const tag=match[1].toLowerCase();const end=text.toLowerCase().indexOf("</"+tag+">",i);const stop=end<0?text.length:end+tag.length+3;out+=text.slice(i,stop);i=stop;continue;}
+  if(text[i]==="<"){const close=text.indexOf(">",i+1);if(close>=0){const candidate=text.slice(i,close+1);if(/^<\/?[A-Za-z][^>\n]*>$/.test(candidate)){out+=candidate;i=close+1;continue;}}}
+  if(text.startsWith("\\$",i)){out+="$";i+=2;continue;}
+  if(text.startsWith("\\[",i)){const end=richFind(text,i+2,"\\]");if(end>=0){out+=math(text.slice(i+2,end),true,text.slice(i,end+2),i);i=end+2;continue;}}
+  if(text.startsWith("\\(",i)){const end=richFind(text,i+2,"\\)");if(end>=0){out+=math(text.slice(i+2,end),false,text.slice(i,end+2),i);i=end+2;continue;}}
+  if(text.startsWith("$$",i)){const end=richFind(text,i+2,"$$");if(end>=0){out+=math(text.slice(i+2,end),true,text.slice(i,end+2),i);i=end+2;continue;}out+="$$";i+=2;continue;}
+  if(text[i]==="$"){const lineEnd=text.indexOf("\n",i+1);const end=richFind(text,i+1,"$",lineEnd<0?undefined:lineEnd);if(end>=0&&richInlineMath(text.slice(i+1,end),text[end+1])){out+=math(text.slice(i+1,end),false,text.slice(i,end+1),i);i=end+1;continue;}out+="$";i+=1;continue;}
+  if(text.startsWith("\\begin{",i)){const env=/^\\begin\{([A-Za-z*]+)\}/.exec(text.slice(i));if(env&&richEnvironment(env[1])){const close="\\end{"+env[1]+"}";const end=text.indexOf(close,i);if(end>=0){const stop=end+close.length;out+=math(text.slice(i,stop),true,text.slice(i,stop),i);i=stop;continue;}}}
+  out+=text[i];i+=1;
+ }
+ return out;
+}
+function richInsideCode(node){let current=node.parentNode;while(current&&current.nodeType===1){const name=current.nodeName.toLowerCase();if(name==="code"||name==="pre")return true;current=current.parentNode;}return false;}
+function richMathNode(part){
+ const wrapper=document.createElement("span");
+ wrapper.className=part.display?"math-display":"math-inline";
+ wrapper.setAttribute("style",part.display?"display:block;max-width:100%;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch":"display:inline-block;max-width:100%;overflow-x:auto;overflow-y:hidden;vertical-align:middle");
+ try{if(window.katex&&typeof window.katex.render==="function")window.katex.render(part.tex,wrapper,{displayMode:part.display,throwOnError:false,trust:false,strict:"ignore"});else wrapper.textContent=part.raw;}catch(error){wrapper.textContent=part.raw;}
+ return wrapper;
+}
+function richPattern(mathPrefix,tokenEnd){return new RegExp(mathPrefix+"(\\d+)"+tokenEnd,"g");}
+function richRestoreAttributes(element,parts,mathPrefix,tokenEnd){
+ const pattern=richPattern(mathPrefix,tokenEnd);
+ for(const child of element.querySelectorAll("*")){for(const attr of Array.from(child.attributes||[])){pattern.lastIndex=0;if(!pattern.test(attr.value))continue;pattern.lastIndex=0;child.setAttribute(attr.name,attr.value.replace(pattern,(token,index)=>{const part=parts[Number(index)];return part?part.raw:token;}));}}
+}
+function richRestore(element,parts,mathPrefix,tokenEnd){
+ if(!element||!parts.length)return;
+ const pattern=richPattern(mathPrefix,tokenEnd);
+ const walker=document.createTreeWalker(element,4,null);const nodes=[];while(walker.nextNode()){const node=walker.currentNode;if(!richInsideCode(node))nodes.push(node);}
+ for(const node of nodes){
+  const text=node.nodeValue||"";pattern.lastIndex=0;if(!pattern.test(text))continue;pattern.lastIndex=0;
+  const fragment=document.createDocumentFragment();let last=0,match;
+  while((match=pattern.exec(text))){if(match.index>last)fragment.appendChild(document.createTextNode(text.slice(last,match.index)));const part=parts[Number(match[1])];if(!part){fragment.appendChild(document.createTextNode(match[0]));}else{fragment.appendChild(richMathNode(part));}last=pattern.lastIndex;}
+  if(last<text.length)fragment.appendChild(document.createTextNode(text.slice(last)));
+  if(node.parentNode)node.parentNode.replaceChild(fragment,node);
+ }
+}
+function rich(element,value){
+ let text=String(value||"").replace(/^\s*```(?:markdown|md)\s*\n([\s\S]*?)\n```\s*$/i,"$1");
+ text=text.replace(/```(?:math|latex|tex)\s*\n([\s\S]*?)\n```/gi,(_,math)=>"\n$$\n"+math+"\n$$\n");
+ const nonce=richNonce(),mathPrefix="STUDYMATH"+nonce+"M",tokenEnd="Z",parts=[];
+ const protectedText=richProtect(text,parts,mathPrefix,tokenEnd);
+ if(window.marked&&window.DOMPurify){
+  const options={FORBID_TAGS:["img","iframe","object","script","style"]};
+  const dirty=DOMPurify.sanitize(marked.parse(protectedText,{breaks:true}),options);
+  element.innerHTML=dirty;
+  richRestoreAttributes(element,parts,mathPrefix,tokenEnd);
+  element.innerHTML=DOMPurify.sanitize(element.innerHTML,options);
+  element.querySelectorAll("a").forEach(a=>{a.target="_blank";a.rel="noopener noreferrer";});
+  richRestore(element,parts,mathPrefix,tokenEnd);
+ }else element.textContent=text;
+}
 function showView(view){if(!titles[view])view="organize";state.view=view;if(view==="analysis"&&typeof ensureAnalysisContext==="function")ensureAnalysisContext();document.querySelectorAll(".view").forEach(node=>node.hidden=node.id!==`view-${view}`);document.querySelectorAll(".nav-item").forEach(button=>{button.classList.toggle("active",button.dataset.view===view);button.setAttribute("aria-current",button.dataset.view===view?"page":"false");});$("#view-context").textContent=titles[view][0];$("#page-title").textContent=titles[view][1];$("#page-subtitle").textContent=titles[view][2];if(location.hash!==`#${view}`)history.replaceState(null,"",`#${view}`);$("#clear-intake").hidden=!["organize","materials"].includes(view);renderNotice();if(view==="review"&&typeof loadReviewCatalog==="function")void loadReviewCatalog();if(view==="materials"&&typeof renderMaterials==="function")renderMaterials();if(typeof updateSelectionTray==="function")updateSelectionTray();if(view==="notebook")renderNotebook();if(view==="notes")renderNotes();if(typeof updateReviewLayout==="function")updateReviewLayout();if(typeof renderChatQueues==="function")renderChatQueues();}
 function updateButtons(){const submitted=intake.submitted!==null&&$("#draft").value.trim()===intake.submitted;$("#organize-submit").disabled=state.busy||!state.configured||(!$("#draft").value.trim()&&!intake.queue.length&&!intake.imageIds.length)||submitted;$("#organize-submit span").textContent=submitted?"已提交，可在对话中补充":"交给 AI 整理";$("#draft").readOnly=state.busy;$("#recognize-button").disabled=state.busy||!intake.queue.some(item=>!item.read);$("#recognize-button").hidden=!intake.queue.some(item=>!item.read);$("#input-page-range").parentElement.hidden=!intake.queue.some(item=>!item.read&&/\.pdf$/i.test(item.file.name));$("#image-pane>.helper").hidden=!intake.queue.length;for(const id of ["fill-example","image-input","new-mistake","toggle-source","clear-intake"]){$("#"+id).disabled=state.busy;}
  if(typeof updateReviewButtons==="function")updateReviewButtons();$("#save-settings").disabled=state.busy;$("#stop-request").hidden=!state.busy;document.querySelectorAll("#stop-request,[data-stop-request]").forEach(button=>{button.disabled=Boolean(state.operation?.stopping);button.textContent=state.operation?.stopping?"正在停止…":"停止并编辑";});
