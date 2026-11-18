@@ -319,7 +319,10 @@
    MathLive 内部 .ML__content 默认 overflow-x:hidden，超出宽度的内容会被直接裁掉，
    外层 .formula-editor-host 的 overflow-x:auto 因此永远触发不了，只能靠移动光标去看。
    这里只放开内部容器的横向滚动：MathLive 自己会把滚动位置跟着光标走，
-   比撑宽 math-field 让外层滚动更可靠（撑宽后光标会跑到可视区外）。 */
+   比撑宽 math-field 让外层滚动更可靠（撑宽后光标会跑到可视区外）。
+   注意：这段依赖 MathLive 内部 DOM —— ::part(content) 对应它的 .ML__content。
+   依赖版本锁在 static/vendor/mathlive（0.111.4）。升级 MathLive 时必须回归这一项，
+   否则滚动会静默失效（内容重新被裁掉，但不会有任何报错）。 */
 .formula-editor-host math-field::part(content) {
   overflow-x: auto;
   scrollbar-width: thin;
