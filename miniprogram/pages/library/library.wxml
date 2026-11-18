@@ -44,7 +44,7 @@
 
   <view class="footer">
     <text>下拉可刷新</text>
-    <text class="danger" bindtap="onDeleteAccount">删除我的全部数据</text>
+    <text>账号资料、模型 API Key 和删除数据都在「设置」里</text>
   </view>
 
   <view wx:if="{{detail}}" class="sheet-mask" bindtap="closeDetail">
@@ -54,7 +54,7 @@
         <text class="sheet-close" bindtap="closeDetail">关闭</text>
       </view>
       <scroll-view class="sheet-body" scroll-y>
-        <rich-text nodes="{{detailHtml}}" />
+        <mp-html content="{{detail.content}}" markdown />
       </scroll-view>
       <view class="sheet-foot">
         <button class="btn" bindtap="copyDetail">复制 Markdown</button>

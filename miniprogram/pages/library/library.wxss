@@ -107,12 +107,6 @@ page {
   padding: 20rpx 0 10rpx;
 }
 
-.footer .danger {
-  font-size: 25rpx;
-  color: #a4482c;
-  padding: 10rpx 0;
-}
-
 .sheet-mask {
   position: fixed;
   left: 0;

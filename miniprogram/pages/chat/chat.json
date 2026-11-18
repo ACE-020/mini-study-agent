@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "整理",
-  "enablePullDownRefresh": false
+  "enablePullDownRefresh": false,
+  "usingComponents": {
+    "mp-html": "../../components/mp-html/index"
+  }
 }

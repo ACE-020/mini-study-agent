@@ -187,6 +187,75 @@ page {
   color: #2f6f5e;
 }
 
+.pending-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 24rpx 12rpx;
+  padding: 16rpx 22rpx;
+  background: #fdf3e2;
+  border: 1rpx solid #ecd9b6;
+  border-radius: 14rpx;
+}
+
+.pending-text {
+  font-size: 26rpx;
+  color: #8a6a2f;
+}
+
+.pending-actions {
+  display: flex;
+  gap: 20rpx;
+}
+
+.pending-btn {
+  font-size: 26rpx;
+  color: #2f6f5e;
+  padding: 4rpx 6rpx;
+}
+
+.pending-btn.danger {
+  color: #a4482c;
+}
+
+.setup-bar {
+  display: flex;
+  align-items: center;
+  margin: 0 24rpx 12rpx;
+  padding: 20rpx 22rpx;
+  background: #fdf3e2;
+  border: 1rpx solid #ecd9b6;
+  border-radius: 16rpx;
+}
+
+.setup-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.setup-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: #8a5a1f;
+}
+
+.setup-line {
+  margin-top: 6rpx;
+  font-size: 23rpx;
+  color: #9a7a4a;
+  line-height: 1.5;
+}
+
+.setup-action {
+  margin-left: 18rpx;
+  padding: 12rpx 28rpx;
+  font-size: 26rpx;
+  color: #ffffff;
+  background: #2f6f5e;
+  border-radius: 999rpx;
+}
+
 .composer {
   padding: 14rpx 24rpx calc(18rpx + env(safe-area-inset-bottom));
   background: #fbf9f4;
