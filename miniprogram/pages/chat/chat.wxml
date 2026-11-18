@@ -30,7 +30,7 @@
     <block wx:for="{{messages}}" wx:key="index">
       <view id="msg-{{index}}" class="row {{item.role}}">
         <view class="bubble {{item.role}}" bindlongpress="onCopy" data-text="{{item.text}}">
-          <rich-text wx:if="{{item.role === 'assistant'}}" nodes="{{item.html}}" />
+          <mp-html wx:if="{{item.role === 'assistant'}}" content="{{item.text}}" markdown />
           <text wx:else user-select>{{item.text}}</text>
         </view>
       </view>
@@ -54,6 +54,22 @@
     <view wx:if="{{uploading}}" class="thumb uploading">
       <text>上传中</text>
     </view>
+  </view>
+
+  <view wx:if="{{pendingTaskId}}" class="pending-bar">
+    <text class="pending-text">有一轮还在后台处理</text>
+    <view class="pending-actions">
+      <text class="pending-btn" bindtap="onResumePending">继续查看</text>
+      <text class="pending-btn danger" bindtap="onStop">停止</text>
+    </view>
+  </view>
+
+  <view wx:if="{{needSettings}}" class="setup-bar">
+    <view class="setup-text">
+      <text class="setup-title">还差一步：配置模型 API Key</text>
+      <text class="setup-line">在「设置 → API Key / 模型配置」里填写，保存后立刻能开始整理。</text>
+    </view>
+    <view class="setup-action" bindtap="goSettings">去设置</view>
   </view>
 
   <view class="composer">

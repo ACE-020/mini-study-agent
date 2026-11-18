@@ -1,5 +1,8 @@
 // 轻量 Markdown → rich-text HTML。
-// 只处理笔记/回答里最适合手机阅读的结构；公式保持原样（要渲染 LaTeX 请换 towxml 等组件）。
+// 只处理笔记/回答里最适合手机阅读的结构；公式先由 latex.js 抽成占位符，
+// 渲染完 markdown 再换回可读的公式 HTML（见 utils/latex.js）。
+
+const latex = require('./latex.js');
 
 const STYLES = {
   p: 'margin:0 0 18rpx;line-height:1.75;font-size:30rpx;color:#2b2b26;',
@@ -31,7 +34,8 @@ function inline(text) {
 }
 
 function toHtml(markdown) {
-  const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+  const parts = latex.extract(markdown);
+  const lines = String(parts.text || '').replace(/\r\n?/g, '\n').split('\n');
   const out = [];
   let paragraph = [];
   let listType = '';
@@ -132,7 +136,7 @@ function toHtml(markdown) {
   closeCode();
   flushParagraph();
   closeList();
-  return out.join('') || '<p style="' + STYLES.p + '">（空）</p>';
+  return latex.restore(out.join('') || '<p style="' + STYLES.p + '">（空）</p>', parts.rendered);
 }
 
 module.exports = { toHtml: toHtml };

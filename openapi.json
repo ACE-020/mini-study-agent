@@ -2325,6 +2325,199 @@
         "operationId": "review_catalog"
       }
     },
+    "/api/review/end": {
+      "post": {
+        "summary": "结束本轮复习",
+        "tags": [
+          "复习"
+        ],
+        "description": "关闭当前作答记录并清空本轮复习状态；已保存的笔记与错题不受影响。",
+        "responses": {
+          "200": {
+            "description": "结束后的复习状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResultResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "做题记录读取失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "有请求正在处理中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "end_review"
+      }
+    },
+    "/api/review/history": {
+      "get": {
+        "summary": "做题记录（分页）",
+        "tags": [
+          "复习"
+        ],
+        "description": "按题号过滤的作答历史，含每轮作答文本与判定记录；只读本地 JSON。",
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "query",
+            "description": "题号（exercise:… / mistake:…）",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "起始偏移",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "每页条数",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "作答历史",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "查询范围非法或做题记录读取失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "review_history"
+      }
+    },
+    "/api/review/progress": {
+      "get": {
+        "summary": "复习进度与当前题快照",
+        "tags": [
+          "复习"
+        ],
+        "description": "返回本轮复习状态、当前作答记录与按题目聚合的作答进度；只读本地 JSON，不调用模型。",
+        "responses": {
+          "200": {
+            "description": "复习进度",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewProgressResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "做题记录读取失败",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "review_progress"
+      }
+    },
+    "/api/review/result": {
+      "post": {
+        "summary": "人工核对做题结果",
+        "tags": [
+          "复习"
+        ],
+        "description": "用户确认本题的作答情况；尚未作答返回 400，尚未选题或当前题已变化返回 409。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewResultRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "更新后的复习状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewResultResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "判定字段非法 / 尚未作答",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "尚未选题 / 当前题已变化 / 有请求正在处理中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "correct_review_result"
+      }
+    },
     "/api/review/select": {
       "post": {
         "summary": "按目录选题",
@@ -4289,6 +4482,183 @@
         },
         "additionalProperties": false
       },
+      "ReviewAttempt": {
+        "type": "object",
+        "required": [
+          "id",
+          "question_id",
+          "round_id",
+          "started_at",
+          "updated_at",
+          "outcome",
+          "assisted",
+          "was_wrong",
+          "error_tags",
+          "turn_count",
+          "independent_correct",
+          "question_title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "question_id": {
+            "type": "string"
+          },
+          "round_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "first_answer_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "not_answered",
+              "unassessed",
+              "partial",
+              "incorrect",
+              "correct"
+            ]
+          },
+          "assisted": {
+            "type": "boolean"
+          },
+          "was_wrong": {
+            "type": "boolean"
+          },
+          "error_tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "concept",
+                "conditions",
+                "method",
+                "formula",
+                "calculation",
+                "reasoning",
+                "reading",
+                "notation",
+                "unconfirmed"
+              ]
+            }
+          },
+          "turn_count": {
+            "type": "integer"
+          },
+          "independent_correct": {
+            "type": "boolean"
+          },
+          "question_title": {
+            "type": "string"
+          },
+          "turns": {
+            "type": "array",
+            "description": "仅在 /api/review/history 中返回",
+            "items": {
+              "type": "object",
+              "required": [
+                "at",
+                "request_id",
+                "text"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "request_id": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "assessments": {
+            "type": "array",
+            "description": "仅在 /api/review/history 中返回",
+            "items": {
+              "type": "object",
+              "required": [
+                "at",
+                "source",
+                "turn",
+                "outcome",
+                "assisted",
+                "error_tags",
+                "evidence"
+              ],
+              "properties": {
+                "at": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "model",
+                    "user"
+                  ]
+                },
+                "turn": {
+                  "type": "integer"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "not_answered",
+                    "unassessed",
+                    "partial",
+                    "incorrect",
+                    "correct"
+                  ]
+                },
+                "assisted": {
+                  "type": "boolean"
+                },
+                "error_tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "concept",
+                      "conditions",
+                      "method",
+                      "formula",
+                      "calculation",
+                      "reasoning",
+                      "reading",
+                      "notation",
+                      "unconfirmed"
+                    ]
+                  }
+                },
+                "evidence": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
       "ReviewCatalog": {
         "type": "object",
         "required": [
@@ -4361,6 +4731,175 @@
           }
         }
       },
+      "ReviewHistory": {
+        "type": "object",
+        "required": [
+          "ok",
+          "total",
+          "attempts"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "total": {
+            "type": "integer"
+          },
+          "attempts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewAttempt"
+            }
+          }
+        }
+      },
+      "ReviewProgressResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "review",
+          "progress",
+          "error_types"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "review": {
+            "$ref": "#/components/schemas/ReviewSnapshot"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ReviewProgressSummary"
+          },
+          "error_types": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ReviewProgressSummary": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "required": [
+            "count",
+            "last",
+            "error_tags",
+            "assisted_count",
+            "correct_count"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer"
+            },
+            "last": {
+              "$ref": "#/components/schemas/ReviewAttempt"
+            },
+            "error_tags": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "concept",
+                  "conditions",
+                  "method",
+                  "formula",
+                  "calculation",
+                  "reasoning",
+                  "reading",
+                  "notation",
+                  "unconfirmed"
+                ]
+              }
+            },
+            "assisted_count": {
+              "type": "integer"
+            },
+            "correct_count": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      "ReviewResultRequest": {
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "outcome",
+          "assisted",
+          "error_tags",
+          "evidence"
+        ],
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "description": "当前题对应的作答记录 id"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "unassessed",
+              "partial",
+              "incorrect",
+              "correct"
+            ],
+            "description": "correct=独立答对；incorrect=答错；partial=部分正确；unassessed=暂不判定"
+          },
+          "assisted": {
+            "type": "boolean",
+            "description": "本次作答是否借助了提示或讲解"
+          },
+          "error_tags": {
+            "type": "array",
+            "maxItems": 9,
+            "items": {
+              "type": "string",
+              "enum": [
+                "concept",
+                "conditions",
+                "method",
+                "formula",
+                "calculation",
+                "reasoning",
+                "reading",
+                "notation",
+                "unconfirmed"
+              ]
+            }
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1500,
+            "description": "判定依据"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReviewResultResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "review",
+          "progress"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "review": {
+            "$ref": "#/components/schemas/ReviewSnapshot"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ReviewProgressSummary"
+          }
+        }
+      },
       "ReviewSelection": {
         "type": "object",
         "properties": {
@@ -4415,6 +4954,58 @@
           },
           "selection": {
             "type": "object"
+          },
+          "current_question": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CurrentQuestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ReviewSnapshot": {
+        "type": "object",
+        "required": [
+          "round_id",
+          "seen_ids",
+          "current_attempt"
+        ],
+        "properties": {
+          "round_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seen_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "current_attempt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReviewAttempt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReviewSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "current_question": {
             "oneOf": [
