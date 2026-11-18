@@ -270,19 +270,24 @@
 
   /* ---------- 配置状态 ---------- */
 
+  // 每次打开都重新问一次 /api/status：用户可能刚在「模型设置」里存好 Key，
+  // 面板不能因为第一次读到「未配置」就永久锁死（之前的缓存版就是这么坏的）。
   async function loadConfigState() {
-    if (state.configured !== null) return;
+    let configured = false;
     try {
-      const response = await fetch("/api/status");
+      const response = await fetch("/api/status", { cache: "no-store" });
       const data = await response.json();
-      state.configured = Boolean(data && data.configured);
+      configured = Boolean(data && data.configured);
     } catch (error) {
-      state.configured = false;
+      configured = false;
     }
-    const disabled = state.configured === false;
-    nodes.textarea.disabled = disabled;
-    nodes.aiButton.disabled = disabled;
-    if (disabled) {
+    state.configured = configured;
+    nodes.textarea.disabled = !configured;
+    nodes.aiButton.disabled = !configured || state.busy;
+    if (configured) {
+      nodes.textarea.placeholder = "例如：一个 n 阶行列式，主对角线全为 1，其余位置全为 0";
+      if (nodes.aiHint.classList.contains("is-error")) setStatus("");
+    } else {
       nodes.textarea.placeholder = "未配置模型：请先在右上角「模型设置」保存 API Key";
       setStatus("自然语言生成需要模型，未配置时不可用", true);
     }
