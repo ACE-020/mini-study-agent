@@ -1,31 +1,37 @@
-/* 公式输入模式 · MathLive 集成（真实 TeX 排版）
-   把 <math-field>（static/vendor/mathlive/mathlive.min.js）挂到 #formula-editor-host，
-   负责「文字 / 公式（可视化）」切换、#draft 双向同步、只读镜像，
-   以及三个对话补充框上的「∑ 公式」按钮（Phase 2）。
+/* 原稿渲染编辑 · MathLive 集成（真实 TeX 排版）
+   把 <math-field>（static/vendor/mathlive/mathlive.min.js）挂到 #formula-editor-host。
+   原稿默认直接显示「可编辑的渲染效果」，但 MathLive 字段以 text 为默认模式：
+   普通英文、中文和换行按普通文字录入，只有符号键盘 / 矩阵面板明确插入的公式才进入数学模式。
+   标题行右侧唯一按钮在「查看原文」（可编辑 LaTeX 源）与「查看渲染后文字」之间切换。
    #draft.value 契约不变：普通文字 + $...$ 公式段（发送/提交链路只认 #draft）。
    约束：CSP script-src 'self'，本文件不使用 eval / inline script / CDN。 */
 (function () {
   "use strict";
 
-  const VERSION = "20261118-mathlive";
-  const MODE_ATTR = "data-input-mode";
+  const VERSION = "20261119-draft-view";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
-  const DRAFT_PLACEHOLDER = "点下方符号键开始输入公式，也可以直接打字";
+  const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
   const MATHLIVE_SCRIPT = "/static/vendor/mathlive/mathlive.min.js";
   const MATHLIVE_FONTS = "/static/vendor/mathlive/fonts";
   const TOGGLES_STYLE = ".ML__menu-toggle,.ML__virtual-keyboard-toggle,.ML__toggles{display:none!important}";
+  const DRAFT_MAX_LENGTH = 80000;
+  const VIEW_SOURCE = "source";
+  const VIEW_RENDERED = "rendered";
 
   const draft = document.querySelector("#draft");
   const sourcePanel = document.querySelector("#source-panel");
   const formulaPane = document.querySelector("#formula-pane");
   const formulaHost = document.querySelector("#formula-editor-host");
-  const imagePane = document.querySelector("#image-pane");
+  const viewToggle = document.querySelector("#draft-view-toggle");
 
   const state = {
-    mode: "text",
+    view: VIEW_SOURCE,
     field: null,     // #draft 对应的 MathLive <math-field>
     syncing: 0,      // >0 表示正在双向同步，禁止 input / onExternalChange 互相触发
+    suppressExternalSync: false,
+    renderedBindingsBound: false,
+    sourceCursor: { start: 0, end: 0 },
     entries: [],     // 对话补充框的公式编辑器
     docs: new WeakMap(), // <math-field> → 最近一次同步的草稿分段（保留原分隔符与换行）
     initialized: false,
@@ -44,9 +50,9 @@
     }
   }
 
-  function dispatchModeChange(mode) {
+  function dispatchViewChange(view) {
     try {
-      window.dispatchEvent(new CustomEvent("math-input-mode-change", { detail: { mode: mode } }));
+      window.dispatchEvent(new CustomEvent("math-draft-view-change", { detail: { view: view } }));
     } catch (error) {
       /* 老浏览器没有 CustomEvent 构造器时忽略 */
     }
@@ -241,15 +247,26 @@
     return parts;
   }
 
-  // 混合文本 → 单个 MathLive LaTeX 串（普通文字包 \text{}，公式去定界符后原样）
-  function mixedToLatex(text) {
+  // 混合文本 → 单个 MathLive LaTeX 串。
+  // 数学模式字段（对话补充框）：普通文字包 \text{}，公式去定界符后原样。
+  // 文字模式字段（原稿可视编辑）：普通文字原样交给 MathLive 的 text 模式，
+  // 公式显式包 $...$ / $$...$$。text 模式自己会转义 # % & _ { } ^ ~ 等字符。
+  function mixedToLatex(text, textMode) {
     let out = "";
     for (const part of parseMixed(text)) {
       if (part.type === "math") {
+        if (textMode) {
+          const body = mathBody(part.value);
+          const display = Boolean(part.block) || isDisplayMath(part.value) || /^\s*\\begin\{/.test(body);
+          out += (display ? "$$" : "$") + body + (display ? "$$" : "$");
+          continue;
+        }
         const environment = /^\s*\\begin\{/.test(part.value);
         out += (part.block && !environment && !isDisplayMath(part.value) ? DISPLAY_STYLE : "") + part.value;
       } else if (part.value) {
-        out += "\\text{" + escapeText(part.value) + "}";
+        out += textMode
+          ? part.value.replace(/\r\n?/g, "\n").replace(/\n/g, " ")
+          : "\\text{" + escapeText(part.value) + "}";
       }
     }
     return out;
@@ -322,6 +339,102 @@
     return parts;
   }
 
+  // 原稿字段默认是 MathLive 的 text 模式：文字原样输出，数学原子由 MathLive
+  // 序列化成 `$ ... $` / `$$ ... $$`。这里把两种格式都还原成 text / math 段；
+  // 旧版数学模式字段输出的 `\text{...}` + 裸公式仍由 parseLatexParts 处理。
+  // MathLive 在 math 模式里插入 text 时会序列化成 `$ \text{...} $`。
+  // 把数学段里的顶层 \text{...} 拆成普通文字，避免 `$\text{$原稿$Hello}$` 这种坏源。
+  function splitTextInMath(value, display) {
+    const parts = [];
+    let i = 0;
+    let mathStart = 0;
+    while (i < value.length) {
+      if (value.startsWith("\\text", i) && value[i + 5] === "{" && !isEscaped(value, i)) {
+        const end = matchBrace(value, i + 5);
+        if (end > i + 6) {
+          const math = value.slice(mathStart, i);
+          if (math.trim()) parts.push({ type: "math", value: math.trim(), display: Boolean(display) });
+          parts.push({ type: "text", value: value.slice(i + 6, end) });
+          i = end + 1;
+          mathStart = i;
+          continue;
+        }
+      }
+      if (value[i] === "\\") i += 2;
+      else i += 1;
+    }
+    const tail = value.slice(mathStart);
+    if (tail.trim()) parts.push({ type: "math", value: tail.trim(), display: Boolean(display) });
+    return parts;
+  }
+
+  function parseTextModeLatex(latex) {
+    const source = String(latex == null ? "" : latex)
+      .replace(/\\placeholder\{\}/g, "")
+      .replace(/\\placeholder(?![A-Za-z])/g, "")
+      // 空字段的幽灵 `$  $` 不能当成文字写回；若它前面没有内容，直接丢掉。
+      .replace(/^\s*\$(?!\$)\s*\$(?!\$)\s*/, "");
+    const parts = [];
+    let i = 0;
+    let textStart = 0;
+
+    function pushText(end) {
+      if (end <= textStart) return;
+      const raw = source.slice(textStart, end);
+      if (raw !== "") parts.push({ type: "text", value: raw });
+    }
+
+    function pushMath(start, end, contentStart, contentEnd, display) {
+      pushText(start);
+      const value = source.slice(contentStart, contentEnd).trim();
+      if (value) {
+        const pieces = value.indexOf("\\text") >= 0 ? splitTextInMath(value, display) : [{ type: "math", value: value, display: Boolean(display) }];
+        parts.push.apply(parts, pieces);
+      }
+      i = end;
+      textStart = end;
+    }
+
+    while (i < source.length) {
+      const ch = source[i];
+      if (ch === "\\") {
+        if (source.startsWith("\\text", i) && source[i + 5] === "{") {
+          const end = matchBrace(source, i + 5);
+          if (end > i + 6) {
+            pushText(i);
+            parts.push({ type: "text", value: source.slice(i + 6, end) });
+            i = end + 1;
+            textStart = i;
+            continue;
+          }
+        }
+        i += 2;
+        continue;
+      }
+      if (ch === "$" && !isEscaped(source, i)) {
+        if (source.startsWith("$$", i)) {
+          const end = findToken(source, i + 2, "$$", false);
+          if (end > i + 2) {
+            pushMath(i, end + 2, i + 2, end, true);
+            continue;
+          }
+          i += 2;
+          continue;
+        }
+        const end = findInlineMathEnd(source, i + 1);
+        if (end >= 0) {
+          pushMath(i, end + 1, i + 1, end, false);
+          continue;
+        }
+        i += 1;
+        continue;
+      }
+      i += 1;
+    }
+    pushText(source.length);
+    return parts;
+  }
+
   // 公式段里如果混入中文（用户在公式编辑器里直接打中文），按普通文字输出，
   // 避免 #draft.value 里出现 KaTeX 不认识的中文数学段。
   function mathToMixed(value, display) {
@@ -356,8 +469,8 @@
     return out;
   }
 
-  function latexToMixed(latex) {
-    return partsToMixed(parseLatexParts(latex));
+  function latexToMixed(latex, textMode) {
+    return partsToMixed(textMode ? parseTextModeLatex(latex) : parseLatexParts(latex));
   }
 
   function parseDoc(text) {
@@ -420,6 +533,50 @@
     return i;
   }
 
+  // 文字段里只有空白被 MathLive 归一化时（例如换行变空格），按非空白字符对齐，
+  // 把原文的空白原样保留；用户追加/修改文字时也不吞掉前面的换行。
+  function reconcileTextPart(original, currentText) {
+    const originalValue = String(original.value == null ? "" : original.value);
+    const current = String(currentText == null ? "" : currentText);
+    if (originalValue === current) return original.raw == null ? originalValue : original.raw;
+    if (sameText(originalValue, current)) return original.raw == null ? originalValue : original.raw;
+    const mapping = buildTextMapping([{ type: "text", value: originalValue, raw: original.raw }]);
+    const segment = mapping.segments[0];
+    const rawChar = function (index) {
+      return segment ? segment.raw.slice(segment.map[index], segment.map[index + 1]) : "";
+    };
+    let oi = 0;
+    let ci = 0;
+    let out = "";
+    while (oi < originalValue.length && ci < current.length) {
+      const oSpace = /\s/.test(originalValue[oi]);
+      const cSpace = /\s/.test(current[ci]);
+      if (oSpace || cSpace) {
+        const oStart = oi;
+        while (oi < originalValue.length && /\s/.test(originalValue[oi])) oi += 1;
+        const cStart = ci;
+        while (ci < current.length && /\s/.test(current[ci])) ci += 1;
+        const oRun = oi - oStart;
+        const cRun = ci - cStart;
+        if (oRun === 0) out += current.slice(cStart, ci);
+        else if (cRun === 0) {
+          /* 用户删掉了空白，不输出原文空白 */
+        } else if (oRun === cRun) out += rawTextRange(mapping, oStart, oi);
+        else out += current.slice(cStart, ci);
+        continue;
+      }
+      if (originalValue[oi] !== current[ci]) break;
+      out += rawChar(oi);
+      oi += 1;
+      ci += 1;
+    }
+    if (oi >= originalValue.length) {
+      out += current.slice(ci);
+      return out;
+    }
+    return escapeDraftText(current);
+  }
+
   // 段数和类型都没变：逐段对照，未变的段直接复用 raw（保留换行、$ 与 \$）。
   function reconcileSameShape(doc, parts) {
     let out = "";
@@ -427,8 +584,7 @@
       const original = doc.parts[i];
       const part = parts[i];
       if (original.type === "text") {
-        const currentText = unescapeText(part.value);
-        out += sameText(original.value, currentText) ? original.raw : escapeDraftText(currentText);
+        out += reconcileTextPart(original, unescapeText(part.value));
       } else if (sameMath(original.value, part.value)) {
         out += original.raw;
       } else {
@@ -570,19 +726,90 @@
     }
   }
 
-  function setLatex(mf, latex) {
-    if (!mf) return;
+  function isTextField(mf) {
+    if (!mf) return false;
+    try {
+      return mf.defaultMode === "text";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // MathLive 的 defaultMode 只决定序列化，不代表当前输入阶段就是 text。
+  // setValue 用 text 解析后，model.mode 仍可能停在 math；此时用户键入的普通文字
+  // 会先按数学输入处理（甚至丢掉），最后只剩一个空的 `$  $` 数学组。
+  // 所以文字模式的字段在装载/回写后必须显式把当前 mode 切回 text。
+  function ensureTextMode(mf) {
+    if (!mf || !isTextField(mf)) return false;
+    try {
+      if (mf.mode === "text") return true;
+    } catch (error) {
+      /* 继续尝试切换 */
+    }
+    try {
+      mf.mode = "text";
+      if (mf.mode === "text") return true;
+    } catch (error) {
+      /* 继续尝试 executeCommand */
+    }
+    try {
+      mf.executeCommand(["switchMode", "text"]);
+      if (mf.mode === "text") return true;
+    } catch (error) {
+      /* 空字段时 switchMode 会因 hasEditableContent=false 直接返回，继续用临时文本引导 */
+    }
+    // MathLive 的 switchMode 在空字段上会直接 return（hasEditableContent=false），
+    // 于是 model.mode 永远停在 math。先放入一个普通空格让字段有内容，切到 text，
+    // 再清空；这样空原稿的下一次击键也会走普通文字输入。
+    // 只对「空 / 幽灵空」字段做这件事，绝不能为了切模式覆盖真实内容。
+    const current = getLatex(mf);
+    if (current === null) return false;
+    if (!isGhostMath(current) && current.trim() !== "") return false;
     withSync(function () {
       try {
-        mf.setValue(latex || "");
+        mf.setValue(" ", { mode: "text", format: "latex", insertionMode: "replaceAll" });
+        mf.mode = "text";
+        mf.setValue("", { mode: "text", format: "latex", insertionMode: "replaceAll" });
+      } catch (error) {
+        /* 忽略：保留现有内容比清空安全 */
+      }
+    });
+    try {
+      return mf.mode === "text";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function setLatex(mf, latex) {
+    if (!mf) return;
+    const textMode = isTextField(mf);
+    if (textMode) ensureTextMode(mf);
+    withSync(function () {
+      try {
+        mf.setValue(latex || "", {
+          mode: textMode ? "text" : "math",
+          format: "latex",
+          insertionMode: "replaceAll"
+        });
       } catch (error) {
         try {
-          mf.setValue("");
+          mf.setValue("", { mode: textMode ? "text" : "math", format: "latex" });
         } catch (ignored) {
           /* 忽略 */
         }
       }
+      if (textMode && !latex) {
+        try {
+          mf.executeCommand("deleteAll");
+        } catch (ignored) {
+          /* 忽略：没有 deleteAll 命令时保留空 root */
+        }
+      }
     });
+    // setValue 的 text 解析不会更新 model.mode；这里再收回 text，保证下一次击键
+    // 是普通文字而不是数学字符。
+    if (textMode) ensureTextMode(mf);
   }
 
   function setReadOnly(mf, flag) {
@@ -596,21 +823,26 @@
 
   function currentMixed(mf) {
     const latex = getLatex(mf);
-    return latex === null ? null : latexToMixed(latex);
+    return latex === null ? null : latexToMixed(latex, isTextField(mf));
   }
 
-  function createEditor(host, textarea, placeholder) {
+  function createEditor(host, textarea, placeholder, defaultMode) {
     if (!host || !mathfieldClass()) return null;
     configureFonts();
     let mf = null;
     try {
       mf = document.createElement("math-field");
+      // default-mode 必须在 append 前写入：MathLive 在 connectedCallback 里读属性建 model。
+      // append 后再设置，空字段 getValue() 会变成幽灵 `$  $`，且 model.mode 停在 math。
+      if (defaultMode === "text") mf.setAttribute("default-mode", "text");
+      mf.setAttribute("tabindex", "0");
       host.append(mf);
     } catch (error) {
       return null;
     }
     try {
-      mf.setAttribute("aria-label", "公式输入");
+      if (defaultMode === "text" && mf.defaultMode !== "text") mf.defaultMode = "text";
+      mf.setAttribute("aria-label", defaultMode === "text" ? "原稿渲染编辑区" : "公式输入");
       mf.placeholder = placeholder;
       mf.mathVirtualKeyboardPolicy = "manual"; // 不弹它自带的虚拟键盘，用我们的符号键盘
       mf.smartMode = false;
@@ -638,17 +870,26 @@
       },
       { passive: false }
     );
-    setLatex(mf, mixedToLatex(textarea ? textarea.value : ""));
     state.docs.set(mf, parseDoc(textarea ? textarea.value : ""));
+    setLatex(mf, mixedToLatex(textarea ? textarea.value : "", defaultMode === "text"));
     setReadOnly(mf, textarea ? textarea.readOnly || textarea.disabled : false);
     return mf;
+  }
+
+  // MathLive 在 text 模式但 model.mode=math 的空字段上会序列化出 `$  $`。
+  // 它不是用户内容；若草稿也是空的，直接按空处理，绝不能写成 `\$  \$`。
+  function isGhostMath(latex) {
+    return /^\$\s*\$$/.test(String(latex == null ? "" : latex).trim());
   }
 
   function mixedFromEditor(mf, textarea) {
     const latex = getLatex(mf);
     if (latex === null) return null;
+    if (isTextField(mf) && isGhostMath(latex)) {
+      return textarea ? textarea.value : "";
+    }
     const doc = state.docs.get(mf) || parseDoc(textarea ? textarea.value : "");
-    return reconcileDoc(doc, parseLatexParts(latex));
+    return reconcileDoc(doc, isTextField(mf) ? parseTextModeLatex(latex) : parseLatexParts(latex));
   }
 
   // 公式编辑器 → textarea：#draft.value 始终是「普通文字 + $...$」
@@ -682,18 +923,18 @@
   function initMainField() {
     if (!draft || !formulaPane || !formulaHost || !sourcePanel) return false;
     ensureMathliveScript();
-    state.field = createEditor(formulaHost, draft, DRAFT_PLACEHOLDER);
-    const formulaButton = document.querySelector(".input-mode-button[" + MODE_ATTR + '="formula"]');
+    state.field = createEditor(formulaHost, draft, DRAFT_PLACEHOLDER, "text");
     if (!state.field) {
-      // MathLive 没加载成功：保留文字模式，禁用切换按钮并说明原因，避免点了没反应。
-      if (formulaButton) {
-        formulaButton.disabled = true;
-        formulaButton.title = "公式编辑器未就绪，请刷新页面后重试";
+      // MathLive 没加载成功：保留可编辑的 LaTeX 源，禁用视图切换按钮并说明原因。
+      if (viewToggle) {
+        viewToggle.disabled = true;
+        viewToggle.title = "公式编辑器未就绪，请刷新页面后重试";
       }
       return false;
     }
     window.mathInputMode.field = state.field;
-    if (formulaButton) formulaButton.disabled = false;
+    bindRenderedEditing(state.field);
+    if (viewToggle) viewToggle.disabled = false;
     if (window.MutationObserver) {
       // app.js 在 updateButtons() 里设置 #draft.readOnly，这里把只读状态镜像到 MathLive
       const observer = new MutationObserver(function () {
@@ -704,103 +945,98 @@
     return true;
   }
 
-  function updateModeButtons() {
-    document.querySelectorAll(".input-mode-button[" + MODE_ATTR + "]").forEach(function (button) {
-      const selected = button.getAttribute(MODE_ATTR) === state.mode;
-      button.classList.toggle("active", selected);
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-    });
+  function updateViewUi() {
+    const rendered = state.view === VIEW_RENDERED;
+    sourcePanel.classList.toggle("draft-view-rendered", rendered);
+    sourcePanel.classList.toggle("draft-view-source", !rendered);
+    formulaPane.hidden = !rendered;
+    if (!viewToggle) return;
+    viewToggle.textContent = rendered ? "查看原文" : "查看渲染后文字";
+    viewToggle.setAttribute("aria-pressed", rendered ? "false" : "true");
+    viewToggle.title = rendered ? "查看可编辑的 LaTeX 原文" : "查看渲染后的原稿";
   }
 
-  // 与 app.js 的 selectSource() 渲染结果保持一致：同步 [data-source] 的 active / aria-pressed 与 #image-pane.hidden。
-  // 这里不调用 app.js 的 selectSource：它会 focus 隐藏的 #draft 并 setSelectionRange，在公式模式下没有意义。
-  function setSourceTabActive(source) {
-    const activeSource = source === "image" ? "image" : "text";
-    document.querySelectorAll("[data-source]").forEach(function (button) {
-      const selected = button.getAttribute("data-source") === activeSource;
-      button.classList.toggle("active", selected);
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-    });
-    if (imagePane) imagePane.hidden = activeSource === "text";
+  function rememberSourceCursor() {
+    if (!draft) return;
+    state.sourceCursor = {
+      start: draft.selectionStart == null ? 0 : draft.selectionStart,
+      end: draft.selectionEnd == null ? state.sourceCursor.end : draft.selectionEnd
+    };
   }
 
-  function setMode(mode) {
-    const next = mode === "formula" ? "formula" : "text";
-    if (next === "formula" && !state.field) return;
-    state.mode = next;
-    updateModeButtons();
-    if (next === "formula") {
-      sourcePanel.classList.add("formula-mode");
-      formulaPane.hidden = false;
-      // 公式编辑与「上传文件」互斥：进入公式模式时收起上传区，并把「直接输入文字」设为 active
-      setSourceTabActive("text");
-      state.docs.set(state.field, parseDoc(draft.value));
-      setLatex(state.field, mixedToLatex(draft.value));
-      setReadOnly(state.field, draft.readOnly);
-      state.field.focus();
-    } else {
-      // 退出时把编辑器里的公式写回 #draft（未编辑的段保留原分隔符与换行）
-      commitEditorValue(state.field, draft);
-      state.docs.set(state.field, parseDoc(draft.value));
-      sourcePanel.classList.remove("formula-mode");
-      formulaPane.hidden = true;
-      try {
-        draft.focus();
-      } catch (error) {
-        /* 忽略：输入框不可聚焦时不影响模式切换 */
+  function focusVisibleEditor() {
+    if (state.view === VIEW_RENDERED && state.field) {
+      focusEditor(state.field);
+      return true;
+    }
+    try {
+      draft.focus();
+      const max = draft.value.length;
+      draft.setSelectionRange(Math.min(state.sourceCursor.start, max), Math.min(state.sourceCursor.end, max));
+    } catch (error) {
+      /* 忽略：部分输入类型不支持 setSelectionRange */
+    }
+    return true;
+  }
+
+  function setView(view, options) {
+    const target = view === VIEW_RENDERED ? VIEW_RENDERED : VIEW_SOURCE;
+    if (target === VIEW_RENDERED && !state.field) {
+      updateViewUi();
+      return false;
+    }
+    if (target === state.view) {
+      if (options && options.focus) focusVisibleEditor();
+      updateViewUi();
+      return true;
+    }
+    if (state.field) {
+      if (target === VIEW_SOURCE) {
+        // 只把编辑器里尚未写回的内容落下；已经同步时不会改动 #draft 一字。
+        rememberSourceCursor();
+        commitEditorValue(state.field, draft);
+        state.docs.set(state.field, parseDoc(draft.value));
+      } else {
+        state.docs.set(state.field, parseDoc(draft.value));
+        setLatex(state.field, mixedToLatex(draft.value, true));
+        setReadOnly(state.field, draft.readOnly || draft.disabled);
       }
     }
-    dispatchModeChange(next);
+    state.view = target;
+    updateViewUi();
+    if (options && options.focus) focusVisibleEditor();
+    dispatchViewChange(target);
+    return true;
   }
 
-  function bindModeButtons() {
-    document.querySelectorAll(".input-mode-button[" + MODE_ATTR + "]").forEach(function (button) {
-      button.addEventListener("click", function (event) {
-        event.preventDefault();
-        setMode(button.getAttribute(MODE_ATTR));
-      });
+  function bindViewToggle() {
+    if (!viewToggle) return;
+    viewToggle.addEventListener("click", function (event) {
+      event.preventDefault();
+      setView(state.view === VIEW_RENDERED ? VIEW_SOURCE : VIEW_RENDERED, { focus: true });
     });
   }
 
-  function bindSourceTabs() {
-    // 点「上传文件 / 直接输入文字」都先退出公式模式。用 capture 监听，保证早于 app.js 绑定在按钮上的
-    // 冒泡监听执行：这样 app.js 随后 selectSource() 聚焦 #draft 时，它已经因去掉 formula-mode 而可见。
-    document.addEventListener("click", function (event) {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const tab = target.closest ? target.closest("[data-source]") : null;
-      if (!tab) return;
-      if (state.mode !== "formula") return;
-      setMode("text");
-    }, true);
-  }
-
-  function watchImagePane() {
-    // app.js 也会直接改 #image-pane.hidden（例如「清空本次上传」后 selectSource("image")）；
-    // 公式模式下上传区被重新显示时自动退出公式模式，避免两种输入方式同时出现。
-    if (!imagePane || !window.MutationObserver) return;
-    const observer = new MutationObserver(function () {
-      if (state.mode !== "formula" || imagePane.hidden) return;
-      setMode("text");
-    });
-    observer.observe(imagePane, { attributes: true, attributeFilter: ["hidden"] });
-  }
-
-  // app.js 在 updateDraft() 末尾调用：把「填入示例 / OCR 写入 / 清空 / 提交后修改」同步进编辑器
+  // app.js 在 updateDraft() 末尾调用：把「OCR 写入 / 清空 / 提交后修改」同步进编辑器。
+  // 原稿是普通文字优先：文字模式下只在外部值确实不同时才重设 MathLive，避免打断打字。
   function onExternalChange() {
-    if (!state.field || state.syncing) return;
+    if (!state.field || state.syncing || state.suppressExternalSync) return;
     const doc = parseDoc(draft.value);
-    if (state.mode === "text") {
-      const latex = mixedToLatex(draft.value);
-      state.docs.set(state.field, doc);
-      if (getLatex(state.field) !== latex) setLatex(state.field, latex);
-      return;
+    if (state.view === VIEW_RENDERED) {
+      const currentLatex = getLatex(state.field);
+      if (isTextField(state.field) && isGhostMath(currentLatex)) {
+        // 空字段的幽灵 math 组会让编辑器看起来有内容、实际是空的；
+        // 有草稿就重建，没有草稿就清掉幽灵组，避免它写回 #draft。
+        state.docs.set(state.field, doc);
+        setLatex(state.field, draft.value ? mixedToLatex(draft.value, true) : "");
+        return;
+      }
+      const mixed = mixedFromEditor(state.field, draft);
+      if (mixed === null || mixed === draft.value) return;
     }
-    // 公式模式下先看编辑器内容是否已经等价；外部写入（示例 / OCR / 清空）才重置。
-    const mixed = mixedFromEditor(state.field, draft);
-    if (mixed === null || mixed === draft.value) return;
     state.docs.set(state.field, doc);
-    setLatex(state.field, mixedToLatex(draft.value));
+    const latex = mixedToLatex(draft.value, true);
+    if (getLatex(state.field) !== latex) setLatex(state.field, latex);
   }
 
   /* ---------- 光标 / 插入（供符号键盘调用） ---------- */
@@ -823,16 +1059,39 @@
         }
       }
     }
-    if (state.mode === "formula" && state.field) return state.field;
+    if (state.view === VIEW_RENDERED && state.field) return state.field;
     return null;
   }
 
   function focusEditor(mf) {
     const target = mf || resolveEditor();
-    if (!target || typeof target.focus !== "function") return false;
+    if (!target) return false;
+    // 真实 Chrome 的已验证路径就是 math-field.focus()：它会聚焦 shadowRoot 里的
+    // .ML__keyboard-sink。只有 sink 仍没拿到焦点时，才直接补聚焦。
     try {
-      target.focus();
-      return true;
+      const sink = target.shadowRoot && target.shadowRoot.querySelector(".ML__keyboard-sink");
+      if (sink && target.shadowRoot.activeElement === sink) return true;
+    } catch (error) {
+      /* 继续 */
+    }
+    try {
+      if (typeof target.focus === "function") target.focus();
+    } catch (error) {
+      /* 继续尝试 sink */
+    }
+    try {
+      const sink = target.shadowRoot && target.shadowRoot.querySelector(".ML__keyboard-sink");
+      if (sink) {
+        if (target.shadowRoot.activeElement === sink) return true;
+        sink.focus({ preventScroll: true });
+        return target.shadowRoot.activeElement === sink;
+      }
+    } catch (error) {
+      /* 忽略 */
+    }
+    try {
+      const active = document.activeElement;
+      return active === target || Boolean(target.contains && active && target.contains(active));
     } catch (error) {
       return false;
     }
@@ -892,17 +1151,173 @@
     return moved;
   }
 
+  function editorMode(mf) {
+    try {
+      return mf.mode === "math" ? "math" : mf.mode === "text" ? "text" : "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  // MathLive 的 switchMode 在空字段上会因 hasEditableContent=false 提前返回。
+  // 直接设置 model.mode 不创建额外的空组，也不会在空原稿上留下幽灵 `$  $`。
+  function forceMathMode(mf) {
+    if (!mf) return false;
+    if (editorMode(mf) === "math") return true;
+    try {
+      const internal = mf._mathfield;
+      if (internal && internal.model) {
+        internal.model.mode = "math";
+        if (editorMode(mf) === "math") return true;
+      }
+    } catch (error) {
+      /* 继续尝试公开 API */
+    }
+    try {
+      mf.mode = "math";
+      return editorMode(mf) === "math";
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // 原稿字段默认是 text 模式：符号键盘点击时先切到 math 再插入。
+  // 有 #@ / #? 占位符的结构模板留在 math 模式，方便继续填分子、分母和矩阵格子；
+  // 单个符号和 AI 生成的完整公式插入后回到 text，避免后续普通输入被当成数学变量。
+  function insertMathLatex(mf, latex, keepMath) {
+    if (!mf || !latex) return false;
+    const switched = isTextField(mf) && editorMode(mf) !== "math";
+    if (switched && !forceMathMode(mf)) return false;
+    let ok = false;
+    try {
+      ok = mf.insert(String(latex), { format: "latex", mode: "math" });
+    } catch (error) {
+      ok = false;
+    }
+    if (switched && (!ok || !keepMath)) ensureTextMode(mf);
+    return ok;
+  }
+
   function insertChip(spec) {
     const mf = resolveEditor();
     const template = templateFromSpec(spec);
     if (!mf || !template) return false;
-    return executeCommand(mf, ["insert", template]);
+    return insertMathLatex(mf, template, /#@|#\?/.test(template));
   }
 
   function insertGlyph(text) {
     const mf = resolveEditor();
     if (!mf) return false;
-    return executeCommand(mf, ["insert", String(text == null ? "" : text)]);
+    return insertMathLatex(mf, String(text == null ? "" : text), false);
+  }
+
+  // 粘贴 / 回车走这里：先把内容插进 MathLive（换行在字段里显示为空格），
+  // 再用 #draft 的前后公共部分定位插入区间，把原始文本（含换行）写回草稿。
+  // 这样普通录入不会因为 MathLive 的单行文本模式丢掉换行，也不会把整段文字变成 $...$。
+  function insertMixedRaw(text, mf) {
+    const value = String(text == null ? "" : text);
+    if (!mf || !value || state.view !== VIEW_RENDERED) return false;
+    const before = draft.value;
+    const parts = parseMixed(value);
+    if (!parts.length) return false;
+    withSync(function () {
+      for (const part of parts) {
+        if (part.type === "math") {
+          forceMathMode(mf);
+          mf.insert(part.value, { format: "latex", mode: "math" });
+          ensureTextMode(mf);
+        } else if (part.value) {
+          ensureTextMode(mf);
+          // MathLive 单行字段没有换行原子：用等量空格占位，原始换行由下方
+          // 公共前后缀对齐写回 #draft，后续追加文字仍能按空白对齐保留换行。
+          const fieldText = part.value.replace(/\r\n?/g, "\n").replace(/\n/g, " ");
+          mf.insert(fieldText, { format: "text", mode: "text" });
+        }
+      }
+    });
+    const after = mixedFromEditor(mf, draft);
+    if (after === null) return false;
+    let prefix = 0;
+    while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+    let suffix = 0;
+    while (
+      suffix < before.length - prefix &&
+      suffix < after.length - prefix &&
+      before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+    ) {
+      suffix += 1;
+    }
+    const next = before.slice(0, prefix) + value + before.slice(before.length - suffix);
+    if (next.length > DRAFT_MAX_LENGTH) return false;
+    state.docs.set(mf, parseDoc(next));
+    state.sourceCursor = { start: prefix + value.length, end: prefix + value.length };
+    state.suppressExternalSync = true;
+    try {
+      withSync(function () {
+        draft.value = next;
+        try {
+          draft.setSelectionRange(state.sourceCursor.start, state.sourceCursor.end);
+        } catch (error) {
+          /* 忽略 */
+        }
+        // 字数 / 发送按钮 / 待发送队列仍然由 app.js 的 input 监听更新
+        draft.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    } finally {
+      state.suppressExternalSync = false;
+    }
+    return true;
+  }
+
+  function bindRenderedEditing(mf) {
+    if (!mf || state.renderedBindingsBound) return;
+    state.renderedBindingsBound = true;
+    const handled = new WeakSet();
+
+    // 在 document 捕获阶段处理：MathLive 的隐藏输入代理在 shadow DOM 里，
+    // 只在 math-field 上监听 paste / Enter 可能拿不到事件。
+    function isMainDraftTarget(target) {
+      if (!target) return false;
+      return target === mf || (typeof mf.contains === "function" && mf.contains(target));
+    }
+
+    document.addEventListener("paste", function (event) {
+      if (state.view !== VIEW_RENDERED || !isMainDraftTarget(event.target) || !event.clipboardData) return;
+      if (handled.has(event)) return;
+      handled.add(event);
+      const text = event.clipboardData.getData("text/plain");
+      if (!text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      insertMixedRaw(text, mf);
+    }, true);
+
+    document.addEventListener("keydown", function (event) {
+      if (state.view !== VIEW_RENDERED || !isMainDraftTarget(event.target) || event.isComposing) return;
+      if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (editorMode(mf) !== "text") return;
+      if (handled.has(event)) return;
+      handled.add(event);
+      event.preventDefault();
+      event.stopPropagation();
+      insertMixedRaw("\n", mf);
+    }, true);
+
+    // MathLive 在空白区域不会自动把焦点交给键盘 sink；点空白处时显式 focus()。
+    // 已经聚焦时不再重复 focus，避免打断公式槽位命中 / 光标定位。
+    function focusFromClick(event) {
+      if (state.view !== VIEW_RENDERED) return;
+      const target = event.target;
+      if (target !== mf && target !== formulaHost && !(mf.contains && mf.contains(target))) return;
+      if (!draft.value && isGhostMath(getLatex(mf))) setLatex(mf, "");
+      // 已经聚焦时 focusEditor 会直接返回；未聚焦时补上 sink 焦点。
+      // 不 preventDefault / stopPropagation，公式槽位命中仍交给 MathLive。
+      focusEditor(mf);
+    }
+    // pointerdown 只补焦点，不 preventDefault / stopPropagation，槽位命中仍由 MathLive 处理；
+    // click 冒泡阶段再兜底一次，覆盖只在 click 阶段才响应的情况。
+    formulaHost.addEventListener("pointerdown", focusFromClick, true);
+    formulaHost.addEventListener("click", focusFromClick);
   }
 
   /* ---------- Phase 2：三个对话补充框的「∑ 公式」 ---------- */
@@ -1030,19 +1445,33 @@
     version: VERSION,
     field: null,
     active: function () {
-      return state.mode === "formula" && Boolean(state.field);
+      return state.view === VIEW_RENDERED && Boolean(state.field);
     },
-    setMode: setMode,
+    view: function () {
+      return state.view;
+    },
+    isRendered: function () {
+      return state.view === VIEW_RENDERED;
+    },
+    setView: setView,
+    // 兼容旧调用：formula → 渲染视图，text → 原文视图
+    setMode: function (mode) {
+      return setView(mode === "formula" ? VIEW_RENDERED : VIEW_SOURCE);
+    },
     focus: function () {
-      return focusEditor(resolveEditor());
+      return focusVisibleEditor();
+    },
+    focusVisible: function () {
+      return focusVisibleEditor();
     },
     onExternalChange: onExternalChange,
     move: moveCursor,
     insertChip: insertChip,
     insertGlyph: insertGlyph,
-    // 提交前把编辑器里的最新内容写回 textarea（也供表单/自动化调用）
+    // 提交前把渲染视图里的最新内容写回 textarea；原文视图下 #draft 才是权威，
+    // 绝不能再用隐藏的 MathLive 字段覆盖用户刚改过的源文。
     flush: function () {
-      if (!state.field) return false;
+      if (!state.field || state.view !== VIEW_RENDERED) return true;
       commitEditorValue(state.field, draft);
       return true;
     },
@@ -1051,8 +1480,9 @@
     latexToMixed: latexToMixed,
     parseDraft: parseMixed,
     parseFormula: parseLatexParts,
-    reconcileDraft: function (text, latex) {
-      return reconcileDoc(parseDoc(text), parseLatexParts(latex));
+    parseTextModeFormula: parseTextModeLatex,
+    reconcileDraft: function (text, latex, textMode) {
+      return reconcileDoc(parseDoc(text), textMode ? parseTextModeLatex(latex) : parseLatexParts(latex));
     }
   };
 
@@ -1063,7 +1493,7 @@
       const target = event.target;
       if (!(target instanceof Element) || !target.closest) return;
       if (!target.closest("#organize-submit")) return;
-      if (state.mode === "formula" && state.field) commitEditorValue(state.field, draft);
+      if (state.field && state.view === VIEW_RENDERED) commitEditorValue(state.field, draft);
     }, true);
     document.addEventListener("submit", function (event) {
       const form = event.target;
@@ -1080,11 +1510,14 @@
     if (!draft || !formulaPane || !formulaHost || !sourcePanel) return;
     state.initialized = true;
     ensureMathliveScript();
-    initMainField();
-    bindModeButtons();
-    bindSourceTabs();
-    watchImagePane();
-    updateModeButtons();
+    const ready = initMainField();
+    bindViewToggle();
+    // 记录原文视图里的光标；切去渲染视图再切回来时恢复到同一位置。
+    for (const eventName of ["select", "click", "keyup", "input"]) {
+      draft.addEventListener(eventName, rememberSourceCursor);
+    }
+    if (ready) setView(VIEW_RENDERED, { focus: false });
+    else updateViewUi();
     bindSubmitSync();
     initFollowEditors();
     // 对话补充框的 .composer-toolbar 由 chat-composer.js 在 window 的 DOMContentLoaded 里创建；
@@ -1092,7 +1525,7 @@
     window.setTimeout(function () {
       initFollowEditors();
     }, 0);
-    dispatchModeChange(state.mode);
+    dispatchViewChange(state.view);
   }
 
   // 用 window 的 DOMContentLoaded：chat-composer.js 也挂在 window 上，脚本顺序保证它先跑。

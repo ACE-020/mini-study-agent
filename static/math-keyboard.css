@@ -156,6 +156,39 @@
   white-space: nowrap;
 }
 
+/* 矩阵 / 行列式入口：图标 + 中文名，各占两格，保证两个键相邻且可读 */
+.mk-key-wide {
+  grid-column: span 2;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 48px;
+}
+
+.mk-key-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.mk-key-visual .katex {
+  font-size: 1em;
+  white-space: nowrap;
+}
+
+.mk-key-caption {
+  color: #666c7e;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.mk-key-wide:hover .mk-key-caption {
+  color: #5144b1;
+}
+
 .mk-foot {
   display: flex;
   align-items: center;
@@ -212,55 +245,7 @@
   }
 }
 
-/* ---------- 公式可视化输入：输入方式切换 / 公式编辑器外框 ---------- */
-
-.input-mode-switch {
-  display: inline-flex;
-  gap: 2px;
-  margin: 2px 0 10px;
-  padding: 3px;
-  border: 1px solid var(--line, #e8eaf1);
-  border-radius: 10px;
-  background: #f7f7fb;
-  font-family: inherit;
-}
-
-.input-mode-button {
-  appearance: none;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted, #7c8293);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 5px 12px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color .12s ease, color .12s ease;
-}
-
-.input-mode-button:hover:not(:disabled) {
-  color: var(--purple-dark, #5144b1);
-  background: var(--white, #fff);
-}
-
-.input-mode-button.active {
-  background: var(--white, #fff);
-  color: var(--purple, #6558c9);
-  font-weight: 600;
-  box-shadow: 0 1px 3px #2c2e5914;
-}
-
-.input-mode-button:disabled {
-  color: #b3b6c2;
-  cursor: not-allowed;
-}
-
-.input-mode-button:focus-visible {
-  outline: 3px solid #b9aff3;
-  outline-offset: 1px;
-}
+/* ---------- 原稿渲染编辑 / 公式编辑器外框 ---------- */
 
 .formula-pane {
   display: flex;
@@ -347,8 +332,13 @@
   line-height: 1.5;
 }
 
-/* 公式模式下隐藏文字输入框，但 #draft 仍留在 DOM 里供 app.js 读写与提交 */
-.formula-mode #draft {
+/* 渲染视图隐藏 LaTeX 源 textarea；#draft 仍留在 DOM 里供 app.js 读写与提交 */
+.draft-view-rendered #draft {
+  display: none;
+}
+
+/* 原文视图隐藏 MathLive 渲染区（JS 还会同步 hidden 属性，双保险） */
+.draft-view-source #formula-pane {
   display: none;
 }
 
@@ -461,11 +451,6 @@
     min-height: 32px;
   }
 
-  .input-mode-button {
-    font-size: 13px;
-    padding: 6px 14px;
-  }
-
   .formula-editor-host math-field {
     font-size: 21px;
     min-height: 84px;
@@ -485,8 +470,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mk-arrow,
-  .input-mode-button {
+  .mk-arrow {
     transition: none;
   }
 
@@ -564,6 +548,17 @@
   padding: 14px;
 }
 
+.fmx-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.fmx-content[hidden] {
+  display: none;
+}
+
 .fmx-section {
   display: flex;
   flex-direction: column;
@@ -618,6 +613,23 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.fmx-size[hidden] {
+  display: none;
+}
+
+.fmx-number {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #7c8293);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fmx-number input {
+  width: 58px;
 }
 
 .fmx-size input {
@@ -734,6 +746,21 @@
   background: #fbfbfe;
   overflow-x: auto;
   font-size: 15px;
+}
+
+.fmx-manual-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 74px;
+}
+
+.fmx-mode {
+  align-self: flex-start;
+}
+
+.fmx-mode .fmx-seg-button {
+  min-width: 96px;
 }
 
 .fmx-preview[hidden] {

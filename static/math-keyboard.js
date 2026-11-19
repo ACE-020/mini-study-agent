@@ -174,13 +174,27 @@
       full: "矩阵与几何",
       keys: [
         {
-          // 入口键：不直接插入 2×2，而是打开面板让用户选行列数或描述规律
+          // 两个入口键：圆括号 = 矩阵，竖线 = 行列式；各自打开对应标题的面板。
           label: "矩阵",
           insert: "",
-          aria: "矩阵或行列式：可选行列数，也可用一句话描述规律",
-          title: "插入矩阵 / 行列式",
-          tex: "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}",
-          action: "matrix-dialog"
+          aria: "矩阵（圆括号）",
+          title: "插入矩阵（圆括号）",
+          tex: "\\left(\\begin{smallmatrix}\\cdot&\\cdot\\\\\\cdot&\\cdot\\end{smallmatrix}\\right)",
+          caption: "矩阵",
+          action: "matrix-dialog",
+          dialogKind: "matrix",
+          wide: true
+        },
+        {
+          label: "行列式",
+          insert: "",
+          aria: "行列式（竖线）",
+          title: "插入行列式（竖线）",
+          tex: "\\left|\\begin{smallmatrix}\\cdot&\\cdot\\\\\\cdot&\\cdot\\end{smallmatrix}\\right|",
+          caption: "行列式",
+          action: "matrix-dialog",
+          dialogKind: "determinant",
+          wide: true
         },
         k("向量", "\\vec{$0}", "向量", "\\vec{a}"),
         k("上划线", "\\overline{$0}", "上划线", "\\overline{a}"),
@@ -195,11 +209,11 @@
     }
   ];
 
-  /* ---------- 可视化公式模式用的 MathLive 模板 ----------
+  /* ---------- 渲染编辑视图用的 MathLive 模板 ----------
      文字输入框里仍然插入原来的 LaTeX 文本（insert 不变）；
-     公式（可视化）模式下，结构性按键改为让 MathLive executeCommand(['insert', 模板])，
+     在原稿渲染视图里，结构性按键改为让 MathLive 在数学模式中插入模板，
      #@ 是要放光标的首个占位符、#? 是其它占位符。
-     mathGlyph 是纯符号键在公式模式里要插入的 LaTeX（默认取 label）。 */
+     mathGlyph 是纯符号键在渲染视图里要插入的 LaTeX（默认取 label）。 */
   const TEMPLATE_BY_INSERT = {
     "\\frac{$0}{}": "\\frac{#@}{#?}",
     "\\dfrac{$0}{}": "\\frac{#@}{#?}",
@@ -515,32 +529,44 @@
   }
 
   // 用 KaTeX 渲染按键外观；渲染结果为空时（例如 % 被当成注释）退回 label 文本，避免出现空白键。
-  function renderKeyVisual(button, key) {
-    button.replaceChildren();
+  function renderKeyTex(node, key) {
     if (window.katex && typeof window.katex.render === "function") {
       try {
-        window.katex.render(key.tex, button, { throwOnError: false, strict: false });
+        window.katex.render(key.tex, node, { throwOnError: false, strict: false });
       } catch (error) {
-        button.textContent = key.label;
+        node.textContent = key.label;
         return;
       }
-      const html = button.querySelector(".katex-html");
+      const html = node.querySelector(".katex-html");
       const visibleText = html ? html.textContent.replace(/[\s\u200b\u2061]/g, "") : "";
       const hasSvg = html ? Boolean(html.querySelector("svg")) : false;
-      if (!button.querySelector(".katex") || (visibleText === "" && !hasSvg)) {
-        button.textContent = key.label;
+      if (!node.querySelector(".katex") || (visibleText === "" && !hasSvg)) {
+        node.textContent = key.label;
       }
       return;
     }
-    button.textContent = key.label;
+    node.textContent = key.label;
+  }
+
+  function renderKeyVisual(button, key) {
+    button.replaceChildren();
+    if (key.caption) {
+      const icon = el("span", "mk-key-visual");
+      renderKeyTex(icon, key);
+      button.append(icon, el("span", "mk-key-caption", key.caption));
+      return;
+    }
+    renderKeyTex(button, key);
   }
 
   function createKeyButton(instance, key) {
-    const button = el("button", "mk-key");
+    const button = el("button", key.wide ? "mk-key mk-key-wide" : "mk-key");
     button.type = "button";
     button.title = key.title;
     button.dataset.mkTex = key.insert;
     button.dataset.mkAria = key.aria;
+    if (key.action) button.dataset.mkAction = key.action;
+    if (key.dialogKind) button.dataset.mkDialog = key.dialogKind;
     button.setAttribute("aria-label", key.aria);
 
     renderKeyVisual(button, key);
@@ -700,7 +726,7 @@
     }
     flash(button);
     dialog.open({
-      kind: "matrix",
+      kind: key.dialogKind === "determinant" ? "determinant" : "matrix",
       onInsert: function (payload) {
         applyMatrix(instance, payload, button);
       },
@@ -718,6 +744,7 @@
 
   function applyMatrix(instance, payload, button) {
     if (!payload) return;
+    const label = payload.kind === "determinant" ? "行列式" : "矩阵";
     if (instance.kind === "formula") {
       const api = formulaApi();
       if (!api) {
@@ -725,7 +752,7 @@
         return;
       }
       const ok = api.insertChip({ template: payload.template });
-      showHint(instance, ok ? "已插入矩阵" : "公式编辑器未就绪");
+      showHint(instance, ok ? "已插入" + label : "公式编辑器未就绪");
       return;
     }
     insertTextAtCursor(instance, payload.text, button);
@@ -902,7 +929,7 @@
     if (!(target instanceof Node)) return;
     if (openInstance.panel.contains(target)) return;
     // 输入方式 / ∑ 公式 按钮自己会管理面板，别在它们按下时抢先收起
-    if (target instanceof Element && target.closest && target.closest(".composer-formula-toggle, .input-mode-button")) return;
+    if (target instanceof Element && target.closest && target.closest(".composer-formula-toggle, #draft-view-toggle")) return;
     if (instanceHasFocus(openInstance, target)) return;
     if (keepsPanelUntilClick(target)) return;
     close(openInstance);
@@ -930,7 +957,7 @@
     if (openInstance && openInstance.kind === "formula" && !openInstance.panel.contains(target)) {
       // 输入方式 / 来源 tab / ∑ 按钮自己管理面板状态（切模式时会主动收起），不要再抢先关一次；
       // 面板刚打开（如点 ∑ 按钮后表单被向下推、这次 click 落到表单外）时的同一次点击也不关。
-      const keepSelector = ".input-mode-button, [data-source], .composer-formula-toggle";
+      const keepSelector = "#draft-view-toggle, [data-source], .composer-formula-toggle";
       const justOpened = Date.now() - (openInstance.openedAt || 0) < 700;
       if (!justOpened && !(target.closest && target.closest(keepSelector))) {
         close(openInstance);
@@ -953,11 +980,14 @@
     }, 0);
   });
 
-  // 从「公式」切回「文字」时，收起公式编辑器对应的键盘面板
-  window.addEventListener("math-input-mode-change", function (event) {
+  // 从渲染视图切回可编辑 LaTeX 原文时，只收起原稿主编辑器的键盘面板；
+  // 对话补充框的公式面板不受原稿视图切换影响。
+  window.addEventListener("math-draft-view-change", function (event) {
     if (!openInstance || openInstance.kind !== "formula") return;
-    const mode = event && event.detail ? event.detail.mode : "";
-    if (mode === "formula") return;
+    const mainHost = document.querySelector("#formula-editor-host");
+    if (!mainHost || openInstance.field !== mainHost) return;
+    const view = event && event.detail ? event.detail.view : "";
+    if (view === "rendered") return;
     close(openInstance);
   });
 
@@ -968,6 +998,6 @@
     }),
     // 纯函数：只计算这次插入的落点和是否需要包定界符，便于自检。
     planInsert: planInsertion,
-    version: "20261118-mathlive"
+    version: "20261119-draft-view"
   };
 })();

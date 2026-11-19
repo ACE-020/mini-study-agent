@@ -30,16 +30,17 @@ python -m venv .venv
 
 **数学符号键盘**：聚焦核心输入框时自动展开，7 个分类共 114 个键（常用 / 分式 / 上下标 / 关系 / 希腊 / 微积分 / 矩阵），按键外观用 KaTeX 渲染，点击把 LaTeX 插入光标处；有选区时包裹选中内容；插入后派发 input 事件，字数、发送按钮与待发送队列同步。面板在文档流内、不遮挡按钮，Esc 或 × 收起；`data-math-keyboard="off"` 或 `localStorage['math-keyboard:auto']='0'` 可关闭自动展开。覆盖原稿输入框、三个对话补充框、练习资料补充说明与批量修正要求。
 
-**公式（可视化）输入模式**：原稿输入区在「上传文件 / 直接输入文字」下多一个 `文字 | 公式（可视化）` 切换（与上传区互斥，切换保留内容）。
+**原稿渲染编辑**：首屏（包括默认「上传文件」页）直接在原稿区显示可编辑的渲染效果；标题行右侧唯一按钮是「查看原文」，切到可编辑 LaTeX 源后原位按钮变为「查看渲染后文字」。切换只改显示，不切上传 / 直接输入标签、不收起上传区、不清附件或已 OCR 文字、不改 `#draft`。
 
-- 公式模式用 **MathLive 0.111.4**（自托管于 `static/vendor/mathlive/`，不加载外部 CDN）做真实 TeX 排版：分式上下叠放、根号钩子与横线相连、积分/求和上下限按 TeX 规则定位，不再用 HTML 盒子近似。
-- 符号键插入带占位符的结构模板（`\frac{#@}{#?}`、`\int_{#?}^{#?}{#@}` 等）；键盘面板上的 ◀ ▲ ▼ ▶ 在分子/分母、指数、积分上下限之间移动光标，物理方向键与 Tab 同样可用。
-- 编辑器与 `#draft` 双向同步：`#draft.value` 始终是「普通文字 + `$...$` LaTeX」，提交给模型的仍是标准 LaTeX；切回文字模式、填入示例、清空、OCR 写入都会同步；模型处理中（只读）会镜像到编辑器。
-- `文字` 模式的符号键盘会先识别已有公式：在 `$...$` / `$$...$$` / `\(...\)` / `\[...\]` 内只插 LaTeX 源码，在普通文字处自动包一层 `$...$`（矩阵等环境用 `$$...$$`）；字面 `%`、`{`、`}` 插入 `\%`、`\{`、`\}`，`{ }` 仍是结构分组键。提交链路只认 `#draft`，行为不变。
+- 默认视图用 **MathLive 0.111.4**（自托管于 `static/vendor/mathlive/`，不加载外部 CDN）的真实 TeX 排版，但字段以 `default-mode="text"` 在 append 前构造：普通英文、中文、IME、粘贴首先按普通文字录入，不会整段变成 `$...$`。
+- 符号键只在明确插入公式时切到 math：分式、根式、积分等带占位符的模板留在 math 模式方便继续填；单个符号和 AI 生成的完整公式插入后回到 text，后续打字仍是普通文字。键盘面板上的 ◀ ▲ ▼ ▶ 在分子/分母、指数、积分上下限之间移动光标。
+- 编辑器与 `#draft` 双向同步：`#draft.value` 始终是「普通文字 + `$...$` LaTeX」，提交给模型的仍是标准 LaTeX；OCR 写入、清空、程序化回填都会同步。换行在 MathLive 单行可视区里显示为空格，但草稿中的原始换行会保留。
+- 「查看原文」里的符号键盘会先识别已有公式：在 `$...$` / `$$...$$` / `\(...\)` / `\[...\]` 内只插 LaTeX 源码，在普通文字处自动包一层 `$...$`（矩阵等环境用 `$$...$$`）；字面 `%`、`{`、`}` 插入 `\%`、`\{`、`\}`，`{ }` 仍是结构分组键。提交链路只认 `#draft`，行为不变。
+- 矩阵分类下「矩阵」「行列式」两个相邻键分别打开「插入矩阵」「插入行列式」面板；标题下并列「手动输入」「交给 AI 生成」，默认手动。手动矩阵给行数 × 列数和随尺寸更新的圆括号预览，行列式只给阶数和竖线预览；AI 模式保留原 `/api/formula/matrix`、无配置状态与异步取消保护。
 
-实现入口：`static/math-keyboard.js`、`static/math-keyboard.css`、`static/math-input-mode.js`、`static/vendor/mathlive/`；`static/app.js` 仅在 `updateDraft()` 末尾增加一行同步钩子。第三方许可（MathLive MIT、随附 KaTeX 字体 SIL OFL 1.1）见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+实现入口：`static/math-keyboard.js`、`static/math-keyboard.css`、`static/math-input-mode.js`、`static/formula-matrix.js`、`static/vendor/mathlive/`；`static/app.js` 只调整 `#draft` 的聚焦 / 更新钩子。第三方许可（MathLive MIT、随附 KaTeX 字体 SIL OFL 1.1）见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-验收（本机 Chrome + Playwright，未调用真实模型）：公式模式 A–T 20/20 通过；分式结构几何实测 `.ML__mfrac` 39.48×56.63px、分数线 33.73×1px、根号钩子与横线间隙 0px、`lim` 与下标中心差 1.0px、渲染字体 `KaTeX_Main`、字体文件请求 200、编辑器无裁切；文字模式原有行为、光标/选区恢复、模式互斥、移动端 390×844 无横向溢出均通过；控制台 0 错误、0 CSP 违规。
+回归方式：纯转换先跑 `node tests/test_math_input.js`；浏览器回归先启动 `python tests/serve_browser_fixture.py --port 8766`，再跑 `node tests/browser_math_input.cjs`（本机 Chrome + Playwright，模型为模拟，不调用真实 API）。覆盖普通英文 / 中文键入、IME 与粘贴、空字段无幽灵 `$  $`、原文无损往返、OCR / 清空、符号公式、矩阵 2×3 / 行列式 3 阶、AI 成功 / 快速切换 / 取消、无配置状态和 390px。
 
 | 截图 | 说明 |
 | --- | --- |
@@ -48,7 +49,7 @@ python -m venv .venv
 | ![公式输入移动端](docs/math-input/formula-mobile.png) | 移动端 390×844 |
 | ![旧引擎与 MathLive 对比](docs/math-input/css-engine-vs-mathlive.png) | 同一公式：旧自研 CSS 引擎（左）与 MathLive（右） |
 
-已知边界：MathLive 是数学字段，公式模式直接输入中文会被当作数学字符（退出时按普通文字还原），大段中文原稿仍建议用文字模式；`$$...$$`、`\[...\]` 与只改公式的往返会保留原定界符和换行，直接在编辑器里改文字段时换行仍会归一化为空格；序列化可能出现 `\frac47` 这类 MathLive 短形式（合法 LaTeX，KaTeX 可渲染）；行列式键仍使用 `pmatrix` 模板。`static/math-field.js` / `static/math-field.css` 是上一版自研渲染引擎，已不再被任何页面引用，可在确认稳定后删除。
+已知边界：MathLive 是单行字段，换行在可视区里显示为空格，但草稿中的原始换行（粘贴、OCR、程序化回写、未改动的源文）会保留；`$$...$$`、`\[...\]` 与只改公式的往返会保留原定界符；序列化可能出现 `\frac47` 这类 MathLive 短形式（合法 LaTeX，KaTeX 可渲染）。`static/math-field.js` / `static/math-field.css` 是上一版自研渲染引擎，已不再被任何页面引用，可在确认稳定后删除。
 
 ## 微信小程序接入
 
@@ -239,7 +240,7 @@ with StudyService(AppConfig(data_dir="tmp/data")) as service:
 | `document_input.py` | 多文件读取、PDF 页码范围、本地文字提取与扫描页 OCR |
 | `web.py`、`templates/`、`static/` | 网页入口、接口、页面布局与交互 |
 | `static/math-keyboard.js`、`static/math-keyboard.css` | 数学符号键盘：聚焦展开、符号插入、公式方向键控制盘 |
-| `static/math-input-mode.js` | 「公式（可视化）」模式：MathLive 编辑器与 `#draft` 双向同步、与上传区互斥 |
+| `static/math-input-mode.js` | 原稿渲染编辑：MathLive text 模式与 `#draft` 双向同步、「查看原文 / 查看渲染后文字」切换 |
 | `static/vendor/mathlive/` | 自托管 MathLive 0.111.4 与 KaTeX 网页字体（真实 TeX 排版） |
 | `file_preview.py` | PDF 临时预览、按页渲染与会话隔离 |
 | `library_export.py` | 跨库所选内容的 Markdown/PDF/JSON 合集 |

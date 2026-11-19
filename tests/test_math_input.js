@@ -7,6 +7,7 @@ const vm = require('vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'static', 'math-input-mode.js'), 'utf8');
 const keyboardSource = fs.readFileSync(path.join(__dirname, '..', 'static', 'math-keyboard.js'), 'utf8');
+const matrixSource = fs.readFileSync(path.join(__dirname, '..', 'static', 'formula-matrix.js'), 'utf8');
 const window = {
   addEventListener() {},
   dispatchEvent() {},
@@ -37,6 +38,9 @@ assert.ok(api, 'mathInputMode API should be exposed');
 vm.runInContext(keyboardSource, context, {filename: 'math-keyboard.js'});
 const keyboard = window.mathKeyboard;
 assert.ok(keyboard && typeof keyboard.planInsert === 'function', 'mathKeyboard.planInsert should be exposed');
+vm.runInContext(matrixSource, context, {filename: 'formula-matrix.js'});
+const matrix = window.formulaMatrix;
+assert.ok(matrix && typeof matrix.buildLatex === 'function', 'formulaMatrix.buildLatex should be exposed');
 
 let passed = 0;
 function check(name, actual, expected) {
@@ -119,6 +123,52 @@ check('insert before formula continues', [keyboard.planInsert('$x$', 0, 0).start
 check('insert replaces whole formula', [keyboard.planInsert('$x$', 0, 3).wrap, keyboard.planInsert('$x$', 0, 3).selected], [true, 'x']);
 check('insert inside block formula', [keyboard.planInsert('$$x$$', 4, 4).start, keyboard.planInsert('$$x$$', 4, 4).wrap], [3, false]);
 check('plain price does not count as formula', keyboard.planInsert('价格 $5 到 $10', 8, 8).wrap, true);
+
+// 8) 原稿可视编辑使用 MathLive text 模式：普通文字不进 $...$，公式显式包起来
+check('text mode plain english stays plain', api.mixedToLatex('abc', true), 'abc');
+check('text mode plain chinese stays plain', api.mixedToLatex('笔记：第一行', true), '笔记：第一行');
+check('text mode inline formula is delimited', api.mixedToLatex('前文 $x^2$ 后文', true), '前文 $x^2$ 后文');
+check('text mode block formula is delimited', api.mixedToLatex('$$\\frac{1}{x}$$', true), '$$\\frac{1}{x}$$');
+check('text mode newlines become spaces in the field',
+  api.mixedToLatex('第一行\n第二行', true), '第一行 第二行');
+check('text mode serialized plain text parses back', api.latexToMixed('abc', true), 'abc');
+check('text mode serialized formula parses back', api.latexToMixed('普通文字 $ x^2 $ 后文', true), '普通文字 $x^2$ 后文');
+check('text mode serialized block parses back', api.latexToMixed('$$ \\frac{1}{x} $$', true), '$$\\frac{1}{x}$$');
+check('text typed in math mode parses back as plain text', api.latexToMixed('$ \\text{原稿 Hello 123} $', true), '原稿 Hello 123');
+check('ghost empty math parses as empty', api.latexToMixed('$  $', true), '');
+check('ghost empty math does not swallow following text', api.latexToMixed('$  $原稿 Hello', true), '原稿 Hello');
+check('ghost empty math does not rewrite empty draft', api.reconcileDraft('', '$  $', true), '');
+for (const text of [
+  'abc',
+  '笔记：第一行\n第二行',
+  '第一行\n第二行 $x^2$ 结束',
+  '中文 $$\\frac{1}{x}$$ 中文',
+  '价格 $5 到 $10 元',
+]) {
+  check('text mode round trip: ' + JSON.stringify(text),
+    api.reconcileDraft(text, api.mixedToLatex(text, true), true), text);
+}
+check('append after typed newline preserves newline',
+  api.reconcileDraft('hello中文\n', 'hello中文 s', true), 'hello中文\ns');
+check('append after pasted newline preserves both newlines',
+  api.reconcileDraft('第一行\n第二行\n', '第一行 第二行 结束', true), '第一行\n第二行\n结束');
+
+// 9) 矩阵 / 行列式面板的模板与预览
+check('matrix 2x3 text template',
+  matrix.buildLatex(2, 3, 'matrix', '$0', ''),
+  '\\begin{pmatrix}$0&&\\\\&&\\end{pmatrix}');
+check('matrix 2x3 editable template',
+  matrix.buildLatex(2, 3, 'matrix', '#@', '#?'),
+  '\\begin{pmatrix}#@&#?&#?\\\\#?&#?&#?\\end{pmatrix}');
+check('determinant 3x3 template',
+  matrix.buildLatex(3, 3, 'determinant', '#@', '#?'),
+  '\\begin{vmatrix}#@&#?&#?\\\\#?&#?&#?\\\\#?&#?&#?\\end{vmatrix}');
+check('matrix preview uses square placeholders',
+  matrix.buildPreview(2, 3, 'matrix'),
+  '\\begin{pmatrix}\\square&\\square&\\square\\\\\\square&\\square&\\square\\end{pmatrix}');
+check('determinant preview uses vertical bars',
+  matrix.buildPreview(3, 3, 'determinant'),
+  '\\begin{vmatrix}\\square&\\square&\\square\\\\\\square&\\square&\\square\\\\\\square&\\square&\\square\\end{vmatrix}');
 
 if (process.exitCode) {
   console.error('math input tests failed');
