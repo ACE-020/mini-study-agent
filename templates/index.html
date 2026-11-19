@@ -83,7 +83,7 @@
           <div id="organize-workspace" class="workspace-grid">
             <section id="source-panel" class="panel input-panel draft-view-source">
               <div class="panel-heading"><div><span class="step-label">原稿</span><h2>图片、笔记、错题，都放这里</h2></div></div>
-              <div class="source-tabs" role="group" aria-label="录入方式"><button class="source-tab active" data-source="image" type="button">上传文件</button><button class="source-tab" data-source="text" type="button">直接输入文字</button></div>
+              <div class="source-tabs" role="group" aria-label="录入方式"><button class="source-tab active" data-source="image" type="button" aria-pressed="true">上传文件</button><button class="source-tab" data-source="text" type="button" aria-pressed="false">直接输入文字</button></div>
               <div id="image-pane">
                 <label class="drop-zone" id="drop-zone" for="image-input" tabindex="0"><input id="image-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp" class="visually-hidden"><span id="upload-placeholder"><span class="upload-icon"><svg><use href="#i-image"/></svg></span><strong>拖入文件，或点击多选</strong><small>图片、PDF、TXT、Markdown</small></span></label>
                 <div id="input-files" class="file-queue" aria-label="待处理文件"></div>
