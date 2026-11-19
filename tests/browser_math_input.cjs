@@ -59,6 +59,13 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       return Boolean(active && active.closest && active.closest('.formula-editor-host'));
     });
     const openMatrixPanel = async kind => {
+      // Escape 关闭面板时会把焦点还给 math-field。再次点击已聚焦的编辑器
+      // 不会触发 focusin。先移开焦点，让测试从一次新的聚焦开始。
+      const fieldFocused = await field.evaluate(node => {
+        const active = document.activeElement;
+        return active === node || Boolean(node.shadowRoot && node.shadowRoot.activeElement);
+      });
+      if (fieldFocused) await page.locator('#page-title').click();
       await field.click();
       await visibleKeyboard().waitFor();
       await chooseCategory('geometry');
