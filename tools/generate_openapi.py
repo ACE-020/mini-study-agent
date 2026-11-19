@@ -365,10 +365,10 @@ PATHS = {
                      responses={**ok("原页与元数据", "IntakePrepareResult"), **err(400, "文件或页码非法"), **err(409, "有请求正在处理中"), **err(499, "已停止")}),
     },
     "/api/intake/clear": {
-        "post": dict(summary="清空统一入口的上传区", tags=["学习内容"],
-                     description="清空整理页的临时对话与原图（不影响复习问答、已保存记录）。",
+        "post": dict(summary="清空指定对话的上传区", tags=["学习内容"],
+                     description="清空指定对话（省略则为当前 active 对话）的未提交草稿文字与上传原图；不影响复习问答、已保存记录和其他对话。",
                      requestBody=json_body("ClearBody", required=False),
-                     responses={**ok("已清空"), **err(400, "参数非法"), **err(409, "有请求正在处理中")}),
+                     responses={**ok("已清空"), **err(400, "参数非法"), **err(404, "对话不存在或已删除"), **err(409, "有请求正在处理中")}),
     },
     "/api/materials/read": {
         "post": dict(summary="资料页：读取资料文字", tags=["资料整理"],
@@ -929,6 +929,8 @@ SCHEMAS = {
         "type": "object", "required": ["message"],
         "properties": {
             "message": dict(TEXT, minLength=1, maxLength=80000),
+            "display_text": dict(TEXT, minLength=1, maxLength=80000,
+                                 description="可选：仅 organize，本轮在对话历史中展示给用户的文字；省略时用 message。用于把给模型的整理指令与用户可见原稿分开。"),
             "request_id": dict(TEXT, maxLength=100, description="前端生成的编号；用于停止与进度轮询"),
             "conversation_id": dict(TEXT, maxLength=100,
                                     description="仅 organize：本轮所属对话；省略则用当前 active 对话"),

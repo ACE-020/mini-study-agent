@@ -42,6 +42,10 @@ MAX_CONVERSATIONS = 20
 MAX_CONVERSATION_MESSAGES = 200
 
 
+class OwnerGone(ValueError):
+    """请求开始前，目标对话/临时会话已被删除或重置。"""
+
+
 def iso_now():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -112,7 +116,9 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                       TRUSTED_HOSTS=["localhost", "127.0.0.1"], TEMPLATES_AUTO_RELOAD=True)
     tools = LockedTools(LocalTools(data_dir or default_data_directory()))
     states = {}
-    states_lock = threading.Lock()
+    # 生命周期的读改写都在这把短锁里完成；RLock 允许 get_state() 等内部再进入。
+    # 耗时的模型工作仍然只持有对话自己的锁，因此不同对话可以并行。
+    states_lock = threading.RLock()
     settings = SettingsStore(settings_path)
     previews = PdfPreviews()
     app.extensions["pdf_previews"] = previews
@@ -142,7 +148,11 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                     if conversation.get("token"):
                         conversation["token"].cancel()
         deadline = time.monotonic() + 5
-        while any(state_busy(item) for item in pending) and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            with states_lock:
+                busy = any(state_busy(item) for item in pending)
+            if not busy:
+                break
             time.sleep(.05)
         if "material_jobs" in app.extensions:
             with jobs.condition:
@@ -269,22 +279,42 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 active_conversation(state)
             return state
 
-    def begin(target, request_id):
+    def begin(target, request_id, state=None, conversation_id=None):
+        """在短锁内取得操作权：对话锁 + 归属校验，避免删除/reset 与 begin 交错。
+
+        长任务只持有 target["lock"]；states_lock 只在取得锁、登记 token 的瞬间持有。
+        """
         request_id = request_id or secrets.token_urlsafe(16)
         if not isinstance(request_id, str) or len(request_id) > 100:
             raise ValueError("请求编号格式有误。")
         if not target["lock"].acquire(blocking=False):
+            if state is not None:
+                with states_lock:
+                    if not any(item is state for item in states.values()):
+                        raise OwnerGone("对话或临时会话已失效，请刷新网页后重试。")
+                    if conversation_id is not None and state["conversations"].get(conversation_id) is not target:
+                        raise OwnerGone("对话不存在或已删除，请刷新网页后重试。")
             return None
-        token = CancellationToken()
-        token.request_id=request_id
-        with states_lock:
-            target["token"] = token
-            target["request_id"] = request_id
-            pending = target.setdefault("cancelled_ids", set())
-            if request_id in pending:
-                token.cancel()
-                pending.discard(request_id)
-        return token
+        try:
+            with states_lock:
+                if state is not None:
+                    registered = any(item is state for item in states.values())
+                    if registered and conversation_id is not None:
+                        registered = state["conversations"].get(conversation_id) is target
+                    if not registered:
+                        raise OwnerGone("对话或临时会话已失效，请刷新网页后重试。")
+                token = CancellationToken()
+                token.request_id=request_id
+                target["token"] = token
+                target["request_id"] = request_id
+                pending = target.setdefault("cancelled_ids", set())
+                if request_id in pending:
+                    token.cancel()
+                    pending.discard(request_id)
+            return token
+        except BaseException:
+            target["lock"].release()
+            raise
 
     def end(target):
         with states_lock:
@@ -331,14 +361,15 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.get("/api/operation")
     def operation_progress():
-        state = get_state()
         identity = request.args.get("request_id")
-        token = state.get("token")
-        active = bool(token and identity == state.get("request_id"))
-        if not active:
-            token = next((conversation["token"] for conversation in state["conversations"].values()
-                          if conversation["token"] and identity == conversation["request_id"]), None)
-            active = bool(token)
+        with states_lock:
+            state = get_state()
+            token = state.get("token")
+            active = bool(token and identity == state.get("request_id"))
+            if not active:
+                token = next((conversation["token"] for conversation in state["conversations"].values()
+                              if conversation["token"] and identity == conversation["request_id"]), None)
+                active = bool(token)
         return jsonify(ok=True, active=active, progress=dict(token.progress) if active else {})
 
     @app.post("/api/ocr/backend")
@@ -395,8 +426,9 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         fields={"attempt_id","outcome","assisted","error_tags","evidence"}
         if not isinstance(payload,dict) or set(payload)!=fields:
             return error("请选择做题情况并提供判定依据。")
-        state=get_state()
-        if not state["lock"].acquire(blocking=False):return error("请先停止当前请求，再核对做题记录。",409)
+        with states_lock:
+            state=get_state()
+            if not state["lock"].acquire(blocking=False):return error("请先停止当前请求，再核对做题记录。",409)
         try:
             agent=state["agents"].get("review")
             if not agent or not agent.current_attempt_id:return error("请先选择并尝试一道题。",409)
@@ -409,8 +441,9 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.post("/api/review/end")
     def end_review():
-        state=get_state()
-        if not state["lock"].acquire(blocking=False):return error("请先停止当前请求，再结束本轮。",409)
+        with states_lock:
+            state=get_state()
+            if not state["lock"].acquire(blocking=False):return error("请先停止当前请求，再结束本轮。",409)
         try:
             agent=state["agents"].get("review")
             if agent:agent.end_review()
@@ -433,7 +466,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error(str(exc))
         state = get_state()
         try:
-            token = begin(state, payload.get("request_id"))
+            token = begin(state, payload.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -535,13 +568,14 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.get("/api/conversations")
     def list_conversations():
-        state = get_state()
-        conversations = [conversation_summary(item) for item in reversed(list(state["conversations"].values()))]
-        return jsonify(ok=True, active=state["active_conversation"], conversations=conversations)
+        with states_lock:
+            state = get_state()
+            conversations = [conversation_summary(item) for item in reversed(list(state["conversations"].values()))]
+            active = state["active_conversation"]
+        return jsonify(ok=True, active=active, conversations=conversations)
 
     @app.post("/api/conversations")
     def create_conversation():
-        state = get_state()
         payload = request.get_json(silent=True)
         if payload is None:
             payload = {}
@@ -552,34 +586,38 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             if not isinstance(title, str) or len(title.strip()) > 60:
                 return error("对话标题最多 60 字。")
             title = title.strip() or None
-        if len(state["conversations"]) >= MAX_CONVERSATIONS:
-            return error(f"最多保留 {MAX_CONVERSATIONS} 个对话，请先删除旧对话。")
-        conversation = new_conversation(state, title)
-        return jsonify(ok=True, active=conversation["id"], conversation=conversation_summary(conversation))
+        # 「检查上限 + 创建」必须在同一把短锁里，否则并发新建会一起通过检查而超限。
+        with states_lock:
+            state = get_state()
+            if len(state["conversations"]) >= MAX_CONVERSATIONS:
+                return error(f"最多保留 {MAX_CONVERSATIONS} 个对话，请先删除旧对话。")
+            conversation = new_conversation(state, title)
+            summary = conversation_summary(conversation)
+        return jsonify(ok=True, active=conversation["id"], conversation=summary)
 
     @app.post("/api/conversations/<identity>/activate")
     def activate_conversation(identity):
-        state = get_state()
-        conversation = state["conversations"].get(identity)
-        if conversation is None:
-            return error("对话不存在或已删除，请刷新网页后重试。", 404)
-        state["active_conversation"] = identity
-        return jsonify(ok=True, active=identity, conversation=conversation_summary(conversation))
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            state["active_conversation"] = identity
+            summary = conversation_summary(conversation)
+        return jsonify(ok=True, active=identity, conversation=summary)
 
     @app.get("/api/conversations/<identity>")
     def conversation_detail_route(identity):
-        state = get_state()
-        conversation = state["conversations"].get(identity)
-        if conversation is None:
-            return error("对话不存在或已删除，请刷新网页后重试。", 404)
-        return jsonify(ok=True, conversation=conversation_detail(conversation))
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            detail = conversation_detail(conversation)
+        return jsonify(ok=True, conversation=detail)
 
     @app.patch("/api/conversations/<identity>")
     def update_conversation(identity):
-        state = get_state()
-        conversation = state["conversations"].get(identity)
-        if conversation is None:
-            return error("对话不存在或已删除，请刷新网页后重试。", 404)
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict) or set(payload) - {"title", "intake_text"}:
             return error("请检查要保存的对话内容。")
@@ -590,31 +628,41 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         intake_text = payload.get("intake_text")
         if intake_text is not None and (not isinstance(intake_text, str) or len(intake_text) > MAX_TEXT):
             return error("草稿内容需为不超过 80000 字的文字。")
-        if title is not None:
-            conversation["title"] = title.strip()
-        if intake_text is not None:
-            conversation["intake_text"] = intake_text
-        conversation["updated_at"] = iso_now()
-        return jsonify(ok=True, conversation=conversation_summary(conversation))
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            if title is not None:
+                conversation["title"] = title.strip()
+            if intake_text is not None:
+                conversation["intake_text"] = intake_text
+            conversation["updated_at"] = iso_now()
+            summary = conversation_summary(conversation)
+        return jsonify(ok=True, conversation=summary)
 
     @app.delete("/api/conversations/<identity>")
     def delete_conversation(identity):
-        state = get_state()
-        conversation = state["conversations"].get(identity)
-        if conversation is None:
-            return error("对话不存在或已删除，请刷新网页后重试。", 404)
-        if not conversation["lock"].acquire(blocking=False):
-            return error("该对话正在处理中，请先停止或等待完成后再删除。", 409)
-        try:
-            state["conversations"].pop(identity, None)
-        finally:
-            conversation["lock"].release()
-        if state["active_conversation"] == identity:
-            remaining = list(state["conversations"].values())
-            state["active_conversation"] = remaining[-1]["id"] if remaining else None
-        if not state["conversations"]:
-            new_conversation(state)
-        return jsonify(ok=True, active=state["active_conversation"])
+        # 删除与 begin() 都在这把短锁里确认归属：不会删掉刚开始的请求，也不会让
+        # 已删除的对话继续取得执行权。
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            if not conversation["lock"].acquire(blocking=False):
+                return error("该对话正在处理中，请先停止或等待完成后再删除。", 409)
+            try:
+                state["conversations"].pop(identity, None)
+                if state["active_conversation"] == identity:
+                    remaining = list(state["conversations"].values())
+                    state["active_conversation"] = remaining[-1]["id"] if remaining else None
+                if not state["conversations"]:
+                    new_conversation(state)
+                active = state["active_conversation"]
+            finally:
+                conversation["lock"].release()
+        return jsonify(ok=True, active=active)
 
     @app.get("/api/mistakes")
     def mistakes():
@@ -677,7 +725,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if not isinstance(remove_notes, bool):
             return error("合并选项格式有误。")
         try:
-            token = begin(state, payload.get("request_id"))
+            token = begin(state, payload.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -730,7 +778,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if not isinstance(payload, dict) or payload.get("format") not in ("md", "pdf", "json"):
             return error("请选择 Markdown、PDF 或 JSON 格式。")
         try:
-            token = begin(state, payload.get("request_id"))
+            token = begin(state, payload.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -752,11 +800,14 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
     @app.post("/api/intake/prepare")
     def intake_prepare():
         state=get_state()
-        conversation=find_conversation(state, request.form.get("conversation_id"))
+        with states_lock:
+            conversation=find_conversation(state, request.form.get("conversation_id"))
         if conversation is None:
             return error("对话不存在或已删除，请刷新网页后重试。",404)
         try:
-            token=begin(conversation,request.form.get("request_id"))
+            token=begin(conversation,request.form.get("request_id"),state=state,conversation_id=conversation["id"])
+        except OwnerGone as exc:
+            return error(str(exc),404)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -786,11 +837,14 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if not files:
             return error("请选择图片、PDF、TXT 或 Markdown，可一次选择多个文件。")
         state = get_state()
-        conversation = find_conversation(state, request.form.get("conversation_id"))
+        with states_lock:
+            conversation = find_conversation(state, request.form.get("conversation_id"))
         if conversation is None:
             return error("对话不存在或已删除，请刷新网页后重试。", 404)
         try:
-            token = begin(conversation, request.form.get("request_id"))
+            token = begin(conversation, request.form.get("request_id"), state=state, conversation_id=conversation["id"])
+        except OwnerGone as exc:
+            return error(str(exc), 404)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -858,7 +912,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if not isinstance(payload, dict):
             return error("请求格式有误。")
         try:
-            token = begin(state, payload.get("request_id"))
+            token = begin(state, payload.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -885,7 +939,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error("请选择笔记图片、UTF-8 TXT 或 Markdown。")
         state = get_state()
         try:
-            token = begin(state, request.form.get("request_id"))
+            token = begin(state, request.form.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1075,7 +1129,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error("请提供本批预览和修改要求。")
         state = get_state()
         try:
-            token = begin(state, payload.get("request_id"))
+            token = begin(state, payload.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1144,7 +1198,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error("请选择资料图片、PDF 或 UTF-8 TXT 文件，可多选。")
         state = get_state()
         try:
-            token = begin(state, request.form.get("request_id"))
+            token = begin(state, request.form.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1175,7 +1229,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error("请先读取或粘贴资料文字。")
         state = get_state()
         try:
-            token = begin(state, payload.get("request_id"))
+            token = begin(state, payload.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1203,7 +1257,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         raw = file.read(MAX_IMAGE_BYTES + 1)
         state = get_state()
         try:
-            token = begin(state, request.form.get("request_id"))
+            token = begin(state, request.form.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1230,7 +1284,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error("每次可附上 1 到 4 张 JPG、PNG 或 WebP 图片。")
         state = get_state()
         try:
-            token = begin(state, request.form.get("request_id"))
+            token = begin(state, request.form.get("request_id"), state=state)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1261,6 +1315,9 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         message = payload.get("message")
         if not isinstance(message, str) or not message.strip() or len(message) > MAX_TEXT:
             return error("请输入 1 到 80000 字的内容。")
+        display_text = payload.get("display_text")
+        if display_text is not None and (not isinstance(display_text, str) or not display_text.strip() or len(display_text) > MAX_TEXT):
+            return error("展示文字需为 1 到 80000 字。")
         view = payload.get("view", "organize")
         scope = payload.get("scope", "current")
         intent = payload.get("intent")
@@ -1293,21 +1350,20 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         conversation = None
         if view == "organize":
             # 组织视图按对话隔离锁、智能体与上传原图；其余视图仍用会话级状态。
-            conversation = find_conversation(state, payload.get("conversation_id"))
+            with states_lock:
+                conversation = find_conversation(state, payload.get("conversation_id"))
             if conversation is None:
                 return error("对话不存在或已删除，请刷新网页后重试。", 404)
             target = conversation
-            agents = conversation["agents"]
-            note_images = conversation["note_images"]
-            note_transcriptions = conversation["note_transcriptions"]
         else:
             target = state
-            agents = state["agents"]
-            note_images = state["note_images"]
-            note_transcriptions = state["note_transcriptions"]
         user_text = message.strip()
+        visible_text = display_text.strip() if display_text is not None else user_text
         try:
-            token = begin(target, payload.get("request_id"))
+            token = begin(target, payload.get("request_id"), state=state,
+                          conversation_id=(conversation["id"] if conversation is not None else None))
+        except OwnerGone as exc:
+            return error(str(exc), 404)
         except ValueError as exc:
             return error(str(exc))
         if token is None:
@@ -1315,6 +1371,15 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         events = []
         try:
             token.check()
+            # 必须在拿到操作权之后再取引用：上一请求可能已经替换了 note_images / 转写表。
+            if conversation is not None:
+                agents = conversation["agents"]
+                note_images = conversation["note_images"]
+                note_transcriptions = conversation["note_transcriptions"]
+            else:
+                agents = state["agents"]
+                note_images = state["note_images"]
+                note_transcriptions = state["note_transcriptions"]
             image_store = state["review_images"] if view == "review" else note_images
             if any(item not in image_store for item in image_ids):
                 return error("部分作答或原稿图片已过期，请重新添加图片；编辑框中的文字仍然保留。", 409)
@@ -1387,8 +1452,8 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 scope = "current"
             if conversation is not None:
                 if conversation["title"] == "新对话":
-                    conversation["title"] = title_from(user_text) or "新对话"
-                append_message(conversation, "user", user_text)
+                    conversation["title"] = title_from(visible_text) or "新对话"
+                append_message(conversation, "user", visible_text)
             agent.trace = lambda event, value: events.append({"event": event, "value": value})
             answer = agent.run(message.strip(), cancel_token=token, scope=scope, intent=intent, topic=topic, exercise_id=exercise_id,
                                new_problem=new_problem, task="library" if view == "analysis" else "mixed" if view == "organize" else "notes" if view == "notes" else "review" if view == "review" else None,
@@ -1432,22 +1497,26 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.post("/api/intake/clear")
     def clear_intake():
-        state = get_state()
         payload = request.get_json(silent=True) or {}
         if not isinstance(payload, dict):
             return error("请求格式有误。")
         ids = payload.get("preview_ids", [])
         if not isinstance(ids, list) or len(ids) > 20 or any(not isinstance(key, str) or len(key) > 100 for key in ids):
             return error("预览记录格式有误，请刷新后重试。")
-        conversation = find_conversation(state, payload.get("conversation_id"))
-        if conversation is None:
-            return error("对话不存在或已删除，请刷新网页后重试。", 404)
-        if not conversation["lock"].acquire(blocking=False):
-            return error("请求正在处理中，请先停止或等待，再清除本页资料。", 409)
+        # 清除与 begin() 在同一把短锁里确认归属：清空的就是请求指定的对话。
+        with states_lock:
+            state = get_state()
+            conversation = find_conversation(state, payload.get("conversation_id"))
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            if not conversation["lock"].acquire(blocking=False):
+                return error("请求正在处理中，请先停止或等待，再清除本页资料。", 409)
         try:
             conversation["agents"].pop("organize", None)
             conversation["note_images"].clear()
             conversation["note_transcriptions"].clear()
+            # 清空语义包含尚未提交的草稿文字；旧前端随后再 PATCH 空草稿也仍然兼容。
+            conversation["intake_text"] = ""
             conversation["updated_at"] = iso_now()
             previews.discard(ids, session["sid"])
             return jsonify(ok=True)

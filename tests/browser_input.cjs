@@ -53,9 +53,10 @@ const imageFile = {name:'cursor.png',mimeType:'image/png',buffer:Buffer.from('iV
   result='超过长度';await recognize();
   assert.equal((await editor.inputValue()).length,23999);
   assert.match(await page.locator('#notice').innerText(),/超过.*长度/);
-  // Reload starts fresh, matching the image field; a new insertion starts at the beginning.
-  await editor.fill('恢复后的草稿');await page.reload();
-  await page.waitForFunction(()=>document.querySelector('#model-status').textContent.includes('已配置'));
+  // History keeps the draft across reload; the image field is still empty, so clear it and check a new insertion starts at the beginning.
+  await editor.fill('恢复后的草稿');await page.waitForTimeout(1100);await page.reload();
+  await page.waitForFunction(()=>document.querySelector('#model-status').textContent.includes('已配置')&&document.querySelector('#draft').value==='恢复后的草稿');
+  await editor.fill('');
   await page.locator('#image-input').setInputFiles(imageFile);
   assert.equal(await editor.inputValue(),'');
   result='新识别';await recognize();assert.equal(await editor.inputValue(),'新识别');

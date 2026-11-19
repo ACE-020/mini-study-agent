@@ -887,11 +887,11 @@
     },
     "/api/intake/clear": {
       "post": {
-        "summary": "清空统一入口的上传区",
+        "summary": "清空指定对话的上传区",
         "tags": [
           "学习内容"
         ],
-        "description": "清空整理页的临时对话与原图（不影响复习问答、已保存记录）。",
+        "description": "清空指定对话（省略则为当前 active 对话）的未提交草稿文字与上传原图；不影响复习问答、已保存记录和其他对话。",
         "requestBody": {
           "required": false,
           "content": {
@@ -915,6 +915,16 @@
           },
           "400": {
             "description": "参数非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "对话不存在或已删除",
             "content": {
               "application/json": {
                 "schema": {
@@ -3121,6 +3131,12 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80000
+          },
+          "display_text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80000,
+            "description": "可选：仅 organize，本轮在对话历史中展示给用户的文字；省略时用 message。用于把给模型的整理指令与用户可见原稿分开。"
           },
           "request_id": {
             "type": "string",

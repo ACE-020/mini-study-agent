@@ -272,6 +272,41 @@ class ConversationChatTests(ConversationTestCase):
         self.assertIn("未完成", detail["messages"][1]["text"])
 
 
+    def test_display_text_is_stored_and_named_instead_of_the_model_instruction(self):
+        conversation = self.create()
+        instruction = ("请自动辨认原图与以下补充中的笔记、错题并分别整理。原图是主要依据，文字仅辅助。\n\n"
+                       "prepared-A 模拟信息不足")
+        response = self.chat(instruction, conversation_id=conversation["id"])
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["conversation_id"], conversation["id"])
+        body = response.get_json()
+        self.assertTrue(body["ok"])
+
+        # 不带 display_text 的旧客户端仍按 message 存档与命名。
+        legacy = self.create()
+        self.assertEqual(self.chat("旧客户端消息", conversation_id=legacy["id"]).status_code, 200)
+        legacy_detail = self.detail(legacy["id"])
+        self.assertEqual(legacy_detail["messages"][0]["text"], "旧客户端消息")
+        self.assertEqual(legacy_detail["title"], "旧客户端消息")
+
+        separated = self.create()
+        response = self.client.post("/api/chat", json={
+            "message": instruction, "display_text": "已上传原稿：prepared-A.txt",
+            "view": "organize", "conversation_id": separated["id"]})
+        self.assertEqual(response.status_code, 200, response.get_json())
+        detail = self.detail(separated["id"])
+        self.assertEqual(detail["messages"][0]["text"], "已上传原稿：prepared-A.txt")
+        self.assertTrue(detail["title"].startswith("已上传原稿：prepared-A"))
+        self.assertIn("请自动辨认原图", json.dumps(self.model.requests[-1], ensure_ascii=False))
+        self.assertEqual(detail["messages"][1]["role"], "assistant")
+
+        for bad in (123, "", "字" * 80001):
+            rejected = self.client.post("/api/chat", json={
+                "message": instruction, "display_text": bad, "view": "organize",
+                "conversation_id": separated["id"]})
+            self.assertEqual(rejected.status_code, 400, rejected.get_json())
+
+
 class ConversationParallelTests(ConversationTestCase):
     model_class = SlowModel
 
@@ -402,6 +437,34 @@ class ConversationIntakeTests(ConversationTestCase):
         self.assertEqual(self.conversations()["active"], conversation["id"])
 
 
+    def test_clear_clears_draft_atomically_and_only_for_target(self):
+        first = self.create()
+        second = self.create()
+        self.client.patch(f"/api/conversations/{first['id']}", json={"intake_text": "A 草稿"})
+        self.client.patch(f"/api/conversations/{second['id']}", json={"intake_text": "B 草稿"})
+        self.read_into(first["id"])
+        self.read_into(second["id"])
+
+        cleared = self.client.post("/api/intake/clear",
+                                   json={"preview_ids": [], "conversation_id": first["id"]})
+        self.assertEqual(cleared.status_code, 200, cleared.get_json())
+        self.assertEqual(self.detail(first["id"])["intake"],
+                         {"text": "", "image_ids": [], "image_count": 0})
+        self.assertEqual(self.detail(second["id"])["intake"]["text"], "B 草稿")
+        self.assertEqual(self.detail(second["id"])["intake"]["image_count"], 1)
+
+        # 旧前端不带 conversation_id：落到当前 active 对话。
+        self.client.post(f"/api/conversations/{first['id']}/activate")
+        legacy = self.client.post("/api/intake/clear", json={"preview_ids": []})
+        self.assertEqual(legacy.status_code, 200, legacy.get_json())
+        self.assertEqual(self.detail(first["id"])["intake"]["text"], "")
+        self.assertEqual(self.detail(second["id"])["intake"]["text"], "B 草稿")
+
+        # 清空后重新写草稿仍然可用；清空语义不删除消息。
+        self.client.patch(f"/api/conversations/{first['id']}", json={"intake_text": "重新写"})
+        self.assertEqual(self.detail(first["id"])["intake"]["text"], "重新写")
+
+
 class ConversationParallelIntakeTests(ConversationTestCase):
     model_class = SlowModel
 
@@ -416,6 +479,143 @@ class ConversationParallelIntakeTests(ConversationTestCase):
         self.assertEqual(blocked.status_code, 409, blocked.get_json())
         worker.join(5)
         self.assertEqual(results[0].status_code, 200)
+
+
+class ConversationLifecycleRaceTests(ConversationTestCase):
+    def test_concurrent_create_never_exceeds_limit(self):
+        cookie = self.client.get_cookie("session").value
+        workers = 40
+        barrier = threading.Barrier(workers)
+        results = []
+        guard = threading.Lock()
+
+        def create_one():
+            client = self.app.test_client()
+            client.set_cookie("session", cookie)
+            barrier.wait(10)
+            response = client.post("/api/conversations", json={})
+            with guard:
+                results.append(response)
+
+        threads = [threading.Thread(target=create_one) for _ in range(workers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+            self.assertFalse(thread.is_alive())
+        listing = self.conversations()["conversations"]
+        self.assertEqual(len(listing), 20)
+        accepted = [item for item in results if item.status_code == 200]
+        rejected = [item for item in results if item.status_code != 200]
+        self.assertEqual(len(accepted), 19)
+        self.assertEqual(len(rejected), workers - 19)
+        for item in rejected:
+            self.assertEqual(item.status_code, 400, item.get_json())
+            self.assertIn("20", item.get_json()["error"])
+
+    def test_delete_and_chat_start_race_keeps_membership(self):
+        for index in range(10):
+            conversation = self.create()
+            barrier = threading.Barrier(2)
+            chat_result, delete_result = [], []
+
+            def start_chat():
+                client = self.second_client()
+                barrier.wait(10)
+                chat_result.append(self.chat("删除竞态", conversation_id=conversation["id"],
+                                             client=client, request_id=f"race-chat-{index}"))
+
+            def delete_it():
+                client = self.second_client()
+                barrier.wait(10)
+                delete_result.append(client.delete(f"/api/conversations/{conversation['id']}"))
+
+            first = threading.Thread(target=start_chat)
+            second = threading.Thread(target=delete_it)
+            first.start(); second.start(); first.join(10); second.join(10)
+            self.assertFalse(first.is_alive()); self.assertFalse(second.is_alive())
+            self.assertEqual(len(chat_result), 1)
+            self.assertEqual(len(delete_result), 1)
+            self.assertIn(chat_result[0].status_code, (200, 404, 409), chat_result[0].get_json())
+            self.assertIn(delete_result[0].status_code, (200, 409), delete_result[0].get_json())
+            if delete_result[0].status_code == 200:
+                self.assertNotIn(conversation["id"], [item["id"] for item in self.conversations()["conversations"]])
+        listing = self.conversations()["conversations"]
+        self.assertLessEqual(len(listing), 20)
+        self.assertEqual([item["id"] for item in listing if item["busy"]], [])
+
+class ConversationLifecycleRaceSlowTests(ConversationTestCase):
+    model_class = SlowModel
+
+    def test_reset_is_rejected_while_request_runs(self):
+        conversation = self.create()
+        results = []
+        worker = threading.Thread(target=lambda: results.append(
+            self.chat("等待停止的慢请求", conversation_id=conversation["id"],
+                      client=self.second_client(), request_id="reset-race")))
+        worker.start()
+        self.assertTrue(self.model.started.wait(2), "慢请求没有进入模型等待")
+        blocked = self.client.post("/api/reset")
+        self.assertEqual(blocked.status_code, 409, blocked.get_json())
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0].status_code, 200, results[0].get_json())
+        cleared = self.client.post("/api/reset")
+        self.assertEqual(cleared.status_code, 200, cleared.get_json())
+        listing = self.conversations()
+        self.assertEqual(len(listing["conversations"]), 1)
+        self.assertNotEqual(listing["conversations"][0]["id"], conversation["id"])
+        self.assertEqual(listing["active"], listing["conversations"][0]["id"])
+    def setUp(self):
+        super().setUp()
+        self.model.started.clear()
+
+    def test_cancel_and_operation_survive_concurrent_lifecycle_changes(self):
+        conversation = self.create()
+        results = []
+        worker = threading.Thread(target=lambda: results.append(
+            self.chat("等待停止的慢请求", conversation_id=conversation["id"],
+                      client=self.second_client(), request_id="lifecycle-cancel")))
+        worker.start()
+        self.assertTrue(self.model.started.wait(2), "慢请求没有进入模型等待")
+        barrier = threading.Barrier(8)
+        statuses = []
+        guard = threading.Lock()
+
+        def send(request):
+            client = self.second_client()
+            barrier.wait(10)
+            response = request(client)
+            with guard:
+                statuses.append(response)
+
+        def cancel(client):
+            return client.post("/api/cancel", json={"request_id": "lifecycle-cancel"})
+
+        def progress(client):
+            return client.get("/api/operation?request_id=lifecycle-cancel")
+
+        def create(client):
+            return client.post("/api/conversations", json={})
+
+        def listing(client):
+            return client.get("/api/conversations")
+
+        requests = [cancel, cancel, progress, progress, create, create, listing, listing]
+        threads = [threading.Thread(target=send, args=(request,)) for request in requests]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(len(statuses), len(requests))
+        for response in statuses:
+            self.assertEqual(response.status_code, 200, response.get_json())
+        worker.join(6)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0].status_code, 499, results[0].get_json())
+        for item in self.conversations()["conversations"]:
+            self.assertFalse(item["busy"], item)
 
 
 if __name__ == "__main__":
