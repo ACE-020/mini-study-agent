@@ -19,6 +19,7 @@
   const MAX_SIZE = 20;
   const MIN_SIZE = 1;
   const DEFAULT_SIZE = 2;
+  const SIZE_TIP = "只能是1~20内的整数！";
   // 模型调用可能卡住（网络、服务端排队）。超时就主动中断，
   // 否则按钮会永远停在「正在生成…」，用户只能刷新页面。
   const AI_TIMEOUT_MS = 25000;
@@ -75,14 +76,27 @@
     return input ? String(input.value == null ? "" : input.value).trim() : "";
   }
 
-  // 只接受 1–MAX_SIZE 的十进制整数。返回 null 表示这一格不能插入，
-  // 调用方必须把原因说出来，不能再静默取一个更小的值。
+  // 只接受 1–MAX_SIZE 的十进制整数；input 事件会先做即时夹取。
+  // 返回 null 表示当前值不能直接用于预览/插入。
   function parseSize(value) {
     const text = String(value == null ? "" : value).trim();
     if (!/^\d+$/.test(text)) return null;
     const number = Number(text);
     if (!Number.isInteger(number) || number < MIN_SIZE || number > MAX_SIZE) return null;
     return number;
+  }
+
+  // input 事件里的即时夹取。空值不处理（让用户继续输入）；范围内的小数也
+  // 原样保留，交给 sizeError 要求整数；只有真正低于 1 / 高于 20 才替换。
+  // 返回替换后的值，null 表示不需要替换。
+  function clampSizeValue(value) {
+    const text = String(value == null ? "" : value).trim();
+    if (!text) return null;
+    const number = Number(text);
+    if (!Number.isFinite(number)) return null;
+    if (number < MIN_SIZE) return MIN_SIZE;
+    if (number > MAX_SIZE) return MAX_SIZE;
+    return null;
   }
 
   function sizeError(input, label) {
@@ -94,13 +108,13 @@
     if (!/^\d+$/.test(raw)) return label + "需为 " + range + " 的整数。";
     const number = Number(raw);
     if (number < MIN_SIZE || number > MAX_SIZE) {
-      return label + "需在 " + range + " 之间（当前 " + raw + "），不能插入。";
+      return label + "需在 " + range + " 之间（当前 " + raw + "）。";
     }
     return "";
   }
 
-  // 合法值只做「去掉前导 0」的规范化；不合法时保留用户输入，交给错误提示，
-  // 绝不把越界输入改成一个能插入的小数字。
+  // 合法值只做「去掉前导 0」的规范化；非法值保留给提示/校验。
+  // 越界值在 input 事件里已由 clampSizeValue 即时夹取。
   function normalizeSizeInput(input) {
     if (!input) return;
     const size = parseSize(input.value);
@@ -109,6 +123,53 @@
 
   function sizeHintText(kind) {
     return kind === "determinant" ? "阶数 1–20" : "行数和列数均为 1–20";
+  }
+
+  function clampTipFor(input) {
+    if (!nodes || !input) return null;
+    if (input === nodes.rowsInput) return nodes.rowsTip;
+    if (input === nodes.colsInput) return nodes.colsTip;
+    if (input === nodes.orderInput) return nodes.orderTip;
+    return null;
+  }
+
+  function showClampTip(input) {
+    const tip = clampTipFor(input);
+    if (!tip) return;
+    tip.textContent = SIZE_TIP;
+    tip.hidden = false;
+    if (tip._fmxTimer) window.clearTimeout(tip._fmxTimer);
+    // 3 秒是从最近一次非法输入开始算；再次非法会清掉旧计时器重新计时。
+    tip._fmxTimer = window.setTimeout(function () {
+      tip.hidden = true;
+      tip._fmxTimer = null;
+    }, 3000);
+  }
+
+  function hideClampTip(input) {
+    const tip = clampTipFor(input);
+    if (!tip) return;
+    if (tip._fmxTimer) window.clearTimeout(tip._fmxTimer);
+    tip._fmxTimer = null;
+    tip.hidden = true;
+    tip.textContent = "";
+  }
+
+  function resetClampTips() {
+    if (!nodes) return;
+    [nodes.rowsInput, nodes.colsInput, nodes.orderInput].forEach(hideClampTip);
+  }
+
+  function handleSizeInput(input) {
+    const raw = sizeText(input);
+    const clamped = clampSizeValue(raw);
+    if (clamped != null) input.value = String(clamped);
+    const invalid = clamped != null
+      || Boolean(input.validity && input.validity.badInput)
+      || (raw !== "" && parseSize(raw) == null);
+    if (invalid) showClampTip(input);
+    else hideClampTip(input);
+    updateManualPreview();
   }
 
   /* ---------- 面板构建 ---------- */
@@ -169,8 +230,11 @@
     rowsInput.inputMode = "numeric";
     rowsInput.step = "1";
     rowsInput.setAttribute("aria-label", "行数");
-    rowsInput.setAttribute("aria-describedby", "fmx-manual-status");
-    rowsLabel.append(rowsInput);
+    rowsInput.setAttribute("aria-describedby", "fmx-manual-status fmx-rows-tip");
+    const rowsTip = el("span", "fmx-clamp-tip");
+    rowsTip.id = "fmx-rows-tip";
+    rowsTip.hidden = true;
+    rowsLabel.append(rowsInput, rowsTip);
     const times = el("span", "fmx-times", "×");
     const colsLabel = el("label", "fmx-number");
     colsLabel.append(document.createTextNode("列数"));
@@ -183,8 +247,11 @@
     colsInput.inputMode = "numeric";
     colsInput.step = "1";
     colsInput.setAttribute("aria-label", "列数");
-    colsInput.setAttribute("aria-describedby", "fmx-manual-status");
-    colsLabel.append(colsInput);
+    colsInput.setAttribute("aria-describedby", "fmx-manual-status fmx-cols-tip");
+    const colsTip = el("span", "fmx-clamp-tip");
+    colsTip.id = "fmx-cols-tip";
+    colsTip.hidden = true;
+    colsLabel.append(colsInput, colsTip);
     matrixSize.append(rowsLabel, times, colsLabel);
 
     const determinantSize = el("div", "fmx-size");
@@ -200,8 +267,11 @@
     orderInput.inputMode = "numeric";
     orderInput.step = "1";
     orderInput.setAttribute("aria-label", "阶数");
-    orderInput.setAttribute("aria-describedby", "fmx-manual-status");
-    orderLabel.append(orderInput);
+    orderInput.setAttribute("aria-describedby", "fmx-manual-status fmx-order-tip");
+    const orderTip = el("span", "fmx-clamp-tip");
+    orderTip.id = "fmx-order-tip";
+    orderTip.hidden = true;
+    orderLabel.append(orderInput, orderTip);
     determinantSize.append(orderLabel);
 
     sizeSection.append(matrixSize, determinantSize);
@@ -275,7 +345,8 @@
     nodes = {
       backdrop, dialog, title, close, manualButton, aiButtonTab,
       manualContent, aiContent, sizeLabel, matrixSize, determinantSize,
-      rowsInput, colsInput, orderInput, sizeHint, manualStatus, manualPreview, buildButton,
+      rowsInput, colsInput, orderInput, rowsTip, colsTip, orderTip,
+      sizeHint, manualStatus, manualPreview, buildButton,
       aiLabel, textarea, aiButton, aiHint, preview, actions, insertButton, retryButton
     };
 
@@ -298,7 +369,9 @@
     });
     buildButton.addEventListener("click", insertManual);
     [rowsInput, colsInput, orderInput].forEach(function (input) {
-      input.addEventListener("input", updateManualPreview);
+      input.addEventListener("input", function () {
+        handleSizeInput(input);
+      });
       input.addEventListener("change", function () {
         normalizeSizeInput(input);
         updateManualPreview();
@@ -442,6 +515,7 @@
   function setKind(kind) {
     state.kind = ENV_BY_KIND[kind] ? kind : "matrix";
     if (!nodes) return;
+    resetClampTips();
     const label = KIND_LABEL[state.kind];
     nodes.title.textContent = "插入" + label;
     nodes.dialog.setAttribute("aria-label", "插入" + label);
@@ -666,6 +740,7 @@
     if (!panel) return;
     state.openToken += 1;
     cancelRequest();
+    resetClampTips();
     panel.hidden = true;
     document.removeEventListener("keydown", onKeydown);
     const onClose = state.onClose;
@@ -683,6 +758,8 @@
     maxSize: MAX_SIZE,
     minSize: MIN_SIZE,
     parseSize: parseSize,
+    clampSizeValue: clampSizeValue,
+    sizeTip: SIZE_TIP,
     sizeError: sizeError
   };
 })();

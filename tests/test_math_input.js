@@ -180,6 +180,7 @@ function latexShape(latex) {
 
 check('panel maxSize exposed to MathLive', matrix.maxSize, 20);
 check('panel minSize', matrix.minSize, 1);
+check('size tip wording', matrix.sizeTip, '只能是1~20内的整数！');
 check('editor reads the same max size', api.matrixMaxSize(), 20);
 check('parse 7 columns', matrix.parseSize('7'), 7);
 check('parse 20 columns', matrix.parseSize('20'), 20);
@@ -189,9 +190,17 @@ check('reject 21', matrix.parseSize('21'), null);
 check('reject empty', matrix.parseSize(''), null);
 check('reject decimal', matrix.parseSize('7.5'), null);
 check('reject text', matrix.parseSize('abc'), null);
-check('21 gets an explicit range message',
+check('clamp 21 down to 20', matrix.clampSizeValue('21'), 20);
+check('clamp 0 up to 1', matrix.clampSizeValue('0'), 1);
+check('clamp negative up to 1', matrix.clampSizeValue('-3'), 1);
+check('keep 20 in range', matrix.clampSizeValue('20'), null);
+check('keep two-digit 10', matrix.clampSizeValue('10'), null);
+check('keep in-range decimal for integer validation', matrix.clampSizeValue('7.5'), null);
+check('empty is not clamped', matrix.clampSizeValue(''), null);
+check('text is not clamped', matrix.clampSizeValue('abc'), null);
+check('21 fallback message names the range',
   matrix.sizeError({value: '21'}, '行数'),
-  message => message.includes('1–20') && message.includes('不能插入'));
+  message => message.includes('1–20') && !message.includes('不能插入'));
 check('7.5 gets an integer message',
   matrix.sizeError({value: '7.5'}, '列数'),
   message => message.includes('整数'));

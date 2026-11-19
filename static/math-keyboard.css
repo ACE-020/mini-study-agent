@@ -638,9 +638,23 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
+  min-width: 0;
   color: var(--muted, #7c8293);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.fmx-clamp-tip {
+  max-width: 100%;
+  color: #b4392f;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.fmx-clamp-tip[hidden] {
+  display: none;
 }
 
 .fmx-number input {

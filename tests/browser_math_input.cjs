@@ -66,6 +66,26 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       await page.locator('.fmx-backdrop').waitFor({state: 'visible'});
     };
     const waitPanelClosed = () => page.waitForFunction(() => document.querySelector('.fmx-backdrop').hidden);
+    // 面板关闭与 MathLive → #draft 的写回不在同一帧：关闭后立刻读 #draft 可能还是空串。
+    // 只等面板 hidden 不够，回归测试要等目标内容真正落进 textarea 再断言。
+    const waitDraftContains = text => page.waitForFunction(needle => {
+      const node = document.querySelector('#draft');
+      return Boolean(node && node.value.includes(needle));
+    }, text);
+    const shapeOfLatex = latex => {
+      const body = String(latex || '')
+        .replace(/^\\begin\{[^}]+\}/, '')
+        .replace(/\\end\{[^}]+\}$/, '');
+      return body.split(/\\\\/).map(row => row.split('&').length);
+    };
+    const shapeOfDraft = text => page.evaluate(source => {
+      const parts = window.mathInputMode.parseDraft(source).filter(part => part.type === 'math');
+      if (!parts.length) return [];
+      const body = parts[0].value
+        .replace(/^\\begin\{[^}]+\}/, '')
+        .replace(/\\end\{[^}]+\}$/, '');
+      return body.split(/\\\\/).map(row => row.split('&').length);
+    }, text);
 
     /* 1. 首屏：默认上传页仍然显示渲染编辑，标题行唯一按钮是「查看原文」 */
     assert.equal(await field.evaluate(node => node.defaultMode), 'text');
@@ -328,6 +348,53 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal((determinantBody.match(/&/g) || []).length, 6);
     assert.equal((determinantBody.match(/\\\\/g) || []).length, 2);
 
+    /* 8b. 越界即时夹到 1–20；越界/小数等非法输入右侧红提示 3 秒后消失；关面板 / 重开不带出旧提示 */
+    await clearDraft();
+    await openMatrixPanel('matrix');
+    const rowsTip = page.locator('#fmx-rows-tip');
+    const rowsValue = () => page.locator('#fmx-rows').inputValue();
+    const sizeTipText = '只能是1~20内的整数！';
+    await page.locator('#fmx-cols').fill('2');
+    await page.locator('#fmx-rows').fill('25');
+    assert.equal(await rowsValue(), '20');
+    assert.equal(await rowsTip.innerText(), sizeTipText);
+    assert.equal(await rowsTip.isVisible(), true);
+    assert.equal(await page.locator('.fmx-manual-preview').getAttribute('aria-label'), '20 行 2 列矩阵预览');
+    await page.locator('#fmx-rows').fill('0');
+    assert.equal(await rowsValue(), '1');
+    assert.equal(await rowsTip.innerText(), sizeTipText);
+    // 范围内小数不夹取，仍要求整数，插入保持禁用；提示同样出现
+    await page.locator('#fmx-rows').evaluate((node, value) => {
+      node.value = value;
+      node.dispatchEvent(new Event('input', {bubbles: true}));
+    }, '7.5');
+    assert.equal(await rowsValue(), '7.5');
+    assert.equal(await rowsTip.innerText(), sizeTipText);
+    assert.match(await page.locator('.fmx-manual-status').innerText(), /整数/);
+    assert.equal(await page.locator('[data-fmx-content="manual"] .fmx-primary').isDisabled(), true);
+    // 留空允许继续输入，不夹成 1，也不显示非法提示
+    await page.locator('#fmx-rows').fill('');
+    assert.equal(await rowsValue(), '');
+    assert.equal(await rowsTip.isVisible(), false);
+    // 两位有效数原样保留
+    await page.locator('#fmx-rows').fill('10');
+    assert.equal(await rowsValue(), '10');
+    assert.equal(await rowsTip.isVisible(), false);
+    // 再次非法从新一次开始计时，3 秒后自动隐藏
+    await page.locator('#fmx-rows').fill('25');
+    assert.equal(await rowsTip.innerText(), sizeTipText);
+    await page.waitForFunction(() => document.querySelector('#fmx-rows-tip').hidden, null, {timeout: 4000});
+    // 关闭 / 重开不残留旧提示
+    await page.locator('#fmx-rows').fill('25');
+    assert.equal(await rowsTip.isVisible(), true);
+    await page.keyboard.press('Escape');
+    await waitPanelClosed();
+    await openMatrixPanel('matrix');
+    assert.equal(await page.locator('#fmx-rows-tip').isVisible(), false);
+    assert.equal(await page.locator('#fmx-rows-tip').innerText(), '');
+    await page.keyboard.press('Escape');
+    await waitPanelClosed();
+
     /* 9. 取消面板不改原稿、不丢光标 */
     await clearDraft();
     await setDraft('abc');
@@ -348,15 +415,23 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await page.locator('[data-fmx-content="ai"]').isVisible(), true);
     assert.equal(await page.locator('#fmx-ai-label').innerText(), '用一句话描述行列式');
     await page.locator('.fmx-textarea').fill('3 阶单位行列式');
+    const aiResponse = page.waitForResponse(response =>
+      response.url().endsWith('/api/formula/matrix') && response.request().method() === 'POST'
+    );
     await page.locator('[data-fmx-content="ai"] .fmx-row .fmx-primary').click();
+    const aiLatex = (await (await aiResponse).json()).latex;
     await page.waitForFunction(() => document.querySelector('.fmx-status').textContent.includes('已生成'));
     await page.locator('[data-fmx-content="ai"] .fmx-preview').waitFor({state: 'visible'});
     assert.ok(await page.locator('[data-fmx-content="ai"] .fmx-preview .katex').count() > 0);
     await page.locator('[data-fmx-content="ai"] .fmx-actions .fmx-primary').click();
     await waitPanelClosed();
+    // 关闭面板时 MathLive 的内容还要一帧才写回 #draft；这里等 vmatrix 真正出现再读。
+    await waitDraftContains('\\begin{vmatrix}');
     const aiDraft = await value();
     assert.ok(aiDraft.includes('\\begin{vmatrix}'), aiDraft);
     assert.equal(await mathCount(aiDraft), 1);
+    // 不只看 & 总数：逐行核对 AI 返回的实际形状（当前 fixture 为 3×3）。
+    assert.deepEqual(await shapeOfDraft(aiDraft), shapeOfLatex(aiLatex));
 
     /* 11. 快速切换 / 关闭后异步返回不串模式、不落旧结果 */
     await clearDraft();
@@ -408,6 +483,10 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await visibleKeyboard().waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await openMatrixPanel('matrix');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    // 夹取提示在窄屏也不能把面板 / 页面撑宽
+    await page.locator('#fmx-rows').fill('25');
+    assert.equal(await page.locator('#fmx-rows').inputValue(), '20');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.locator('[data-fmx-mode="ai"]').click();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
