@@ -315,6 +315,8 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.ok(await page.locator('.fmx-manual-preview .katex').count() > 0);
     await page.locator('[data-fmx-content="manual"] .fmx-primary').click();
     await waitPanelClosed();
+    // 手动插入与 AI 插入同一时序：面板 hidden 后 MathLive 还要一帧才写回 #draft。
+    await waitDraftContains('\\begin{pmatrix}');
     const matrixDraft = await value();
     assert.ok(matrixDraft.includes('\\begin{pmatrix}'), matrixDraft);
     const matrixBody = await page.evaluate(text => {
@@ -339,6 +341,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await page.locator('.fmx-manual-preview').getAttribute('aria-label'), '3 阶行列式预览');
     await page.locator('[data-fmx-content="manual"] .fmx-primary').click();
     await waitPanelClosed();
+    await waitDraftContains('\\begin{vmatrix}');
     const determinantDraft = await value();
     assert.ok(determinantDraft.includes('\\begin{vmatrix}'), determinantDraft);
     const determinantBody = await page.evaluate(text => {
