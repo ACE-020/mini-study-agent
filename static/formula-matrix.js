@@ -12,7 +12,11 @@
 
   const ENV_BY_KIND = { matrix: "pmatrix", determinant: "vmatrix" };
   const KIND_LABEL = { matrix: "矩阵", determinant: "行列式" };
-  const MAX_SIZE = 6;
+  // 面板与 MathLive 编辑器共用的保护上限：每维 20。
+  // MathLive 0.111.4 默认 maxMatrixCols=10，超过 10 列的矩阵在编辑区会被
+  // 折成多行而不是保留原形状；math-input-mode.js 读取 window.formulaMatrix.maxSize
+  // 把同一个值写进 <math-field>，两处不能各写一份。
+  const MAX_SIZE = 20;
   const MIN_SIZE = 1;
   const DEFAULT_SIZE = 2;
   // 模型调用可能卡住（网络、服务端排队）。超时就主动中断，
@@ -67,19 +71,44 @@
     return buildLatex(rows, cols, kind, "\\square", "\\square");
   }
 
-  function clampSize(value, fallback) {
-    const number = Number.parseInt(value, 10);
-    if (!Number.isFinite(number)) return fallback == null ? DEFAULT_SIZE : fallback;
-    return Math.min(MAX_SIZE, Math.max(MIN_SIZE, number));
+  function sizeText(input) {
+    return input ? String(input.value == null ? "" : input.value).trim() : "";
   }
 
-  function readSize(input, fallback) {
-    return clampSize(input ? input.value : "", fallback);
+  // 只接受 1–MAX_SIZE 的十进制整数。返回 null 表示这一格不能插入，
+  // 调用方必须把原因说出来，不能再静默取一个更小的值。
+  function parseSize(value) {
+    const text = String(value == null ? "" : value).trim();
+    if (!/^\d+$/.test(text)) return null;
+    const number = Number(text);
+    if (!Number.isInteger(number) || number < MIN_SIZE || number > MAX_SIZE) return null;
+    return number;
   }
 
-  function normalizeSizeInput(input, fallback) {
+  function sizeError(input, label) {
+    if (!input) return "请输入" + label + "。";
+    const raw = sizeText(input);
+    const range = MIN_SIZE + "–" + MAX_SIZE;
+    if (input.validity && input.validity.badInput) return label + "需为 " + range + " 的整数。";
+    if (!raw) return "请输入" + label + "（" + range + " 的整数）。";
+    if (!/^\d+$/.test(raw)) return label + "需为 " + range + " 的整数。";
+    const number = Number(raw);
+    if (number < MIN_SIZE || number > MAX_SIZE) {
+      return label + "需在 " + range + " 之间（当前 " + raw + "），不能插入。";
+    }
+    return "";
+  }
+
+  // 合法值只做「去掉前导 0」的规范化；不合法时保留用户输入，交给错误提示，
+  // 绝不把越界输入改成一个能插入的小数字。
+  function normalizeSizeInput(input) {
     if (!input) return;
-    input.value = String(readSize(input, fallback));
+    const size = parseSize(input.value);
+    if (size != null) input.value = String(size);
+  }
+
+  function sizeHintText(kind) {
+    return kind === "determinant" ? "阶数 1–20" : "行数和列数均为 1–20";
   }
 
   /* ---------- 面板构建 ---------- */
@@ -138,7 +167,9 @@
     rowsInput.max = String(MAX_SIZE);
     rowsInput.value = String(DEFAULT_SIZE);
     rowsInput.inputMode = "numeric";
+    rowsInput.step = "1";
     rowsInput.setAttribute("aria-label", "行数");
+    rowsInput.setAttribute("aria-describedby", "fmx-manual-status");
     rowsLabel.append(rowsInput);
     const times = el("span", "fmx-times", "×");
     const colsLabel = el("label", "fmx-number");
@@ -150,7 +181,9 @@
     colsInput.max = String(MAX_SIZE);
     colsInput.value = String(DEFAULT_SIZE);
     colsInput.inputMode = "numeric";
+    colsInput.step = "1";
     colsInput.setAttribute("aria-label", "列数");
+    colsInput.setAttribute("aria-describedby", "fmx-manual-status");
     colsLabel.append(colsInput);
     matrixSize.append(rowsLabel, times, colsLabel);
 
@@ -165,11 +198,24 @@
     orderInput.max = String(MAX_SIZE);
     orderInput.value = String(DEFAULT_SIZE);
     orderInput.inputMode = "numeric";
+    orderInput.step = "1";
     orderInput.setAttribute("aria-label", "阶数");
+    orderInput.setAttribute("aria-describedby", "fmx-manual-status");
     orderLabel.append(orderInput);
     determinantSize.append(orderLabel);
 
     sizeSection.append(matrixSize, determinantSize);
+
+    const sizeHint = el("div", "fmx-hint", sizeHintText(state.kind));
+    sizeSection.append(sizeHint);
+
+    // 手动区的错误提示单独一个节点。AI 区的 .fmx-status 有既有测试和配置提示，
+    // 不能把两条状态混在同一个节点里。
+    const manualStatus = el("div", "fmx-manual-status");
+    manualStatus.id = "fmx-manual-status";
+    manualStatus.setAttribute("role", "status");
+    manualStatus.setAttribute("aria-live", "polite");
+    manualStatus.hidden = true;
 
     const previewLabel = el("div", "fmx-label", "预览");
     const manualPreview = el("div", "fmx-preview fmx-manual-preview");
@@ -181,7 +227,7 @@
     buildButton.type = "button";
     manualActions.append(buildButton);
 
-    manualContent.append(sizeSection, previewLabel, manualPreview, manualActions);
+    manualContent.append(sizeSection, manualStatus, previewLabel, manualPreview, manualActions);
 
     /* AI 区 */
     const aiContent = el("div", "fmx-content");
@@ -229,7 +275,7 @@
     nodes = {
       backdrop, dialog, title, close, manualButton, aiButtonTab,
       manualContent, aiContent, sizeLabel, matrixSize, determinantSize,
-      rowsInput, colsInput, orderInput, manualPreview, buildButton,
+      rowsInput, colsInput, orderInput, sizeHint, manualStatus, manualPreview, buildButton,
       aiLabel, textarea, aiButton, aiHint, preview, actions, insertButton, retryButton
     };
 
@@ -254,7 +300,7 @@
     [rowsInput, colsInput, orderInput].forEach(function (input) {
       input.addEventListener("input", updateManualPreview);
       input.addEventListener("change", function () {
-        normalizeSizeInput(input, DEFAULT_SIZE);
+        normalizeSizeInput(input);
         updateManualPreview();
       });
     });
@@ -268,27 +314,98 @@
 
   /* ---------- 手动输入 ---------- */
 
-  function updateManualPreview() {
+  function manualSpec() {
+    if (!nodes) {
+      return {
+        ok: false, error: "", input: null, rows: null, cols: null,
+        rowsInvalid: false, colsInvalid: false, orderInvalid: false
+      };
+    }
+    if (state.kind === "determinant") {
+      const error = sizeError(nodes.orderInput, "阶数");
+      const order = error ? null : parseSize(nodes.orderInput.value);
+      return {
+        ok: !error,
+        error: error,
+        input: nodes.orderInput,
+        rows: order,
+        cols: order,
+        rowsInvalid: false,
+        colsInvalid: false,
+        orderInvalid: Boolean(error)
+      };
+    }
+    const rowsError = sizeError(nodes.rowsInput, "行数");
+    const colsError = sizeError(nodes.colsInput, "列数");
+    const error = rowsError || colsError;
+    return {
+      ok: !error,
+      error: error,
+      input: rowsError ? nodes.rowsInput : nodes.colsInput,
+      rows: rowsError ? null : parseSize(nodes.rowsInput.value),
+      cols: colsError ? null : parseSize(nodes.colsInput.value),
+      rowsInvalid: Boolean(rowsError),
+      colsInvalid: Boolean(colsError),
+      orderInvalid: false
+    };
+  }
+
+  function markInvalid(input, invalid) {
+    if (!input) return;
+    if (invalid) input.setAttribute("aria-invalid", "true");
+    else input.removeAttribute("aria-invalid");
+  }
+
+  function updateManualValidation(spec) {
     if (!nodes) return;
-    const rows = state.kind === "determinant" ? readSize(nodes.orderInput, DEFAULT_SIZE) : readSize(nodes.rowsInput, DEFAULT_SIZE);
-    const cols = state.kind === "determinant" ? rows : readSize(nodes.colsInput, DEFAULT_SIZE);
-    renderPreview(nodes.manualPreview, buildPreview(rows, cols, state.kind));
+    markInvalid(nodes.rowsInput, spec.rowsInvalid);
+    markInvalid(nodes.colsInput, spec.colsInvalid);
+    markInvalid(nodes.orderInput, spec.orderInvalid);
+    nodes.buildButton.disabled = !spec.ok;
+    const message = spec.ok ? "" : spec.error;
+    nodes.manualStatus.textContent = message;
+    nodes.manualStatus.hidden = !message;
+  }
+
+  function showPreviewMessage(node, message) {
+    if (!node) return;
+    node.replaceChildren();
+    node.append(el("span", "fmx-preview-note", message));
+  }
+
+  function updateManualPreview() {
+    if (!nodes) return null;
+    const spec = manualSpec();
+    updateManualValidation(spec);
+    if (!spec.ok) {
+      showPreviewMessage(nodes.manualPreview, spec.error);
+      nodes.manualPreview.setAttribute("aria-label", spec.error);
+      return spec;
+    }
+    renderPreview(nodes.manualPreview, buildPreview(spec.rows, spec.cols, state.kind));
     nodes.manualPreview.setAttribute(
       "aria-label",
-      state.kind === "determinant" ? rows + " 阶行列式预览" : rows + " 行 " + cols + " 列矩阵预览"
+      state.kind === "determinant" ? spec.rows + " 阶行列式预览" : spec.rows + " 行 " + spec.cols + " 列矩阵预览"
     );
+    return spec;
   }
 
   function insertManual() {
     if (!nodes || state.busy) return;
-    normalizeSizeInput(nodes.rowsInput, DEFAULT_SIZE);
-    normalizeSizeInput(nodes.colsInput, DEFAULT_SIZE);
-    normalizeSizeInput(nodes.orderInput, DEFAULT_SIZE);
-    const rows = state.kind === "determinant" ? readSize(nodes.orderInput, DEFAULT_SIZE) : readSize(nodes.rowsInput, DEFAULT_SIZE);
-    const cols = state.kind === "determinant" ? rows : readSize(nodes.colsInput, DEFAULT_SIZE);
+    normalizeSizeInput(nodes.rowsInput);
+    normalizeSizeInput(nodes.colsInput);
+    normalizeSizeInput(nodes.orderInput);
+    const spec = updateManualPreview();
+    if (!spec || !spec.ok) {
+      if (spec && spec.input) {
+        spec.input.focus({ preventScroll: true });
+        if (typeof spec.input.select === "function") spec.input.select();
+      }
+      return;
+    }
     apply({
-      text: buildLatex(rows, cols, state.kind, "$0", ""),
-      template: buildLatex(rows, cols, state.kind, "#@", "#?")
+      text: buildLatex(spec.rows, spec.cols, state.kind, "$0", ""),
+      template: buildLatex(spec.rows, spec.cols, state.kind, "#@", "#?")
     });
   }
 
@@ -332,6 +449,7 @@
     nodes.sizeLabel.hidden = state.kind !== "matrix";
     nodes.matrixSize.hidden = state.kind !== "matrix";
     nodes.determinantSize.hidden = state.kind !== "determinant";
+    nodes.sizeHint.textContent = sizeHintText(state.kind);
     nodes.aiLabel.textContent = "用一句话描述" + label;
     nodes.textarea.placeholder =
       state.kind === "matrix"
@@ -560,6 +678,11 @@
     open: open,
     close: closePanel,
     buildLatex: buildLatex,
-    buildPreview: buildPreview
+    buildPreview: buildPreview,
+    // 供 math-input-mode.js 设置 MathLive 的 maxMatrixCols，以及浏览器验收核对。
+    maxSize: MAX_SIZE,
+    minSize: MIN_SIZE,
+    parseSize: parseSize,
+    sizeError: sizeError
   };
 })();

@@ -16,6 +16,9 @@
   const MATHLIVE_FONTS = "/static/vendor/mathlive/fonts";
   const TOGGLES_STYLE = ".ML__menu-toggle,.ML__virtual-keyboard-toggle,.ML__toggles{display:none!important}";
   const DRAFT_MAX_LENGTH = 80000;
+  // formula-matrix.js 加载失败时的兜底；正常情况下读取它暴露的 maxSize，
+  // 让面板输入上限与 MathLive 的 maxMatrixCols 永远一致。
+  const MATRIX_MAX_SIZE_FALLBACK = 20;
   const VIEW_SOURCE = "source";
   const VIEW_RENDERED = "rendered";
 
@@ -679,6 +682,15 @@
     return null;
   }
 
+  // 与 formula-matrix.js 的面板上限共用一份数字。MathLive 0.111.4 默认
+  // maxMatrixCols=10：超过 10 列时 2×20 会被折成多行，看着像"插入成功"但形状变了。
+  // 这里在创建每个 <math-field> 时读取面板暴露的值；面板没加载时用同一个兜底 20。
+  function matrixMaxSize() {
+    const panel = window.formulaMatrix;
+    const value = panel && Number(panel.maxSize);
+    return Number.isInteger(value) && value > 0 ? value : MATRIX_MAX_SIZE_FALLBACK;
+  }
+
   function ensureMathliveScript() {
     // mathlive.min.js 已由 index.html defer 引入；极端情况下（被 CSP/缓存拦住）动态补一次。
     if (mathfieldClass() || state.scriptRequested) return;
@@ -829,12 +841,15 @@
   function createEditor(host, textarea, placeholder, defaultMode) {
     if (!host || !mathfieldClass()) return null;
     configureFonts();
+    const maxMatrixCols = matrixMaxSize();
     let mf = null;
     try {
       mf = document.createElement("math-field");
       // default-mode 必须在 append 前写入：MathLive 在 connectedCallback 里读属性建 model。
       // append 后再设置，空字段 getValue() 会变成幽灵 `$  $`，且 model.mode 停在 math。
       if (defaultMode === "text") mf.setAttribute("default-mode", "text");
+      // 与矩阵面板的上限同步；属性在 append 前写入，connectedCallback 建 model 时就能读到。
+      mf.setAttribute("max-matrix-cols", String(maxMatrixCols));
       mf.setAttribute("tabindex", "0");
       host.append(mf);
     } catch (error) {
@@ -847,6 +862,8 @@
       mf.mathVirtualKeyboardPolicy = "manual"; // 不弹它自带的虚拟键盘，用我们的符号键盘
       mf.smartMode = false;
       mf.smartFence = false;
+      // 属性路径在部分版本只影响静态 render；再走一次 setter（0.111.4 已确认可用）。
+      mf.maxMatrixCols = maxMatrixCols;
     } catch (error) {
       /* 属性名随版本变化时忽略 */
     }
@@ -1490,6 +1507,7 @@
     move: moveCursor,
     insertChip: insertChip,
     insertGlyph: insertGlyph,
+    matrixMaxSize: matrixMaxSize,
     // 提交前把渲染视图里的最新内容写回 textarea；原文视图下 #draft 才是权威，
     // 绝不能再用隐藏的 MathLive 字段覆盖用户刚改过的源文。
     flush: function () {

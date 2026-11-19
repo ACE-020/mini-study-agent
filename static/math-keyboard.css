@@ -571,6 +571,21 @@
   color: var(--muted, #7c8293);
 }
 
+.fmx-hint,
+.fmx-manual-status {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted, #7c8293);
+}
+
+.fmx-manual-status {
+  color: #b4392f;
+}
+
+.fmx-manual-status[hidden] {
+  display: none;
+}
+
 .fmx-seg {
   display: inline-flex;
   gap: 2px;
@@ -642,6 +657,11 @@
   font-size: 13px;
   color: inherit;
   background: var(--white, #fff);
+}
+
+.fmx-size input[aria-invalid="true"] {
+  border-color: #d9a19b;
+  background: #fff7f6;
 }
 
 .fmx-times {
@@ -740,18 +760,58 @@
 }
 
 .fmx-preview {
+  box-sizing: border-box;
   padding: 10px 12px;
   border: 1px dashed var(--line, #e8eaf1);
   border-radius: 8px;
   background: #fbfbfe;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   font-size: 15px;
+}
+
+/* 矩阵预览只保留 .fmx-preview 这一层横向滚动。
+   KaTeX 的 .katex-display 自己带 overflow-x:auto；矩阵最后一列的 .vlist-t2
+   固定 margin-right:-2px，会让它在放得下时也有 2px 假溢出（实测
+   clientWidth 188 / scrollWidth 190 / scrollLeft 2），于是式子下面出现一条
+   短滚动条。这里按 rich() 的修法取消内层滚动，外层只在真实超宽时滚动。 */
+.fmx-preview > .katex-display {
+  overflow: visible !important;
+  text-align: left;
+  margin: 0;
+  width: max-content;
+  max-width: none;
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.fmx-preview > .katex-display > .katex {
+  display: block;
+  width: max-content;
+  /* 吸收 vlist 尾部 2px 负边距，避免外层在恰好放下时也出现滚动条。 */
+  padding-right: 2px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.fmx-preview-note {
+  display: block;
+  margin: 0 auto;
+  color: var(--muted, #7c8293);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+  white-space: normal;
 }
 
 .fmx-manual-preview {
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* 不要在溢出时用居中把左端裁掉；放得下时由 .katex-display 的 auto margin 居中。 */
+  justify-content: flex-start;
   min-height: 74px;
 }
 

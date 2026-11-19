@@ -170,6 +170,49 @@ check('determinant preview uses vertical bars',
   matrix.buildPreview(3, 3, 'determinant'),
   '\\begin{vmatrix}\\square&\\square&\\square\\\\\\square&\\square&\\square\\\\\\square&\\square&\\square\\end{vmatrix}');
 
+// 10) 手动尺寸：1–20 才可插入；逐行核对形状，不能只看 & 总数
+function latexShape(latex) {
+  const body = String(latex)
+    .replace(/^\\begin\{[^}]+\}/, '')
+    .replace(/\\end\{[^}]+\}$/, '');
+  return body.split(/\\\\/).map(row => row.split('&').length);
+}
+
+check('panel maxSize exposed to MathLive', matrix.maxSize, 20);
+check('panel minSize', matrix.minSize, 1);
+check('editor reads the same max size', api.matrixMaxSize(), 20);
+check('parse 7 columns', matrix.parseSize('7'), 7);
+check('parse 20 columns', matrix.parseSize('20'), 20);
+check('parse 1 row', matrix.parseSize('1'), 1);
+check('reject 0', matrix.parseSize('0'), null);
+check('reject 21', matrix.parseSize('21'), null);
+check('reject empty', matrix.parseSize(''), null);
+check('reject decimal', matrix.parseSize('7.5'), null);
+check('reject text', matrix.parseSize('abc'), null);
+check('21 gets an explicit range message',
+  matrix.sizeError({value: '21'}, '行数'),
+  message => message.includes('1–20') && message.includes('不能插入'));
+check('7.5 gets an integer message',
+  matrix.sizeError({value: '7.5'}, '列数'),
+  message => message.includes('整数'));
+
+check('6x7 preview keeps every row', latexShape(matrix.buildPreview(6, 7, 'matrix')),
+  [7, 7, 7, 7, 7, 7]);
+check('7x6 source template keeps every row', latexShape(matrix.buildLatex(7, 6, 'matrix', '$0', '')),
+  [6, 6, 6, 6, 6, 6, 6]);
+check('7x7 determinant keeps every row', latexShape(matrix.buildLatex(7, 7, 'determinant', '$0', '')),
+  [7, 7, 7, 7, 7, 7, 7]);
+check('8x8 determinant keeps every row', latexShape(matrix.buildPreview(8, 8, 'determinant')),
+  [8, 8, 8, 8, 8, 8, 8, 8]);
+check('20x20 preview has 20 rows',
+  latexShape(matrix.buildPreview(20, 20, 'matrix')).length, 20);
+check('20x20 preview has 20 cells in every row',
+  latexShape(matrix.buildPreview(20, 20, 'matrix')).every(cells => cells === 20), true);
+check('20x20 editable template has 20 rows',
+  latexShape(matrix.buildLatex(20, 20, 'matrix', '#@', '#?')).length, 20);
+check('6x7 editable template starts with the caret cell',
+  matrix.buildLatex(6, 7, 'matrix', '#@', '#?').startsWith('\\begin{pmatrix}#@&#?&#?&#?&#?&#?&#?\\\\'), true);
+
 if (process.exitCode) {
   console.error('math input tests failed');
 } else {
