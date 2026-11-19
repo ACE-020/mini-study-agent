@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/static/app.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/workflow.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/math-keyboard.css?v=20261118-mathlive">
   <script defer src="/static/vendor/marked.umd.js"></script>
   <script defer src="/static/vendor/purify.min.js"></script>
   <script defer src="/static/vendor/katex/katex.min.js"></script>
@@ -19,6 +20,10 @@
   <script defer src="/static/chat-composer.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/chat-queue.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/exercise-math.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/math-keyboard.js?v=20261119-mathfix"></script>
+  <link rel="stylesheet" href="/static/vendor/mathlive/mathlive-fonts.css">
+  <script defer src="/static/vendor/mathlive/mathlive.min.js"></script>
+  <script defer src="/static/math-input-mode.js?v=20261119-mathfix"></script>
   <script defer src="/static/materials.js?v=20261026-review-focus-v20"></script>
   <link rel="stylesheet" href="/static/materials.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/notes.css?v=20261026-review-focus-v20">
@@ -40,6 +45,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/chat-composer.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/review-focus.css?v=20261026-review-focus-v20">
+  <link rel="stylesheet" href="/static/conversations.css?v=20261118-conversations">
 </head>
 <body>
   <svg class="icon-defs" aria-hidden="true"><defs>
@@ -72,21 +78,38 @@
         <div id="notice" class="notice" role="alert" hidden></div>
         <div id="config-banner" class="config-banner" hidden>尚未配置模型。点击右上角“模型设置”，填写 API Key 并保存即可使用，无需重启或重复输入命令。</div>
         <section id="view-organize" class="view">
-          <p id="intake-clear-help" class="helper">本页对话暂不保存历史；已收录的笔记和错题会保留。</p>
+          <p id="intake-clear-help" class="helper">对话会自动保存到「历史对话」；已收录的笔记和错题会保留。</p>
           <div id="source-summary" class="source-summary" hidden><div><strong id="source-summary-title">本次内容已保存</strong><p>可以继续讨论，或录入下一份内容。</p></div><div class="source-summary-actions"><button id="toggle-source" class="button quiet small" type="button">查看原稿</button><button id="new-mistake" class="button secondary small" type="button">添加下一份</button></div></div>
-          <div id="organize-workspace" class="workspace-grid">
+          <div id="organize-workspace" class="workspace-grid with-conversations">
+            <aside id="conversation-panel" class="panel conversation-panel" aria-label="历史对话">
+              <div class="conversation-head">
+                <h2>历史对话</h2>
+                <button id="new-conversation" class="button secondary small" type="button">＋ 新对话</button>
+              </div>
+              <ul id="conversation-list" class="conversation-list" role="list"></ul>
+              <p class="conversation-hint">切换对话不会中断正在处理的任务；旧对话会保留。</p>
+            </aside>
             <section id="source-panel" class="panel input-panel">
               <div class="panel-heading"><div><span class="step-label">原稿</span><h2>图片、笔记、错题，都放这里</h2></div></div>
               <div class="source-tabs" role="group" aria-label="录入方式"><button class="source-tab active" data-source="image" type="button">上传文件</button><button class="source-tab" data-source="text" type="button">直接输入文字</button></div>
+              <div class="input-mode-switch" role="group" aria-label="输入方式">
+                <button class="input-mode-button active" type="button" data-input-mode="text" aria-pressed="true">文字</button>
+                <button class="input-mode-button" type="button" data-input-mode="formula" aria-pressed="false">公式（可视化）</button>
+              </div>
               <div id="image-pane">
                 <label class="drop-zone" id="drop-zone" for="image-input" tabindex="0"><input id="image-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp" class="visually-hidden"><span id="upload-placeholder"><span class="upload-icon"><svg><use href="#i-image"/></svg></span><strong>拖入文件，或点击多选</strong><small>图片、PDF、TXT、Markdown</small></span></label>
                 <div id="input-files" class="file-queue" aria-label="待处理文件"></div>
+                <p id="intake-restored-hint" class="helper" role="status" hidden></p>
                 <div class="page-range-field"><label for="input-page-range">PDF 页码</label><input id="input-page-range" class="material-input" placeholder="全部，或 1-8、1,3,5-8" aria-label="添加内容的 PDF 页码范围"></div>
                 <button id="recognize-button" class="button secondary full" type="button" disabled>批量读取并填入文字</button><p class="helper">单个 PDF 最多 256 MB，每批 512 MB；每次读取最多 20 页。先预览找页码，再读取，笔记与错题无需提前分类。</p><div class="ocr-choice"><label>识别方式 <select data-ocr-backend aria-label="识别方式"><option value="remote">云端识图 · DeepSeek / 已配置服务</option><option value="local">GLM 本机识别 · 无识图 API 费用</option></select></label><span class="ocr-choice-feedback" role="status"></span></div><p class="helper" data-local-ocr-info></p>
                 <div id="ocr-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在批量读取…</span><button class="button stop-button small" type="button" data-stop-request>停止并编辑</button></div>
               </div>
               <div class="editor-heading"><label id="draft-label" for="draft">原稿文字与补充说明</label><button id="fill-example" class="text-button" type="button">填入示例</button></div>
               <textarea id="draft" maxlength="80000" rows="7" autocomplete="off" placeholder="粘贴笔记、题目和解题过程，也可上传文件读取。&#10;&#10;如果要记错题，请提供你的答案 / 步骤；参考答案如有可一起提供。"></textarea>
+              <div id="formula-pane" class="formula-pane" hidden>
+                <div id="formula-editor-host" class="formula-editor-host"></div>
+                <p class="formula-hint">点下方符号键插入；← → 在槽位间移动，↑ ↓ 在分子/分母、指数、积分上下限之间跳。发送时会自动转成 LaTeX。</p>
+              </div>
               <div class="editor-footer"><span>读取文字插入光标处，可继续修改。</span><span id="draft-count">0 / 80000</span></div>
               <button id="organize-submit" class="button primary full" type="button"><span>交给 AI 整理</span><svg><use href="#i-arrow"/></svg></button>
             </section>

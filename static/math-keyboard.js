@@ -1,0 +1,923 @@
+/* 数学符号键盘 · GeoGebra / Desmos 风格
+   通过 focusin 事件委托自动挂载到核心输入框，点击符号把 LaTeX 插入光标处。
+   约束：CSP script-src 'self'，本文件不使用 inline script / eval / CDN。 */
+(function () {
+  "use strict";
+
+  const FIELD_SELECTOR = "#draft, #organize-follow, #review-follow, #analysis-follow, #material-text, #batch-ai-input, #note-text, .queue-editor";
+  const AUTO_STORAGE_KEY = "math-keyboard:auto";
+  const PRESSED_MS = 140;
+  const HINT_MS = 1600;
+
+  /* ---------- 符号目录 ---------- */
+
+  // label：无 KaTeX 时的降级外观；insert：真正插入的文本，$0 是光标占位；aria：中文含义
+  function k(label, insert, aria, tex) {
+    return {
+      label: label,
+      insert: insert,
+      aria: aria,
+      title: insert,
+      tex: typeof tex === "string" ? tex : insert.replace(/\$0/g, "")
+    };
+  }
+
+  const CATALOG = [
+    {
+      id: "basic",
+      label: "常用",
+      full: "常用符号",
+      keys: [
+        k("+", "+", "加号", "+"),
+        k("−", "−", "减号", "-"),
+        k("×", "×", "乘号", "\\times"),
+        k("÷", "÷", "除号", "\\div"),
+        k("·", "·", "点乘", "\\cdot"),
+        k("=", "=", "等号", "="),
+        k("≠", "≠", "不等于", "\\neq"),
+        k("±", "±", "正负号", "\\pm"),
+        k("(", "(", "左圆括号", "("),
+        k(")", ")", "右圆括号", ")"),
+        k("[", "[", "左方括号", "["),
+        k("]", "]", "右方括号", "]"),
+        k("{", "\\{", "左花括号", "\\{"),
+        k("}", "\\}", "右花括号", "\\}"),
+        k("%", "\\%", "百分号", "\\%"),
+        k("°", "°", "度", "°"),
+        k("π", "π", "圆周率", "\\pi"),
+        k("∞", "∞", "无穷", "\\infty")
+      ]
+    },
+    {
+      id: "fraction",
+      label: "分式",
+      full: "分式与根式",
+      keys: [
+        k("a/b", "\\frac{$0}{}", "分式", "\\frac{a}{b}"),
+        k("a/b", "\\dfrac{$0}{}", "行内大分式", "\\dfrac{a}{b}"),
+        k("√", "\\sqrt{$0}", "平方根", "\\sqrt{a}"),
+        k("∛", "\\sqrt[3]{$0}", "三次根号", "\\sqrt[3]{a}"),
+        k("( )", "\\left($0\\right)", "自适应圆括号", "\\left(a\\right)"),
+        k("| |", "\\left|$0\\right|", "绝对值", "\\left|a\\right|"),
+        k("[ ]", "\\left[$0\\right]", "自适应方括号", "\\left[a\\right]"),
+        k("{ }", "{$0}", "花括号分组", "\\{\\}"),
+        k("a:b", "a:b", "比", "a:b")
+      ]
+    },
+    {
+      id: "script",
+      label: "上下标",
+      full: "上下标",
+      keys: [
+        k("x²", "x^2", "平方", "x^2"),
+        k("xⁿ", "x^n", "n 次幂", "x^n"),
+        k("x₁", "x_1", "下标 1", "x_1"),
+        k("xₙ", "x_n", "下标 n", "x_n"),
+        k("aᵇ", "a^{b}", "上标字母", "a^{b}"),
+        k("aᵦ", "a_{b}", "下标字母", "a_{b}"),
+        k("10ⁿ", "10^{n}", "10 的 n 次幂", "10^{n}"),
+        k("eˣ", "e^{x}", "e 的 x 次幂", "e^{x}"),
+        k("□ⁿ", "\\Box^{$0}", "空位上标", "\\Box^{n}")
+      ]
+    },
+    {
+      id: "relation",
+      label: "关系",
+      full: "关系与集合",
+      keys: [
+        k("≤", "≤", "小于等于", "\\leq"),
+        k("≥", "≥", "大于等于", "\\geq"),
+        k("<", "<", "小于", "<"),
+        k(">", ">", "大于", ">"),
+        k("≠", "≠", "不等于", "\\neq"),
+        k("≈", "≈", "约等于", "\\approx"),
+        k("≡", "≡", "恒等于", "\\equiv"),
+        k("≪", "≪", "远小于", "\\ll"),
+        k("≫", "≫", "远大于", "\\gg"),
+        k("∈", "∈", "属于", "\\in"),
+        k("∉", "∉", "不属于", "\\notin"),
+        k("⊂", "⊂", "真包含于", "\\subset"),
+        k("⊆", "⊆", "包含于", "\\subseteq"),
+        k("∪", "∪", "并集", "\\cup"),
+        k("∩", "∩", "交集", "\\cap"),
+        k("∅", "∅", "空集", "\\varnothing"),
+        k("∀", "∀", "任意", "\\forall"),
+        k("∃", "∃", "存在", "\\exists"),
+        k("∴", "∴", "所以", "\\therefore"),
+        k("∵", "∵", "因为", "\\because"),
+        k("⇒", "⇒", "推出", "\\Rightarrow"),
+        k("⇔", "⇔", "等价", "\\Leftrightarrow"),
+        k("→", "→", "趋于", "\\to")
+      ]
+    },
+    {
+      id: "greek",
+      label: "希腊",
+      full: "希腊字母",
+      keys: [
+        k("α", "α", "阿尔法", "\\alpha"),
+        k("β", "β", "贝塔", "\\beta"),
+        k("γ", "γ", "伽马", "\\gamma"),
+        k("δ", "δ", "德尔塔", "\\delta"),
+        k("ε", "ε", "伊普西龙", "\\varepsilon"),
+        k("θ", "θ", "西塔", "\\theta"),
+        k("λ", "λ", "拉姆达", "\\lambda"),
+        k("μ", "μ", "缪", "\\mu"),
+        k("ν", "ν", "纽", "\\nu"),
+        k("ξ", "ξ", "克西", "\\xi"),
+        k("π", "π", "派", "\\pi"),
+        k("ρ", "ρ", "柔", "\\rho"),
+        k("σ", "σ", "西格马", "\\sigma"),
+        k("τ", "τ", "陶", "\\tau"),
+        k("φ", "φ", "斐", "\\varphi"),
+        k("χ", "χ", "卡伊", "\\chi"),
+        k("ψ", "ψ", "普西", "\\psi"),
+        k("ω", "ω", "欧米伽", "\\omega"),
+        k("Δ", "Δ", "大写德尔塔", "\\Delta"),
+        k("Γ", "Γ", "大写伽马", "\\Gamma"),
+        k("Θ", "Θ", "大写西塔", "\\Theta"),
+        k("Λ", "Λ", "大写拉姆达", "\\Lambda"),
+        k("Π", "Π", "大写派", "\\Pi"),
+        k("Σ", "Σ", "大写西格马", "\\Sigma"),
+        k("Φ", "Φ", "大写斐", "\\Phi"),
+        k("Ψ", "Ψ", "大写普西", "\\Psi"),
+        k("Ω", "Ω", "大写欧米伽", "\\Omega")
+      ]
+    },
+    {
+      id: "calculus",
+      label: "微积分",
+      full: "函数与微积分",
+      keys: [
+        k("sin", "\\sin", "正弦", "\\sin"),
+        k("cos", "\\cos", "余弦", "\\cos"),
+        k("tan", "\\tan", "正切", "\\tan"),
+        k("ln", "\\ln", "自然对数", "\\ln"),
+        k("lg", "\\lg", "常用对数", "\\lg"),
+        k("log", "\\log_{$0}", "对数", "\\log_{a}"),
+        k("exp", "\\exp", "指数函数", "\\exp"),
+        k("lim", "\\lim_{x\\to $0}", "极限", "\\lim_{x\\to a}"),
+        k("d/dx", "\\frac{d}{dx}$0", "导数", "\\frac{d}{dx}"),
+        k("∫", "\\int $0\\,dx", "积分", "\\int\\,dx"),
+        k("∫ₐᵇ", "\\int_{$0}^{} $0\\,dx", "定积分", "\\int_{a}^{b}f(x)\\,dx"),
+        k("Σ", "\\sum_{$0}^{} $0", "求和", "\\sum_{i=1}^{n}"),
+        k("∏", "\\prod", "连乘", "\\prod"),
+        k("∂", "\\partial", "偏导", "\\partial"),
+        k("∇", "\\nabla", "梯度", "\\nabla"),
+        k("′", "'", "导数撇", "'"),
+        k("⁽ⁿ⁾", "^{(n)}", "n 阶导数", "^{(n)}")
+      ]
+    },
+    {
+      id: "geometry",
+      label: "矩阵",
+      full: "矩阵与几何",
+      keys: [
+        k("矩阵", "\\begin{pmatrix}$0&\\\\&\\\\\\end{pmatrix}", "2×2 矩阵", "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}"),
+        k("行列式", "\\begin{vmatrix}$0&\\\\&\\\\\\end{vmatrix}", "2×2 行列式", "\\begin{vmatrix}a&b\\\\c&d\\end{vmatrix}"),
+        k("向量", "\\vec{$0}", "向量", "\\vec{a}"),
+        k("上划线", "\\overline{$0}", "上划线", "\\overline{a}"),
+        k("∠", "\\angle $0", "角", "\\angle"),
+        k("△", "\\triangle $0", "三角形", "\\triangle"),
+        k("∥", "\\parallel", "平行", "\\parallel"),
+        k("⊥", "\\perp", "垂直", "\\perp"),
+        k("∽", "\\sim", "相似", "\\sim"),
+        k("≅", "\\cong", "全等", "\\cong"),
+        k("⊙", "\\circ", "圆", "\\circ")
+      ]
+    }
+  ];
+
+  /* ---------- 可视化公式模式用的 MathLive 模板 ----------
+     文字输入框里仍然插入原来的 LaTeX 文本（insert 不变）；
+     公式（可视化）模式下，结构性按键改为让 MathLive executeCommand(['insert', 模板])，
+     #@ 是要放光标的首个占位符、#? 是其它占位符。
+     mathGlyph 是纯符号键在公式模式里要插入的 LaTeX（默认取 label）。 */
+  const TEMPLATE_BY_INSERT = {
+    "\\frac{$0}{}": "\\frac{#@}{#?}",
+    "\\dfrac{$0}{}": "\\frac{#@}{#?}",
+    "\\sqrt{$0}": "\\sqrt{#@}",
+    "\\sqrt[3]{$0}": "\\sqrt[3]{#@}",
+    "\\left($0\\right)": "\\left(#@\\right)",
+    "\\left[$0\\right]": "\\left[#@\\right]",
+    "\\left|$0\\right|": "\\left|#@\\right|",
+    "x^2": "x^{2}#@",
+    "x^n": "x^{n}#@",
+    "x_1": "x_{1}#@",
+    "x_n": "x_{n}#@",
+    "a^{b}": "a^{b}#@",
+    "a_{b}": "a_{b}#@",
+    "10^{n}": "10^{n}#@",
+    "e^{x}": "e^{x}#@",
+    "\\lim_{x\\to $0}": "\\lim_{#?}{#@}",
+    "\\frac{d}{dx}$0": "\\frac{d}{dx}#@",
+    "\\int $0\\,dx": "\\int_{#?}^{#?}{#@}",
+    "\\int_{$0}^{} $0\\,dx": "\\int_{#?}^{#?}{#@}",
+    "\\sum_{$0}^{} $0": "\\sum_{#?}^{#?}{#@}",
+    "\\prod": "\\prod_{#?}^{#?}{#@}",
+    "\\begin{pmatrix}$0&\\\\&\\\\\\end{pmatrix}": "\\begin{pmatrix}#@&\\\\&\\\\\\end{pmatrix}",
+    // MathLive 没有 vmatrix 的键面结构，行列式沿用 pmatrix（报告里已说明）
+    "\\begin{vmatrix}$0&\\\\&\\\\\\end{vmatrix}": "\\begin{pmatrix}#@&\\\\&\\\\\\end{pmatrix}",
+    "\\vec{$0}": "\\vec{#@}",
+    "\\overline{$0}": "\\overline{#@}"
+  };
+
+  // 公式模式下纯符号键实际插入的 LaTeX（文字模式不受影响）
+  const MATH_GLYPH_BY_LABEL = {
+    "−": "-",
+    "×": "\\times",
+    "÷": "\\div",
+    "·": "\\cdot",
+    "≠": "\\neq",
+    "±": "\\pm",
+    "≤": "\\le",
+    "≥": "\\ge",
+    "≈": "\\approx",
+    "≡": "\\equiv",
+    "≪": "\\ll",
+    "≫": "\\gg",
+    "∈": "\\in",
+    "∉": "\\notin",
+    "⊂": "\\subset",
+    "⊆": "\\subseteq",
+    "∪": "\\cup",
+    "∩": "\\cap",
+    "∅": "\\varnothing",
+    "∀": "\\forall",
+    "∃": "\\exists",
+    "∴": "\\therefore",
+    "∵": "\\because",
+    "⇒": "\\Rightarrow",
+    "⇔": "\\Leftrightarrow",
+    "→": "\\to",
+    "°": "\\text{°}#@",
+    "π": "\\pi",
+    "∞": "\\infty",
+    "{": "\\{",
+    "}": "\\}",
+    "%": "\\%",
+    "α": "\\alpha",
+    "β": "\\beta",
+    "γ": "\\gamma",
+    "δ": "\\delta",
+    "ε": "\\varepsilon",
+    "θ": "\\theta",
+    "λ": "\\lambda",
+    "μ": "\\mu",
+    "ν": "\\nu",
+    "ξ": "\\xi",
+    "ρ": "\\rho",
+    "σ": "\\sigma",
+    "τ": "\\tau",
+    "φ": "\\varphi",
+    "χ": "\\chi",
+    "ψ": "\\psi",
+    "ω": "\\omega",
+    "Δ": "\\Delta",
+    "Γ": "\\Gamma",
+    "Θ": "\\Theta",
+    "Λ": "\\Lambda",
+    "Π": "\\Pi",
+    "Σ": "\\Sigma",
+    "Φ": "\\Phi",
+    "Ψ": "\\Psi",
+    "Ω": "\\Omega",
+    "□": "\\Box",
+    "sin": "\\sin",
+    "cos": "\\cos",
+    "tan": "\\tan",
+    "ln": "\\ln",
+    "lg": "\\lg",
+    "log": "\\log",
+    "exp": "\\exp",
+    "∂": "\\partial",
+    "∇": "\\nabla",
+    "′": "'",
+    "⁽ⁿ⁾": "^{(n)}",
+    "∠": "\\angle",
+    "△": "\\triangle",
+    "∥": "\\parallel",
+    "⊥": "\\perp",
+    "∽": "\\sim",
+    "≅": "\\cong",
+    "⊙": "\\circ",
+    "{ }": "\\{ \\}",
+    "a:b": "a:b"
+  };
+
+  // 公式模式里纯文本键要插入的「人类可读字符」（文字模式不受影响，默认取 label）
+  const GLYPH_BY_INSERT = {
+    "\\sin": "sin",
+    "\\cos": "cos",
+    "\\tan": "tan",
+    "\\ln": "ln",
+    "\\lg": "lg",
+    "\\log_{$0}": "log",
+    "\\exp": "exp",
+    "\\Box^{$0}": "□",
+    "^{(n)}": "⁽ⁿ⁾"
+  };
+
+  for (const category of CATALOG) {
+    for (const key of category.keys) {
+      key.glyph = GLYPH_BY_INSERT[key.insert] || key.label;
+      key.mathGlyph = Object.prototype.hasOwnProperty.call(MATH_GLYPH_BY_LABEL, key.glyph)
+        ? MATH_GLYPH_BY_LABEL[key.glyph]
+        : key.glyph;
+      if (Object.prototype.hasOwnProperty.call(TEMPLATE_BY_INSERT, key.insert)) {
+        key.chipTemplate = TEMPLATE_BY_INSERT[key.insert];
+      }
+    }
+  }
+
+  /* ---------- 实例管理 ---------- */
+
+  const instances = new WeakMap();
+  let openInstance = null;
+
+  function autoEnabled() {
+    try {
+      return window.localStorage.getItem(AUTO_STORAGE_KEY) !== "0";
+    } catch (error) {
+      return true;
+    }
+  }
+
+  function shouldSkip(field) {
+    if (!field || field.disabled || field.readOnly) return true;
+    if (field.dataset && field.dataset.mathKeyboard === "off") return true;
+    return false;
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (typeof text === "string") node.textContent = text;
+    return node;
+  }
+
+  function getInstance(field, kind) {
+    let instance = instances.get(field);
+    if (!instance) {
+      instance = createInstance(field, kind);
+      instances.set(field, instance);
+    }
+    return instance;
+  }
+
+  function createInstance(field, kind) {
+    const instanceKind = kind === "formula" ? "formula" : "text";
+    const panel = el("div", "mk-panel");
+    panel.hidden = true;
+    panel.setAttribute("data-mk-panel", "");
+    panel.setAttribute("role", "group");
+    panel.setAttribute("aria-label", "数学符号键盘");
+
+    const head = el("div", "mk-head");
+    const tabs = el("div", "mk-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "符号分类");
+
+    const closeButton = el("button", "mk-close", "×");
+    closeButton.type = "button";
+    closeButton.setAttribute("aria-label", "收起符号键盘");
+    closeButton.setAttribute("title", "收起（Esc）");
+
+    const grid = el("div", "mk-grid");
+    grid.setAttribute("role", "presentation");
+
+    const foot = el("div", "mk-foot");
+    const footTip = el("span", "", "点击符号插入到光标处 · Esc 收起");
+    const hint = el("span", "mk-hint");
+    hint.setAttribute("aria-live", "polite");
+    foot.append(footTip, hint);
+
+    head.append(tabs, closeButton);
+
+    // 方向键控制盘只给「公式编辑器」实例：◀ ▲ ▼ ▶ 移动槽位光标
+    let arrows = null;
+    if (instanceKind === "formula") {
+      arrows = el("div", "mk-arrows");
+      arrows.setAttribute("role", "group");
+      arrows.setAttribute("aria-label", "移动公式光标");
+      for (const item of [["left", "◀"], ["up", "▲"], ["down", "▼"], ["right", "▶"]]) {
+        const dir = item[0];
+        const arrow = el("button", "mk-arrow", item[1]);
+        arrow.type = "button";
+        arrow.dataset.mkMove = dir;
+        arrow.title = "移动光标到相邻槽位";
+        arrow.setAttribute("aria-label", "移动光标：" + dir);
+        arrow.addEventListener("pointerdown", preventFocusLoss);
+        arrow.addEventListener("mousedown", preventFocusLoss);
+        arrow.addEventListener("click", function (event) {
+          event.preventDefault();
+          moveCursor(dir, arrow, instance);
+        });
+        arrows.append(arrow);
+      }
+      arrows.append(el("span", "mk-arrows-label", "移动光标"));
+    }
+
+    panel.append(head);
+    if (arrows) panel.append(arrows);
+    panel.append(grid, foot);
+
+    const instance = {
+      kind: instanceKind,
+      field: field,
+      panel: panel,
+      tabs: tabs,
+      grid: grid,
+      hint: hint,
+      activeCat: CATALOG[0].id,
+      categoryButtons: Object.create(null),
+      tabButtons: Object.create(null),
+      hintTimer: null,
+      open: false
+    };
+
+    for (const category of CATALOG) {
+      const tab = el("button", "mk-tab", category.label);
+      tab.type = "button";
+      tab.setAttribute("role", "tab");
+      tab.dataset.mkCat = category.id;
+      tab.title = category.full;
+      tab.setAttribute("aria-label", category.full);
+      tab.setAttribute("aria-selected", category.id === instance.activeCat ? "true" : "false");
+      tab.tabIndex = category.id === instance.activeCat ? 0 : -1;
+      tab.addEventListener("mousedown", preventFocusLoss);
+      tab.addEventListener("pointerdown", preventFocusLoss);
+      tab.addEventListener("click", function (event) {
+        event.preventDefault();
+        activateCategory(instance, category.id);
+      });
+      tabs.append(tab);
+      instance.tabButtons[category.id] = tab;
+    }
+
+    // 收起按钮不阻止默认行为：焦点自然落到按钮上，收起后用户再次聚焦输入框即可重新展开。
+    closeButton.addEventListener("click", function (event) {
+      event.preventDefault();
+      close(instance);
+    });
+
+    // 放在文档流里：公式编辑器面板紧跟编辑器下方；在 form 内的输入框 → 面板跟着 form 之后；否则紧跟在输入框之后。
+    if (instanceKind === "formula") {
+      if (field.parentNode) field.parentNode.insertBefore(panel, field.nextSibling);
+      else document.body.append(panel);
+    } else {
+      const form = field.closest ? field.closest("form") : null;
+      const anchor = form || field;
+      if (anchor.parentNode) {
+        anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+      } else {
+        document.body.append(panel);
+      }
+    }
+
+    renderCategory(instance, instance.activeCat);
+    return instance;
+  }
+
+  function preventFocusLoss(event) {
+    event.preventDefault();
+  }
+
+  function activateCategory(instance, categoryId) {
+    if (!instance.tabButtons[categoryId]) return;
+    instance.activeCat = categoryId;
+    for (const id in instance.tabButtons) {
+      const selected = id === categoryId;
+      instance.tabButtons[id].setAttribute("aria-selected", selected ? "true" : "false");
+      instance.tabButtons[id].tabIndex = selected ? 0 : -1;
+    }
+    renderCategory(instance, categoryId);
+  }
+
+  function renderCategory(instance, categoryId) {
+    // 每个分类的按键只创建（只渲染 KaTeX）一次，切换时复用。
+    let buttons = instance.categoryButtons[categoryId];
+    if (!buttons) {
+      const category = CATALOG.filter(function (item) {
+        return item.id === categoryId;
+      })[0];
+      if (!category) return;
+      buttons = category.keys.map(function (key) {
+        return createKeyButton(instance, key);
+      });
+      instance.categoryButtons[categoryId] = buttons;
+    }
+    instance.grid.replaceChildren.apply(instance.grid, buttons);
+  }
+
+  // 用 KaTeX 渲染按键外观；渲染结果为空时（例如 % 被当成注释）退回 label 文本，避免出现空白键。
+  function renderKeyVisual(button, key) {
+    button.replaceChildren();
+    if (window.katex && typeof window.katex.render === "function") {
+      try {
+        window.katex.render(key.tex, button, { throwOnError: false, strict: false });
+      } catch (error) {
+        button.textContent = key.label;
+        return;
+      }
+      const html = button.querySelector(".katex-html");
+      const visibleText = html ? html.textContent.replace(/[\s\u200b\u2061]/g, "") : "";
+      const hasSvg = html ? Boolean(html.querySelector("svg")) : false;
+      if (!button.querySelector(".katex") || (visibleText === "" && !hasSvg)) {
+        button.textContent = key.label;
+      }
+      return;
+    }
+    button.textContent = key.label;
+  }
+
+  function createKeyButton(instance, key) {
+    const button = el("button", "mk-key");
+    button.type = "button";
+    button.title = key.title;
+    button.dataset.mkTex = key.insert;
+    button.dataset.mkAria = key.aria;
+    button.setAttribute("aria-label", key.aria);
+
+    renderKeyVisual(button, key);
+
+    button.addEventListener("pointerdown", preventFocusLoss);
+    button.addEventListener("mousedown", preventFocusLoss);
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      insertKey(instance, key, button);
+    });
+    return button;
+  }
+
+  /* ---------- 公式编辑器（可视化模式）调用 ---------- */
+
+  function formulaApi() {
+    return window.mathInputMode && typeof window.mathInputMode === "object" ? window.mathInputMode : null;
+  }
+
+  function insertIntoFormula(instance, key, button) {
+    const api = formulaApi();
+    flash(button);
+    if (!api) {
+      showHint(instance, "公式编辑器未就绪");
+      return;
+    }
+    const ok = key.chipTemplate
+      ? api.insertChip({ template: key.chipTemplate })
+      : api.insertGlyph(key.mathGlyph != null ? key.mathGlyph : key.label);
+    showHint(instance, ok ? "已插入" : "公式编辑器未就绪");
+  }
+
+  function moveCursor(dir, button, instance) {
+    const api = formulaApi();
+    flash(button);
+    if (!api) {
+      showHint(instance, "公式编辑器未就绪");
+      return;
+    }
+    showHint(instance, api.move(dir) ? "已移动光标" : "已到边界");
+  }
+
+  /* ---------- 插入逻辑 ---------- */
+
+  // 文字模式也要认得出已有公式的边界：光标在 $...$ / $$...$$ / \(...\) / \[...\]
+  // 或裸环境里时只插 LaTeX 源码，不再包一层 $，否则会出现 $$...$$ 套 $...$ 的坏草稿。
+  // 分段规则与公式模式的 parseMixed 共用，避免两套扫描器对价格/转义/块级公式判断不一致。
+  function mathRanges(source) {
+    const api = formulaApi();
+    if (!api || typeof api.parseDraft !== "function") return [];
+    return api.parseDraft(source).filter(function (part) {
+      return part.type === "math";
+    });
+  }
+
+  function isEscapedDollar(source, index) {
+    let count = 0;
+    for (let i = index - 1; i >= 0 && source[i] === "\\"; i -= 1) count += 1;
+    return count % 2 === 1;
+  }
+
+  // 文字里还有没被公式段包住的 $（价格、未闭合公式）时，新公式改用 \(...\)，
+  // 避免新插入的 $ 和这些字面 $ 配对，或拼出 $$。
+  function hasLiteralDollar(value) {
+    const ranges = mathRanges(value);
+    for (let i = 0; i < value.length; i += 1) {
+      if (value[i] !== "$" || isEscapedDollar(value, i)) continue;
+      const covered = ranges.some(function (range) { return i >= range.start && i < range.end; });
+      if (!covered) return true;
+    }
+    return false;
+  }
+
+  // 决定这次插入落点：要不要包定界符、替换哪一段、选中的文字如何变成公式内容。
+  function planInsertion(value, start, end) {
+    const ranges = mathRanges(value);
+    if (start !== end) {
+      const exact = ranges.filter(function (range) { return range.start === start && range.end === end; })[0];
+      if (exact) return { start: start, end: end, wrap: true, selected: exact.value, block: exact.block };
+      const inside = ranges.filter(function (range) { return start >= range.contentStart && end <= range.contentEnd; })[0];
+      if (inside) return { start: start, end: end, wrap: false, selected: value.slice(start, end), block: false };
+      const touched = ranges.filter(function (range) { return range.start < end && range.end > start; });
+      if (touched.length) {
+        const from = Math.min.apply(null, [start].concat(touched.map(function (range) { return range.start; })));
+        const to = Math.max.apply(null, [end].concat(touched.map(function (range) { return range.end; })));
+        let selected = value.slice(from, to);
+        for (const range of touched) {
+          if (range.raw && selected.indexOf(range.raw) >= 0) selected = selected.replace(range.raw, range.value);
+        }
+        return { start: from, end: to, wrap: true, selected: selected, block: touched.some(function (range) { return range.block; }) };
+      }
+      return { start: start, end: end, wrap: true, selected: value.slice(start, end), block: false };
+    }
+
+    // 光标在公式内部（含紧贴左/右定界符）时只插源码。
+    const inside = ranges.filter(function (range) { return start >= range.contentStart && start <= range.contentEnd; })[0];
+    if (inside) return { start: start, end: end, wrap: false, selected: "", block: false };
+    // 光标落在 $$ / \] 的第二个字符之间时，算在公式内部，插到内容末尾。
+    const closing = ranges.filter(function (range) { return start > range.contentEnd && start < range.end; })[0];
+    if (closing) return { start: closing.contentEnd, end: closing.contentEnd, wrap: false, selected: "", block: false };
+    const opening = ranges.filter(function (range) { return start > range.start && start < range.contentStart; })[0];
+    if (opening) return { start: opening.contentStart, end: opening.contentStart, wrap: false, selected: "", block: false };
+    // 紧贴在公式右侧 / 左侧：接着已有公式写，不另起一对 $，避免连续插入变成 $x$$y$。
+    const after = ranges.filter(function (range) { return start === range.end; })[0];
+    if (after) return { start: after.contentEnd, end: after.contentEnd, wrap: false, selected: "", block: false };
+    const before = ranges.filter(function (range) { return start === range.start; })[0];
+    if (before) return { start: before.contentStart, end: before.contentStart, wrap: false, selected: "", block: false };
+    return { start: start, end: end, wrap: true, selected: "", block: false };
+  }
+
+  function escapeMathText(value) {
+    const map = {
+      "\\": "\\textbackslash{}", "{": "\\{", "}": "\\}", "$": "\\$",
+      "%": "\\%", "_": "\\_", "^": "\\textasciicircum{}", "&": "\\&",
+      "#": "\\#", "~": "\\textasciitilde{}"
+    };
+    let out = "";
+    for (const ch of String(value == null ? "" : value)) {
+      if (ch === "\n" || ch === "\r" || ch === "\t") {
+        out += " ";
+        continue;
+      }
+      out += map[ch] != null ? map[ch] : ch;
+    }
+    return out;
+  }
+
+  // 选中的普通文字放进公式时用 \text{}，避免中文/换行/美元符号破坏公式结构。
+  function mathTextFragment(value) {
+    const text = String(value == null ? "" : value);
+    if (!text) return "";
+    if (/[\u3400-\u9fff\u3000-\u303f\uff01-\uff60\n\r]/.test(text) || text.indexOf("$") >= 0) {
+      return "\\text{" + escapeMathText(text) + "}";
+    }
+    return text;
+  }
+
+  function buildInsert(insert, selected) {
+    const parts = String(insert == null ? "" : insert).split("$0");
+    if (parts.length === 1) return { text: String(insert == null ? "" : insert), caret: String(insert == null ? "" : insert).length };
+    if (selected) {
+      const text = parts[0] + selected + parts.slice(1).join("");
+      return { text: text, caret: text.length };
+    }
+    const text = parts.join("");
+    return { text: text, caret: parts[0].length };
+  }
+
+  function insertKey(instance, key, button) {
+    if (instance.kind === "formula") {
+      insertIntoFormula(instance, key, button);
+      return;
+    }
+    insertTextAtCursor(instance, key.insert, button);
+  }
+
+  function insertTextAtCursor(instance, insert, button) {
+    const field = instance.field;
+    const value = field.value;
+    const rawStart = Math.min(field.selectionStart == null ? value.length : field.selectionStart, value.length);
+    const rawEnd = Math.min(Math.max(field.selectionEnd == null ? rawStart : field.selectionEnd, rawStart), value.length);
+    const plan = planInsertion(value, rawStart, rawEnd);
+    const selected = plan.wrap ? mathTextFragment(plan.selected) : plan.selected;
+    const built = buildInsert(insert, selected);
+    if (!built.text) {
+      showHint(instance, "没有可插入的内容");
+      return;
+    }
+
+    const block = plan.wrap && (plan.block || /\\begin\{/.test(String(insert || "")));
+    // 紧挨着普通文字里的字面 $（例如“价格 $5 到 $10”）时改用 \(...\) / \[...\]，
+    // 避免新公式的 $ 与价格里的 $ 配对或拼成 $$ 被误当成块级公式。
+    const nextToDollar = value.charAt(plan.start - 1) === "$" || value.charAt(plan.end) === "$" || hasLiteralDollar(value);
+    let open = "";
+    let close = "";
+    if (plan.wrap) {
+      if (block) {
+        open = nextToDollar ? "\\[" : "$$";
+        close = nextToDollar ? "\\]" : "$$";
+      } else {
+        open = nextToDollar ? "\\(" : "$";
+        close = nextToDollar ? "\\)" : "$";
+      }
+    }
+    const text = open + built.text + close;
+
+    const maxLength = field.maxLength;
+    const nextLength = value.length - (plan.end - plan.start) + text.length;
+    if (maxLength > 0 && nextLength > maxLength) {
+      showHint(instance, "已达字数上限");
+      return;
+    }
+
+    field.focus({ preventScroll: true });
+    field.setRangeText(text, plan.start, plan.end, "end");
+    const caretPos = Math.min(plan.start + open.length + built.caret, field.value.length);
+    try {
+      field.setSelectionRange(caretPos, caretPos);
+    } catch (error) {
+      /* 部分输入类型不支持 setSelectionRange，忽略 */
+    }
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+
+    flash(button);
+    showHint(instance, "已插入");
+  }
+
+  function flash(button) {
+    button.classList.add("is-pressed");
+    window.setTimeout(function () {
+      button.classList.remove("is-pressed");
+    }, PRESSED_MS);
+  }
+
+  function showHint(instance, message) {
+    instance.hint.textContent = message;
+    if (instance.hintTimer) window.clearTimeout(instance.hintTimer);
+    instance.hintTimer = window.setTimeout(function () {
+      instance.hint.textContent = "";
+      instance.hintTimer = null;
+    }, HINT_MS);
+  }
+
+  /* ---------- 展开 / 收起 ---------- */
+
+  function open(instance) {
+    if (openInstance && openInstance !== instance) close(openInstance);
+    instance.panel.hidden = false;
+    instance.panel.classList.add("is-open");
+    instance.open = true;
+    instance.openedAt = Date.now();
+    openInstance = instance;
+  }
+
+  function close(instance) {
+    instance.panel.hidden = true;
+    instance.panel.classList.remove("is-open");
+    instance.open = false;
+    if (openInstance === instance) openInstance = null;
+  }
+
+  /* ---------- 事件委托 ---------- */
+
+  // 面板绑定的「输入源」是否持有焦点：文字框是元素本身，公式编辑器是它的根容器
+  function instanceHasFocus(instance, active) {
+    if (!active) return false;
+    if (instance.kind === "formula") return instance.field.contains(active);
+    return active === instance.field;
+  }
+
+  // 焦点落到这些控件上时不要立刻收起面板：面板在文档流里，收起会让按钮在 mouseup
+  // 之前移动，浏览器就不再把这次点击算到按钮上（提交按钮最容易被吃掉）。
+  function keepsPanelUntilClick(target) {
+    if (!(target instanceof Element) || !target.closest) return false;
+    return Boolean(target.closest("button, a, label, input, textarea, select, summary, [role='button']"));
+  }
+
+  function focusInstanceField(instance) {
+    if (instance.kind === "formula") {
+      const api = formulaApi();
+      if (api && typeof api.focus === "function") api.focus();
+      return;
+    }
+    instance.field.focus({ preventScroll: true });
+  }
+
+  document.addEventListener("focusin", function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (openInstance && openInstance.panel.contains(target)) return;
+
+    // 焦点在可视化公式编辑器里：为这个编辑器单独建一个带方向键控制盘的面板
+    const formulaHost = target.closest ? target.closest(".formula-editor-host") : null;
+    if (formulaHost) {
+      if (!formulaApi()) return;
+      const instance = getInstance(formulaHost, "formula");
+      if (autoEnabled()) open(instance);
+      else if (openInstance && openInstance !== instance) close(openInstance);
+      return;
+    }
+
+    if (target.matches && target.matches(FIELD_SELECTOR)) {
+      if (shouldSkip(target)) {
+        if (openInstance && openInstance.field !== target) close(openInstance);
+        return;
+      }
+      const instance = getInstance(target);
+      if (autoEnabled()) open(instance);
+      else if (openInstance && openInstance !== target) close(openInstance);
+      return;
+    }
+
+    // 普通按钮/空白处获得焦点时收起文字输入框的面板；按钮/输入框留给 click 阶段，
+    // 否则面板收起造成的位移会让 mouseup 落到别的元素上，提交点击丢失。
+    if (openInstance && openInstance.kind !== "formula" && !keepsPanelUntilClick(target)) close(openInstance);
+  });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape" || !openInstance) return;
+    const active = document.activeElement;
+    if (!instanceHasFocus(openInstance, active) && !openInstance.panel.contains(active)) return;
+    const instance = openInstance;
+    close(instance);
+    if (instance.panel.contains(active)) focusInstanceField(instance);
+    event.preventDefault();
+  });
+
+  document.addEventListener("pointerdown", function (event) {
+    if (!openInstance) return;
+    // 公式编辑器面板不在这里收起（见 focusin / click 的说明）
+    if (openInstance.kind === "formula") return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (openInstance.panel.contains(target)) return;
+    // 输入方式 / ∑ 公式 按钮自己会管理面板，别在它们按下时抢先收起
+    if (target instanceof Element && target.closest && target.closest(".composer-formula-toggle, .input-mode-button")) return;
+    if (instanceHasFocus(openInstance, target)) return;
+    if (keepsPanelUntilClick(target)) return;
+    close(openInstance);
+  });
+
+  // 输入框 / 公式编辑器已经聚焦时再点一次（例如刚收起面板），也应重新展开。
+  document.addEventListener("click", function (event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const formulaHost = target.closest ? target.closest(".formula-editor-host") : null;
+    if (formulaHost) {
+      if (formulaApi() && autoEnabled()) open(getInstance(formulaHost, "formula"));
+      return;
+    }
+    if (target.matches(FIELD_SELECTOR) && !shouldSkip(target) && autoEnabled()) {
+      open(getInstance(target));
+      return;
+    }
+    // 文字输入框的面板：到 click 阶段才收起，保证按钮的 click 已经派发完成。
+    if (openInstance && openInstance.kind !== "formula" && !openInstance.panel.contains(target)) {
+      const justOpened = Date.now() - (openInstance.openedAt || 0) < 700;
+      if (!justOpened) close(openInstance);
+    }
+    // 公式编辑器面板：点击编辑器与面板之外的区域时收起（click 阶段，避免布局位移吃掉点击）
+    if (openInstance && openInstance.kind === "formula" && !openInstance.panel.contains(target)) {
+      // 输入方式 / 来源 tab / ∑ 按钮自己管理面板状态（切模式时会主动收起），不要再抢先关一次；
+      // 面板刚打开（如点 ∑ 按钮后表单被向下推、这次 click 落到表单外）时的同一次点击也不关。
+      const keepSelector = ".input-mode-button, [data-source], .composer-formula-toggle";
+      const justOpened = Date.now() - (openInstance.openedAt || 0) < 700;
+      if (!justOpened && !(target.closest && target.closest(keepSelector))) {
+        close(openInstance);
+      }
+    }
+  });
+
+  // 输入框被隐藏（切换页面、提交后 form 收起）时顺手收起面板，避免留下悬空面板。
+  document.addEventListener("focusout", function (event) {
+    const field = event.target;
+    if (!(field instanceof Element)) return;
+    const instance = instances.get(field);
+    if (!instance || !instance.open) return;
+    window.setTimeout(function () {
+      if (!instance.open) return;
+      const active = document.activeElement;
+      const insideField = instance.kind === "formula" ? Boolean(active && field.contains(active)) : active === field;
+      if (insideField || instance.panel.contains(active)) return;
+      if (field.offsetParent === null || !field.isConnected) close(instance);
+    }, 0);
+  });
+
+  // 从「公式」切回「文字」时，收起公式编辑器对应的键盘面板
+  window.addEventListener("math-input-mode-change", function (event) {
+    if (!openInstance || openInstance.kind !== "formula") return;
+    const mode = event && event.detail ? event.detail.mode : "";
+    if (mode === "formula") return;
+    close(openInstance);
+  });
+
+  // 供调试 / 自动化测试读取目录规模，不暴露任何写操作。
+  window.mathKeyboard = {
+    categories: CATALOG.map(function (category) {
+      return { id: category.id, label: category.label, count: category.keys.length };
+    }),
+    // 纯函数：只计算这次插入的落点和是否需要包定界符，便于自检。
+    planInsert: planInsertion,
+    version: "20261118-mathlive"
+  };
+})();

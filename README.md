@@ -24,6 +24,50 @@ python -m venv .venv
 
 当前源码为 v20，已通过 227 项检查。个人题库和笔记、Key、虚拟环境、本机模型权重、参考书、实验原稿与缓存均不随源码分发。GLM 本机识别需另行安装运行环境和权重，见 [本机 OCR 说明](LOCAL_OCR.md)；源码不包含旧 Windows exe 体验包。完整上手流程见 [网页指南](WEB_GUIDE.md)，开发接手见 [教学与上下文说明](TUTORING.md)。
 
+## 历史对话与并行处理（2026-11-18）
+
+「添加学习内容」页现在是多对话工作区，同一轮上传、整理与讨论属于同一个对话：
+
+- 左侧「历史对话」列出全部对话（标题取首条消息前 18 字，显示消息数与时间），「＋ 新对话」开始新一轮；切换对话会恢复该对话的**消息、原稿草稿与已上传原稿图**（`image_ids`）。对话保存在本机网页服务的内存里：**刷新网页仍在，重启本机服务后清空**（与资料后台任务同一生命周期）。
+- **不同对话可以并行处理**：A 对话正在等模型时，点「＋ 新对话」就能立刻上传/提交 B，A 在后台继续跑；完成后列表显示「已完成 · N 条消息」，切回即可查看结果。**同一对话**内仍一次只处理一轮，并发第二个请求返回 409「上一条请求还在处理中，请稍等。」。
+- 每个对话有独立的智能体上下文、上传原图、草稿文字与消息记录；「清空本次上传」只清当前对话的草稿与文件，其他对话不受影响。删除对话需要二次确认，处理中的对话不允许删除。
+- 后端新增 `/api/conversations` 系列接口（列表 / 新建 / 激活 / 详情 / 修改 / 删除）；`/api/chat` 与 `/api/intake/*` 接受可选的 `conversation_id`（仅 organize 视图生效，缺省回落最近使用的对话），接口定义已同步进 `openapi.json`。其余视图（笔记 / 复习 / 资料 / 跨库分析）行为不变。
+- 实现入口：`web.py`（会话模型、按对话隔离的锁 / 智能体 / 原图 / 消息）、`static/conversations.css`（三栏与窄屏横排）、`static/app.js`（对话状态、切换、草稿同步与并行）、`static/material-review.js`、`static/chat-queue.js`。
+
+| 截图 | 说明 |
+| --- | --- |
+| ![历史对话](docs/conversations/history-panel.png) | 三栏工作区：历史对话 / 原稿 / 讨论与整理 |
+| ![并行处理](docs/conversations/parallel-busy.png) | A 对话后台处理中，新建的 B 对话可以立刻输入提交 |
+| ![刷新恢复](docs/conversations/after-reload.png) | 刷新网页后对话列表与消息仍在 |
+
+已知边界：会话与消息只在服务运行期间保留，重启后清空；浏览器里的上传文件队列（File 对象）无法跨刷新恢复，刷新后只恢复原稿图片 id 并在文件区提示数量；「本次已保存内容」卡片只在前端缓存，刷新后不显示（已收录的笔记与错题本身仍在题库）。
+
+## 数学符号键盘与公式可视化输入（2026-11-18）
+
+输入区新增两层能力，互斥显示、切换不丢内容：
+
+**数学符号键盘**：聚焦核心输入框时自动展开，7 个分类共 114 个键（常用 / 分式 / 上下标 / 关系 / 希腊 / 微积分 / 矩阵），按键外观用 KaTeX 渲染，点击把 LaTeX 插入光标处；有选区时包裹选中内容；插入后派发 input 事件，字数、发送按钮与待发送队列同步。面板在文档流内、不遮挡按钮，Esc 或 × 收起；`data-math-keyboard="off"` 或 `localStorage['math-keyboard:auto']='0'` 可关闭自动展开。覆盖原稿输入框、三个对话补充框、练习资料补充说明与批量修正要求。
+
+**公式（可视化）输入模式**：原稿输入区在「上传文件 / 直接输入文字」下多一个 `文字 | 公式（可视化）` 切换（与上传区互斥，切换保留内容）。
+
+- 公式模式用 **MathLive 0.111.4**（自托管于 `static/vendor/mathlive/`，不加载外部 CDN）做真实 TeX 排版：分式上下叠放、根号钩子与横线相连、积分/求和上下限按 TeX 规则定位，不再用 HTML 盒子近似。
+- 符号键插入带占位符的结构模板（`\frac{#@}{#?}`、`\int_{#?}^{#?}{#@}` 等）；键盘面板上的 ◀ ▲ ▼ ▶ 在分子/分母、指数、积分上下限之间移动光标，物理方向键与 Tab 同样可用。
+- 编辑器与 `#draft` 双向同步：`#draft.value` 始终是「普通文字 + `$...$` LaTeX」，提交给模型的仍是标准 LaTeX；切回文字模式、填入示例、清空、OCR 写入都会同步；模型处理中（只读）会镜像到编辑器。
+- `文字` 模式的符号键盘行为保持不变（仍插入 LaTeX 源码文本），现有浏览器验收用例与提交链路不受影响。
+
+实现入口：`static/math-keyboard.js`、`static/math-keyboard.css`、`static/math-input-mode.js`、`static/vendor/mathlive/`；`static/app.js` 仅在 `updateDraft()` 末尾增加一行同步钩子。第三方许可（MathLive MIT、随附 KaTeX 字体 SIL OFL 1.1）见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+验收（本机 Chrome + Playwright，未调用真实模型）：公式模式 A–T 20/20 通过；分式结构几何实测 `.ML__mfrac` 39.48×56.63px、分数线 33.73×1px、根号钩子与横线间隙 0px、`lim` 与下标中心差 1.0px、渲染字体 `KaTeX_Main`、字体文件请求 200、编辑器无裁切；文字模式原有行为、光标/选区恢复、模式互斥、移动端 390×844 无横向溢出均通过；控制台 0 错误、0 CSP 违规。
+
+| 截图 | 说明 |
+| --- | --- |
+| ![数学符号键盘](docs/math-input/symbol-keyboard.png) | 聚焦原稿输入框时的符号键盘（文字模式） |
+| ![公式可视化输入](docs/math-input/formula-desmos-style.png) | 公式模式：`\lim` 下标居中、根号钩子连横线（MathLive TeX 排版） |
+| ![公式输入移动端](docs/math-input/formula-mobile.png) | 移动端 390×844 |
+| ![旧引擎与 MathLive 对比](docs/math-input/css-engine-vs-mathlive.png) | 同一公式：旧自研 CSS 引擎（左）与 MathLive（右） |
+
+已知边界：MathLive 是数学字段，公式模式直接输入中文会被当作数学字符（退出时按普通文字还原），大段中文原稿仍建议用文字模式；多行原稿进入公式模式时换行会归一化为空格；序列化可能出现 `\frac47` 这类 MathLive 短形式（合法 LaTeX，KaTeX 可渲染）；行列式键仍使用 `pmatrix` 模板。`static/math-field.js` / `static/math-field.css` 是上一版自研渲染引擎，已不再被任何页面引用，可在确认稳定后删除。
+
 ## 微信小程序接入
 
 小程序不是把网页套一层壳：浏览器会话、单用户目录、同步长请求这三件事都得换。仓库里已经补好这层外壳，核心 `agent.py` / `tools.py` / `llm.py` 未改动：
@@ -61,7 +105,7 @@ exe 的数据与加密配置位于 %LOCALAPPDATA%\ZhicuoStudy，可从启动窗�
 
 此 README 是项目接手入口，不需要依赖原来的聊天记录。继续开发时先读本节，再看 WEB_GUIDE.md（当前行为）、TUTORING.md（教学与选题约束）、NOTES.md（工具与笔记）、VALIDATION.md（验收和历史更新）。UI_LAYOUT.md 记录布局依据；SOURCE_AND_TAGS.md 解释原图输入、用量、分类与并排核对工作区。较早章节中的旧测试数量属于历史记录；当前完整检查为 227 项。
 
-当前是本机单用户版本：统一录入、错题本、笔记库、复习练习、练习资料；7 个模型工具；跨库勾选分析、待确认删除/合并、公式渲染、批量导出和 PDF 预览。历史对话尚未持久保存；“清空本次上传”位于固定顶栏，只在添加学习内容、练习资料页显示，按当前页清空临时内容，已收录内容与后台任务保留。数据是 JSON，检索是关键词匹配，没有向量库、多人账号隔离或掌握度更新。
+当前是本机单用户版本：统一录入、错题本、笔记库、复习练习、练习资料；7 个模型工具；跨库勾选分析、待确认删除/合并、公式渲染、批量导出和 PDF 预览。历史对话按对话隔离并支持并行处理，服务运行期间保留、重启后清空；“清空本次上传”位于固定顶栏，只在添加学习内容、练习资料页显示，按当前对话清空临时内容，已收录内容与后台任务保留。数据是 JSON，检索是关键词匹配，没有向量库、多人账号隔离或掌握度更新。
 
 ### 首次安装与启动
 
@@ -212,6 +256,10 @@ with StudyService(AppConfig(data_dir="tmp/data")) as service:
 | `material_jobs.py` | 会话隔离的后台整理队列、进度与停止 |
 | `document_input.py` | 多文件读取、PDF 页码范围、本地文字提取与扫描页 OCR |
 | `web.py`、`templates/`、`static/` | 网页入口、接口、页面布局与交互 |
+| `static/conversations.css`、`static/app.js` 中的对话状态 | 历史对话面板、切换恢复、按对话并行处理与草稿同步 |
+| `static/math-keyboard.js`、`static/math-keyboard.css` | 数学符号键盘：聚焦展开、符号插入、公式方向键控制盘 |
+| `static/math-input-mode.js` | 「公式（可视化）」模式：MathLive 编辑器与 `#draft` 双向同步、与上传区互斥 |
+| `static/vendor/mathlive/` | 自托管 MathLive 0.111.4 与 KaTeX 网页字体（真实 TeX 排版） |
 | `file_preview.py` | PDF 临时预览、按页渲染与会话隔离 |
 | `library_export.py` | 跨库所选内容的 Markdown/PDF/JSON 合集 |
 | `math_text.py` | 旧纯文字公式的显示与导出兼容 |

@@ -28,13 +28,14 @@ const imageFile={name:'fresh-page.png',mimeType:'image/png',buffer:Buffer.from('
   await page.locator('#material-text').fill('当前页资料');await page.locator('#material-source').fill('当前页来源');
   await page.locator('[data-view="organize"]').click();
   assert.equal(await page.locator('#draft').inputValue(),'当前页仍可继续编辑');
-  assert.equal(await page.locator('#image-preview').isVisible(),true);
-  await page.reload();await ready();
-  assert.equal(await page.locator('#draft').inputValue(),'');
+  assert.equal(await page.locator('#input-files .queued-file').count(),1);
+  assert.match(await page.locator('#input-files').innerText(),/fresh-page\.png/);
+  await page.waitForTimeout(1100);await page.reload();await ready();await page.waitForFunction(()=>document.querySelector('#draft').value==='当前页仍可继续编辑');
+  assert.equal(await page.locator('#draft').inputValue(),'当前页仍可继续编辑');
   assert.equal(await page.locator('#image-input').evaluate(node=>node.files.length),0);
   assert.equal(await page.locator('#material-text').inputValue(),'');
-  const reopened=await context.newPage();await reopened.goto(base);await ready(reopened);
-  assert.equal(await reopened.locator('#draft').inputValue(),'');await reopened.close();
+  const reopened=await context.newPage();await reopened.goto(base);await ready(reopened);await reopened.waitForFunction(()=>document.querySelector('#draft').value==='当前页仍可继续编辑');
+  assert.equal(await reopened.locator('#draft').inputValue(),'当前页仍可继续编辑');await reopened.close();
 
   // Suggested follow-ups appear after the assistant, on its left edge; never while processing.
   const chatBodies=[];let signalChatStarted;
@@ -85,6 +86,6 @@ const imageFile={name:'fresh-page.png',mimeType:'image/png',buffer:Buffer.from('
   assert.equal(await page.locator('#assistant-rules').evaluate(node=>node.open),false);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.deepEqual(errors,[]);
-  console.log('PASS: legacy draft cleanup, reload/reopen starts empty, current-page inputs retained, left-side suggestions after assistant, fixed rules close button, backdrop/Escape dismissal and mobile layout.');
+  console.log('PASS: legacy draft cleanup, reload/reopen restores the history draft, current-page inputs retained, left-side suggestions after assistant, fixed rules close button, backdrop/Escape dismissal and mobile layout.');
  }finally{releaseAnswer?.();await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
