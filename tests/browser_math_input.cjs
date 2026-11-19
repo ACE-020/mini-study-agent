@@ -230,6 +230,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await setSelection(8, 8);
     const currency = await value();
     assert.equal(await page.evaluate(text => window.mathInputMode.parseDraft(text).filter(part => part.type === 'math').length, currency), 0);
+    await chooseCategory('basic');
     await clickKey('加号');
     const currencyAfter = await value();
     assert.ok(currencyAfter.includes('\\('));
