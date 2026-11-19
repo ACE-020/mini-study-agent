@@ -431,6 +431,11 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await noConfig.locator('.mk-panel:visible').first().locator('[data-mk-dialog="matrix"]').click();
     await noConfig.locator('.fmx-backdrop').waitFor({state: 'visible'});
     await noConfig.locator('[data-fmx-mode="ai"]').click();
+    // 兼容 /api/status 在切 AI 前已到（手动区隐藏时告警）与切 AI 后才到两种顺序
+    await noConfig.waitForFunction(() => {
+      const node = document.querySelector('.fmx-status');
+      return Boolean(node && node.textContent.includes('未配置'));
+    });
     assert.equal(await noConfig.locator('.fmx-textarea').isDisabled(), true);
     assert.equal(await noConfig.locator('[data-fmx-content="ai"] .fmx-row .fmx-primary').isDisabled(), true);
     assert.match(await noConfig.locator('.fmx-status').innerText(), /未配置|需要模型/);

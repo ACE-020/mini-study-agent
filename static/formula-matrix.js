@@ -18,6 +18,7 @@
   // 模型调用可能卡住（网络、服务端排队）。超时就主动中断，
   // 否则按钮会永远停在「正在生成…」，用户只能刷新页面。
   const AI_TIMEOUT_MS = 25000;
+  const NO_CONFIG_STATUS = "自然语言生成需要模型，未配置时不可用";
 
   let panel = null;
   let nodes = null;
@@ -314,6 +315,9 @@
     state.mode = next;
     resetPreview();
     setStatus("");
+    // /api/status 可能已经先返回 false，此时告警是在手动区隐藏状态下设置的；
+    // 切到 AI 不能把它擦掉，否则只剩禁用输入框。数据晚到时仍由 loadConfigState 补。
+    if (next === "ai" && state.configured === false) setStatus(NO_CONFIG_STATUS, true);
     updateModeUi();
     if (next === "manual") updateManualPreview();
   }
@@ -490,7 +494,7 @@
         if (nodes.aiHint.classList.contains("is-error")) setStatus("");
       } else {
         nodes.textarea.placeholder = "未配置模型：请先在右上角「模型设置」保存 API Key";
-        setStatus("自然语言生成需要模型，未配置时不可用", true);
+        setStatus(NO_CONFIG_STATUS, true);
       }
     }
   }
