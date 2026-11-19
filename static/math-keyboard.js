@@ -40,9 +40,9 @@
         k(")", ")", "右圆括号", ")"),
         k("[", "[", "左方括号", "["),
         k("]", "]", "右方括号", "]"),
-        k("{", "{", "左花括号", "\\{"),
-        k("}", "}", "右花括号", "\\}"),
-        k("%", "%", "百分号", "\\%"),
+        k("{", "\\{", "左花括号", "\\{"),
+        k("}", "\\}", "右花括号", "\\}"),
+        k("%", "\\%", "百分号", "\\%"),
         k("°", "°", "度", "°"),
         k("π", "π", "圆周率", "\\pi"),
         k("∞", "∞", "无穷", "\\infty")
@@ -581,44 +581,158 @@
 
   /* ---------- 插入逻辑 ---------- */
 
+  // 文字模式也要认得出已有公式的边界：光标在 $...$ / $$...$$ / \(...\) / \[...\]
+  // 或裸环境里时只插 LaTeX 源码，不再包一层 $，否则会出现 $$...$$ 套 $...$ 的坏草稿。
+  // 分段规则与公式模式的 parseMixed 共用，避免两套扫描器对价格/转义/块级公式判断不一致。
+  function mathRanges(source) {
+    const api = formulaApi();
+    if (!api || typeof api.parseDraft !== "function") return [];
+    return api.parseDraft(source).filter(function (part) {
+      return part.type === "math";
+    });
+  }
+
+  function isEscapedDollar(source, index) {
+    let count = 0;
+    for (let i = index - 1; i >= 0 && source[i] === "\\"; i -= 1) count += 1;
+    return count % 2 === 1;
+  }
+
+  // 文字里还有没被公式段包住的 $（价格、未闭合公式）时，新公式改用 \(...\)，
+  // 避免新插入的 $ 和这些字面 $ 配对，或拼出 $$。
+  function hasLiteralDollar(value) {
+    const ranges = mathRanges(value);
+    for (let i = 0; i < value.length; i += 1) {
+      if (value[i] !== "$" || isEscapedDollar(value, i)) continue;
+      const covered = ranges.some(function (range) { return i >= range.start && i < range.end; });
+      if (!covered) return true;
+    }
+    return false;
+  }
+
+  // 决定这次插入落点：要不要包定界符、替换哪一段、选中的文字如何变成公式内容。
+  function planInsertion(value, start, end) {
+    const ranges = mathRanges(value);
+    if (start !== end) {
+      const exact = ranges.filter(function (range) { return range.start === start && range.end === end; })[0];
+      if (exact) return { start: start, end: end, wrap: true, selected: exact.value, block: exact.block };
+      const inside = ranges.filter(function (range) { return start >= range.contentStart && end <= range.contentEnd; })[0];
+      if (inside) return { start: start, end: end, wrap: false, selected: value.slice(start, end), block: false };
+      const touched = ranges.filter(function (range) { return range.start < end && range.end > start; });
+      if (touched.length) {
+        const from = Math.min.apply(null, [start].concat(touched.map(function (range) { return range.start; })));
+        const to = Math.max.apply(null, [end].concat(touched.map(function (range) { return range.end; })));
+        let selected = value.slice(from, to);
+        for (const range of touched) {
+          if (range.raw && selected.indexOf(range.raw) >= 0) selected = selected.replace(range.raw, range.value);
+        }
+        return { start: from, end: to, wrap: true, selected: selected, block: touched.some(function (range) { return range.block; }) };
+      }
+      return { start: start, end: end, wrap: true, selected: value.slice(start, end), block: false };
+    }
+
+    // 光标在公式内部（含紧贴左/右定界符）时只插源码。
+    const inside = ranges.filter(function (range) { return start >= range.contentStart && start <= range.contentEnd; })[0];
+    if (inside) return { start: start, end: end, wrap: false, selected: "", block: false };
+    // 光标落在 $$ / \] 的第二个字符之间时，算在公式内部，插到内容末尾。
+    const closing = ranges.filter(function (range) { return start > range.contentEnd && start < range.end; })[0];
+    if (closing) return { start: closing.contentEnd, end: closing.contentEnd, wrap: false, selected: "", block: false };
+    const opening = ranges.filter(function (range) { return start > range.start && start < range.contentStart; })[0];
+    if (opening) return { start: opening.contentStart, end: opening.contentStart, wrap: false, selected: "", block: false };
+    // 紧贴在公式右侧 / 左侧：接着已有公式写，不另起一对 $，避免连续插入变成 $x$$y$。
+    const after = ranges.filter(function (range) { return start === range.end; })[0];
+    if (after) return { start: after.contentEnd, end: after.contentEnd, wrap: false, selected: "", block: false };
+    const before = ranges.filter(function (range) { return start === range.start; })[0];
+    if (before) return { start: before.contentStart, end: before.contentStart, wrap: false, selected: "", block: false };
+    return { start: start, end: end, wrap: true, selected: "", block: false };
+  }
+
+  function escapeMathText(value) {
+    const map = {
+      "\\": "\\textbackslash{}", "{": "\\{", "}": "\\}", "$": "\\$",
+      "%": "\\%", "_": "\\_", "^": "\\textasciicircum{}", "&": "\\&",
+      "#": "\\#", "~": "\\textasciitilde{}"
+    };
+    let out = "";
+    for (const ch of String(value == null ? "" : value)) {
+      if (ch === "\n" || ch === "\r" || ch === "\t") {
+        out += " ";
+        continue;
+      }
+      out += map[ch] != null ? map[ch] : ch;
+    }
+    return out;
+  }
+
+  // 选中的普通文字放进公式时用 \text{}，避免中文/换行/美元符号破坏公式结构。
+  function mathTextFragment(value) {
+    const text = String(value == null ? "" : value);
+    if (!text) return "";
+    if (/[\u3400-\u9fff\u3000-\u303f\uff01-\uff60\n\r]/.test(text) || text.indexOf("$") >= 0) {
+      return "\\text{" + escapeMathText(text) + "}";
+    }
+    return text;
+  }
+
+  function buildInsert(insert, selected) {
+    const parts = String(insert == null ? "" : insert).split("$0");
+    if (parts.length === 1) return { text: String(insert == null ? "" : insert), caret: String(insert == null ? "" : insert).length };
+    if (selected) {
+      const text = parts[0] + selected + parts.slice(1).join("");
+      return { text: text, caret: text.length };
+    }
+    const text = parts.join("");
+    return { text: text, caret: parts[0].length };
+  }
+
   function insertKey(instance, key, button) {
     if (instance.kind === "formula") {
       insertIntoFormula(instance, key, button);
       return;
     }
+    insertTextAtCursor(instance, key.insert, button);
+  }
+
+  function insertTextAtCursor(instance, insert, button) {
     const field = instance.field;
     const value = field.value;
-    const start = Math.min(field.selectionStart == null ? value.length : field.selectionStart, value.length);
-    const end = Math.min(Math.max(field.selectionEnd == null ? start : field.selectionEnd, start), value.length);
-    const selected = value.slice(start, end);
-    const parts = key.insert.split("$0");
-    let text;
-    let caret;
-
-    if (parts.length === 1) {
-      // 没有光标占位：普通替换/插入
-      text = key.insert;
-      caret = start + text.length;
-    } else if (selected) {
-      // 有选区：把选中文字包进 $0 的位置，光标落到整段插入内容之后
-      text = parts[0] + selected + parts.slice(1).join("");
-      caret = start + text.length;
-    } else {
-      // 无选区：去掉占位符，光标放到第一个 $0 处
-      text = parts.join("");
-      caret = start + parts[0].length;
+    const rawStart = Math.min(field.selectionStart == null ? value.length : field.selectionStart, value.length);
+    const rawEnd = Math.min(Math.max(field.selectionEnd == null ? rawStart : field.selectionEnd, rawStart), value.length);
+    const plan = planInsertion(value, rawStart, rawEnd);
+    const selected = plan.wrap ? mathTextFragment(plan.selected) : plan.selected;
+    const built = buildInsert(insert, selected);
+    if (!built.text) {
+      showHint(instance, "没有可插入的内容");
+      return;
     }
 
+    const block = plan.wrap && (plan.block || /\\begin\{/.test(String(insert || "")));
+    // 紧挨着普通文字里的字面 $（例如“价格 $5 到 $10”）时改用 \(...\) / \[...\]，
+    // 避免新公式的 $ 与价格里的 $ 配对或拼成 $$ 被误当成块级公式。
+    const nextToDollar = value.charAt(plan.start - 1) === "$" || value.charAt(plan.end) === "$" || hasLiteralDollar(value);
+    let open = "";
+    let close = "";
+    if (plan.wrap) {
+      if (block) {
+        open = nextToDollar ? "\\[" : "$$";
+        close = nextToDollar ? "\\]" : "$$";
+      } else {
+        open = nextToDollar ? "\\(" : "$";
+        close = nextToDollar ? "\\)" : "$";
+      }
+    }
+    const text = open + built.text + close;
+
     const maxLength = field.maxLength;
-    const nextLength = value.length - (end - start) + text.length;
+    const nextLength = value.length - (plan.end - plan.start) + text.length;
     if (maxLength > 0 && nextLength > maxLength) {
       showHint(instance, "已达字数上限");
       return;
     }
 
     field.focus({ preventScroll: true });
-    field.setRangeText(text, start, end, "end");
-    const caretPos = Math.min(caret, field.value.length);
+    field.setRangeText(text, plan.start, plan.end, "end");
+    const caretPos = Math.min(plan.start + open.length + built.caret, field.value.length);
     try {
       field.setSelectionRange(caretPos, caretPos);
     } catch (error) {
@@ -673,6 +787,13 @@
     return active === instance.field;
   }
 
+  // 焦点落到这些控件上时不要立刻收起面板：面板在文档流里，收起会让按钮在 mouseup
+  // 之前移动，浏览器就不再把这次点击算到按钮上（提交按钮最容易被吃掉）。
+  function keepsPanelUntilClick(target) {
+    if (!(target instanceof Element) || !target.closest) return false;
+    return Boolean(target.closest("button, a, label, input, textarea, select, summary, [role='button']"));
+  }
+
   function focusInstanceField(instance) {
     if (instance.kind === "formula") {
       const api = formulaApi();
@@ -708,10 +829,9 @@
       return;
     }
 
-    // 普通按钮/空白处获得焦点时收起文字输入框的面板；
-    // 公式编辑器的面板改为在 click 阶段收起：它的面板高度变化会造成 scroll clamp，
-    // 如果在 pointerdown/focusin 阶段就收起，鼠标按住时页面会被滚走，点击落到别的元素上。
-    if (openInstance && openInstance.kind !== "formula") close(openInstance);
+    // 普通按钮/空白处获得焦点时收起文字输入框的面板；按钮/输入框留给 click 阶段，
+    // 否则面板收起造成的位移会让 mouseup 落到别的元素上，提交点击丢失。
+    if (openInstance && openInstance.kind !== "formula" && !keepsPanelUntilClick(target)) close(openInstance);
   });
 
   document.addEventListener("keydown", function (event) {
@@ -734,6 +854,7 @@
     // 输入方式 / ∑ 公式 按钮自己会管理面板，别在它们按下时抢先收起
     if (target instanceof Element && target.closest && target.closest(".composer-formula-toggle, .input-mode-button")) return;
     if (instanceHasFocus(openInstance, target)) return;
+    if (keepsPanelUntilClick(target)) return;
     close(openInstance);
   });
 
@@ -749,6 +870,11 @@
     if (target.matches(FIELD_SELECTOR) && !shouldSkip(target) && autoEnabled()) {
       open(getInstance(target));
       return;
+    }
+    // 文字输入框的面板：到 click 阶段才收起，保证按钮的 click 已经派发完成。
+    if (openInstance && openInstance.kind !== "formula" && !openInstance.panel.contains(target)) {
+      const justOpened = Date.now() - (openInstance.openedAt || 0) < 700;
+      if (!justOpened) close(openInstance);
     }
     // 公式编辑器面板：点击编辑器与面板之外的区域时收起（click 阶段，避免布局位移吃掉点击）
     if (openInstance && openInstance.kind === "formula" && !openInstance.panel.contains(target)) {
@@ -790,6 +916,8 @@
     categories: CATALOG.map(function (category) {
       return { id: category.id, label: category.label, count: category.keys.length };
     }),
+    // 纯函数：只计算这次插入的落点和是否需要包定界符，便于自检。
+    planInsert: planInsertion,
     version: "20261118-mathlive"
   };
 })();
