@@ -164,6 +164,12 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.ok(determinant.includes('\\end{vmatrix}$$bc'));
     assert.ok(!determinant.includes('$$$'));
 
+    /* 8b. 文字模式（公式编辑器隐藏）：flush 不得把隐藏编辑器的旧内容写回 #draft */
+    await draft.fill('文字模式草稿');
+    await field.evaluate(node => node.setValue('\\text{隐藏的旧公式}'));
+    assert.equal(await page.evaluate(() => window.mathInputMode.flush()), false);
+    assert.equal(await value(), '文字模式草稿');
+
     /* 9. 键盘展开时点击“交给 AI 整理”：点击不能因为面板收起而丢失 */
     await draft.fill('提交测试 $x^2$');
     await setSelection(0, 0);

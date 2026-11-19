@@ -661,6 +661,24 @@
     });
   }
 
+  // 只有真正显示在页面上的公式编辑器才是当前草稿的所有者。隐藏的编辑器只是打开时
+  // 的缓存：其他脚本（建议填入、清空、排队发送）直接改 textarea 时，旧编辑器内容
+  // 绝不能在提交阶段反过来覆盖新文字。
+  function isShown(node) {
+    for (let el = node; el; el = el.parentElement) {
+      if (el.hidden) return false;
+    }
+    return true;
+  }
+
+  function mainEditorShown() {
+    return state.mode === "formula" && Boolean(state.field) && isShown(formulaPane);
+  }
+
+  function followEditorShown(entry) {
+    return Boolean(entry && entry.field) && isShown(entry.pane) && isShown(entry.form);
+  }
+
   /* ---------- 主输入区 ---------- */
 
   function initMainField() {
@@ -1024,9 +1042,10 @@
     move: moveCursor,
     insertChip: insertChip,
     insertGlyph: insertGlyph,
-    // 提交前把编辑器里的最新内容写回 textarea（也供表单/自动化调用）
+    // 提交前把可见编辑器里的最新内容写回 textarea（也供表单/自动化调用）；
+    // 隐藏的编辑器没有所有权，返回 false，避免旧公式覆盖外部刚写入的文字。
     flush: function () {
-      if (!state.field) return false;
+      if (!mainEditorShown()) return false;
       commitEditorValue(state.field, draft);
       return true;
     },
@@ -1042,12 +1061,13 @@
 
   // 正常提交入口：app.js 的 submitOriginalIntake / 补充表单直接读 textarea.value。
   // 在按钮 click 与表单 submit 的捕获阶段先 flush，避免公式模式下最后一次输入尚未写回。
+  // 只 flush 当前可见的公式编辑器：隐藏的编辑器可能停留在旧内容上，不能在提交时覆盖 textarea。
   function bindSubmitSync() {
     document.addEventListener("click", function (event) {
       const target = event.target;
       if (!(target instanceof Element) || !target.closest) return;
       if (!target.closest("#organize-submit")) return;
-      if (state.mode === "formula" && state.field) commitEditorValue(state.field, draft);
+      if (mainEditorShown()) commitEditorValue(state.field, draft);
     }, true);
     document.addEventListener("submit", function (event) {
       const form = event.target;
@@ -1055,7 +1075,7 @@
       const entry = state.entries.find(function (item) {
         return item.form === form;
       });
-      if (entry) commitEditorValue(entry.field, entry.textarea);
+      if (entry && followEditorShown(entry)) commitEditorValue(entry.field, entry.textarea);
     }, true);
   }
 
