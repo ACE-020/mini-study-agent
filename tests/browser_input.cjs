@@ -26,15 +26,21 @@ const imageFile = {name:'cursor.png',mimeType:'image/png',buffer:Buffer.from('iV
   assert.equal(await page.locator('#image-pane').isVisible(),false);
   assert.deepEqual(await editor.evaluate(node=>[node.selectionStart,node.selectionEnd]),[4,4]);
   await page.locator('[data-source="image"]').click();
-  await page.locator('#image-input').setInputFiles(imageFile);
+  let imageSeq=1;
+  async function pickImage(){
+   imageSeq+=1;
+   await page.locator('#image-input').setInputFiles({...imageFile,name:`cursor-${imageSeq}.png`});
+  }
+  await pickImage();
   let result='识别题目\n第二行';
-  await page.route('**/api/ocr',async route=>{await new Promise(resolve=>setTimeout(resolve,100));await route.fulfill({json:{ok:true,text:result}});});
-  async function recognize(){
-   const done=page.waitForResponse(response=>response.url().endsWith('/api/ocr'));
+  await page.route('**/api/intake/read',async route=>{await new Promise(resolve=>setTimeout(resolve,100));await route.fulfill({json:{ok:true,text:result,image_ids:['route-image'],pages:[{page:1}]}});});
+  async function recognize(newFile=true){
+   if(newFile)await pickImage();
+   const done=page.waitForResponse(response=>response.url().endsWith('/api/intake/read'));
    await page.locator('#recognize-button').click();await done;
    await page.waitForFunction(()=>!state.busy);
   }
-  await recognize();
+  await recognize(false);
   assert.equal(await editor.inputValue(),'前文🙂识别题目\n第二行后文');
   assert.deepEqual(await editor.evaluate(node=>[node.selectionStart,node.selectionEnd]),[4+result.length,4+result.length]);
   assert.equal(await page.locator('#image-pane').isVisible(),true);
@@ -48,18 +54,18 @@ const imageFile = {name:'cursor.png',mimeType:'image/png',buffer:Buffer.from('iV
   await editor.evaluate(node=>{node.focus();node.setSelectionRange(0,2);node.dispatchEvent(new Event('select'));});
   result='替换前文';await recognize();
   assert.equal(await editor.inputValue(),'替换前文🙂识别题目\n第二行追加后文');
-  // Reject oversized insertion without silently truncating or erasing the draft.
-  await editor.fill('甲'.repeat(23999));
+  // Reject oversized insertion without silently truncating or erasing the draft (limit is 80000).
+  const nearLimit='甲'.repeat(79999);await editor.fill(nearLimit);
   result='超过长度';await recognize();
-  assert.equal((await editor.inputValue()).length,23999);
-  assert.match(await page.locator('#notice').innerText(),/超过.*长度/);
+  assert.equal((await editor.inputValue()).length,79999);
+  assert.match(await page.locator('#notice').innerText(),/超过 80000 字/);
   // History keeps the draft across reload; the image field is still empty, so clear it and check a new insertion starts at the beginning.
   await editor.fill('恢复后的草稿');await page.waitForTimeout(1100);await page.reload();
   await page.waitForFunction(()=>document.querySelector('#model-status').textContent.includes('已配置')&&document.querySelector('#draft').value==='恢复后的草稿');
   await editor.fill('');
-  await page.locator('#image-input').setInputFiles(imageFile);
+  await pickImage();
   assert.equal(await editor.inputValue(),'');
-  result='新识别';await recognize();assert.equal(await editor.inputValue(),'新识别');
+  result='新识别';await recognize(false);assert.equal(await editor.inputValue(),'新识别');
   // Mobile uses the same editor and does not overflow when toggling modes.
   await page.setViewportSize({width:390,height:844});
   await page.locator('[data-source="text"]').click();assert.equal(await page.locator('#image-pane').isVisible(),false);

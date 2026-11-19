@@ -28,7 +28,8 @@ const imageFile={name:'fresh-page.png',mimeType:'image/png',buffer:Buffer.from('
   await page.locator('#material-text').fill('当前页资料');await page.locator('#material-source').fill('当前页来源');
   await page.locator('[data-view="organize"]').click();
   assert.equal(await page.locator('#draft').inputValue(),'当前页仍可继续编辑');
-  assert.equal(await page.locator('#image-preview').isVisible(),true);
+  assert.equal(await page.locator('#input-files .queued-file').count(),1);
+  assert.match(await page.locator('#input-files').innerText(),/fresh-page\.png/);
   await page.waitForTimeout(1100);await page.reload();await ready();await page.waitForFunction(()=>document.querySelector('#draft').value==='当前页仍可继续编辑');
   assert.equal(await page.locator('#draft').inputValue(),'当前页仍可继续编辑');
   assert.equal(await page.locator('#image-input').evaluate(node=>node.files.length),0);
