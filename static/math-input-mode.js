@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261119-draft-view";
+  const VERSION = "20261120-cursor-parity";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -1058,14 +1058,31 @@
 
   /* ---------- 光标 / 插入（供符号键盘调用） ---------- */
 
+  // 与 MathLive 实体方向键使用同一组命令：实体键的 ArrowLeft/Right 走
+  // moveToPreviousChar / moveToNextChar（逐字符、可跨矩阵格），而不是占位符跳转。
+  // 这样屏幕按钮和手机触控按钮都不会再停在「已填格」里不动。
   const MOVE_COMMANDS = {
-    left: "moveToPreviousPlaceholder",
-    right: "moveToNextPlaceholder",
+    left: "moveToPreviousChar",
+    right: "moveToNextChar",
     up: "moveUp",
     down: "moveDown"
   };
 
+  // 只认真正持有焦点的 <math-field>；符号面板虽然也在 .formula-editor-host 里，
+  // 但面板按钮获得焦点时不能把实体 Up/Down 抢去移动公式光标。
+  function resolveFocusedEditor() {
+    const active = document.activeElement;
+    if (!active) return null;
+    if (state.field && active === state.field) return state.field;
+    for (const entry of state.entries) {
+      if (active === entry.field) return entry.field;
+    }
+    return null;
+  }
+
   function resolveEditor() {
+    const focused = resolveFocusedEditor();
+    if (focused) return focused;
     const active = document.activeElement;
     if (active && active.closest) {
       const host = active.closest(".formula-editor-host");
@@ -1152,20 +1169,109 @@
     return base;
   }
 
-  function moveCursor(dir) {
-    const mf = resolveEditor();
-    if (!mf || !MOVE_COMMANDS[dir]) return false;
-    focusEditor(mf);
-    let moved = false;
+  function modelFor(mf) {
     try {
-      moved = mf.executeCommand(MOVE_COMMANDS[dir]) !== false;
+      const internal = mf && mf._mathfield;
+      return internal && internal.model ? internal.model : null;
     } catch (error) {
-      moved = false;
+      return null;
+    }
+  }
+
+  function positionOf(mf) {
+    try {
+      return typeof mf.position === "number" ? mf.position : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // MathLive 0.111.4 的 position 指向光标前的 atom；getBranchRange 返回
+  // [首 atom, 末 atom] 的偏移，末 atom 的位置就是界尾。只在这里做一次 try/fallback。
+  function branchRange(model, atom, name) {
+    try {
+      if (!atom.branch(name)) return null;
+      const range = model.getBranchRange(model.offsetOf(atom), name);
+      return Array.isArray(range) ? range : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  // moveUp / moveDown 只处理 above/below 和矩阵行，不会在积分、求和的上下界之间
+  // 切换。这里只补：下界按上 → 上界，上界按下 → 下界；两个界都必须已存在，
+  // 不凭空创建缺失的界。屏幕按钮和实体键共用同一函数。
+  function moveAcrossBounds(mf, dir) {
+    if (dir !== "up" && dir !== "down") return false;
+    const model = modelFor(mf);
+    if (!model) return false;
+    const position = positionOf(mf);
+    if (position === null) return false;
+    let atom = null;
+    try {
+      atom = model.at(position);
+    } catch (error) {
+      return false;
+    }
+    const branch = atom && atom.parentBranch;
+    if (branch !== "superscript" && branch !== "subscript") return false;
+    const targetName = dir === "up" ? "superscript" : "subscript";
+    if (branch === targetName) return false;
+    const parent = atom.parent;
+    if (!parent) return false;
+    const current = branchRange(model, parent, branch);
+    const target = branchRange(model, parent, targetName);
+    if (!current || !target) return false;
+    // 同界内保留字符偏移；目标界更短时贴到界尾。
+    const offset = Math.max(0, position - current[0]);
+    const next = Math.min(target[0] + offset, target[1]);
+    try {
+      model.position = next;
+      if (model.mathfield && typeof model.mathfield.stopCoalescingUndo === "function") {
+        model.mathfield.stopCoalescingUndo();
+      }
+      if (typeof model.announce === "function") model.announce("move");
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function moveCursor(dir, mf) {
+    const target = mf || resolveEditor();
+    if (!target || !MOVE_COMMANDS[dir]) return false;
+    focusEditor(target);
+    // executeCommand 在「没有可移动目标」时也可能返回 true（例如 moveUp 在行首
+    // 只广播 move-out），所以移动成功与否必须比较真实光标位置，不能只看返回值。
+    const before = positionOf(target);
+    try {
+      target.executeCommand(MOVE_COMMANDS[dir]);
+    } catch (error) {
+      /* 命令不可用时仍尝试下面的上下界补齐 */
+    }
+    let after = positionOf(target);
+    if (after === before && (dir === "up" || dir === "down")) {
+      if (moveAcrossBounds(target, dir)) after = positionOf(target);
     }
     // MathLive 在「不能再移动」时会按浏览器的焦点顺序把焦点移出编辑器（会跳到上一个按钮），
     // 这里把焦点拉回公式编辑器，避免点方向键后突然跳到别处。
-    if (!mf.contains(document.activeElement)) focusEditor(mf);
-    return moved;
+    if (!target.contains(document.activeElement)) focusEditor(target);
+    return typeof before === "number" && typeof after === "number" ? after !== before : false;
+  }
+
+  // 桌面实体 Up/Down 也走 moveCursor：屏幕按钮（桌面 / 手机网页）与实体键盘
+  // 共用同一条移位 + 上下界补齐逻辑，避免 MathLive 原生行为与屏幕按钮不一致。
+  // Shift/Ctrl/Alt/Meta 组合留给 MathLive 的选区扩展等原生快捷键。
+  function bindPhysicalArrows() {
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      if (event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+      const mf = resolveFocusedEditor();
+      if (!mf) return;
+      event.preventDefault();
+      event.stopPropagation();
+      moveCursor(event.key === "ArrowUp" ? "up" : "down", mf);
+    }, true);
   }
 
   function editorMode(mf) {
@@ -1559,6 +1665,7 @@
     if (ready) setView(VIEW_RENDERED, { focus: false });
     else updateViewUi();
     bindSubmitSync();
+    bindPhysicalArrows();
     initFollowEditors();
     // 对话补充框的 .composer-toolbar 由 chat-composer.js 在 window 的 DOMContentLoaded 里创建；
     // 若它们的初始化顺序意外靠后，下一帧再补一次（幂等，已有按钮的会跳过）。

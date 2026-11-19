@@ -533,8 +533,138 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await noConfig.locator('[data-fmx-content="manual"] .fmx-primary').isDisabled(), false);
     await noConfig.close();
 
+    /* 15. 方向键对齐：屏幕四按钮与实体键走同一 MathLive 移动语义（逐字符、
+       已填格、上下界切换），只移动光标，不改 #draft，也不丢焦点。
+       整式保留截图前缀 \overline{\Delta}x，不涉及任何符号插入。 */
+    await page.setViewportSize({width: 1360, height: 1000});
+    const cursorDraft = '$\\overline{\\Delta}x\\cong\\int_{12}^{34}$';
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft(cursorDraft);
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\int_{12}^{34}'));
+    });
+    await field.click();
+    await visibleKeyboard().waitFor();
+    await page.waitForFunction(expected => document.querySelector('#draft').value === expected, cursorDraft);
+
+    // position 指向光标前的 atom，最后一个 atom 的位置就是界尾 / 格尾。
+    const offsetsOf = branch => field.evaluate((node, key) => {
+      const model = node._mathfield.model;
+      const wanted = JSON.stringify(key);
+      const offsets = [];
+      for (let i = 0; i <= model.lastOffset; i += 1) {
+        const atom = model.at(i);
+        if (atom && JSON.stringify(atom.parentBranch) === wanted) offsets.push(i);
+      }
+      return offsets.length ? {start: offsets[0], end: offsets[offsets.length - 1]} : null;
+    }, branch);
+    const caret = () => field.evaluate(node => {
+      const atom = node._mathfield.model.at(node.position);
+      return {position: node.position, branch: atom ? atom.parentBranch : null};
+    });
+    const putCaret = offset => field.evaluate((node, value) => {
+      node.focus();
+      node.position = value;
+    }, offset);
+    const pressKey = async (offset, key) => {
+      await putCaret(offset);
+      await page.keyboard.press(key);
+      return caret();
+    };
+    const pressButton = async (offset, direction) => {
+      await putCaret(offset);
+      await visibleKeyboard().locator(`[data-mk-move="${direction}"]`).click();
+      return caret();
+    };
+
+    const upper = await offsetsOf('superscript');
+    const lower = await offsetsOf('subscript');
+    assert.ok(upper && lower, '积分上下界应该可定位');
+    // 上界末尾 Down → 下界末尾；下界起点 Up → 上界起点。
+    assert.deepEqual(await pressKey(upper.end, 'ArrowDown'), {position: lower.end, branch: 'subscript'});
+    assert.deepEqual(await pressButton(upper.end, 'down'), {position: lower.end, branch: 'subscript'});
+    assert.deepEqual(await pressKey(lower.start, 'ArrowUp'), {position: upper.start, branch: 'superscript'});
+    assert.deepEqual(await pressButton(lower.start, 'up'), {position: upper.start, branch: 'superscript'});
+    assert.equal(await value(), cursorDraft);
+
+    // 上界留空（截图里的 \int_{12}^{}）也能在上下界之间切换。
+    const emptyBoundDraft = '$\\int_{12}^{}$';
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft(emptyBoundDraft);
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\int'));
+    });
+    await field.click();
+    await visibleKeyboard().waitFor();
+    await page.waitForFunction(expected => document.querySelector('#draft').value === expected, emptyBoundDraft);
+    const emptyLower = await offsetsOf('subscript');
+    const emptyUpper = await offsetsOf('superscript');
+    assert.ok(emptyLower && emptyUpper);
+    assert.deepEqual(await pressKey(emptyLower.end, 'ArrowUp'), {position: emptyUpper.start, branch: 'superscript'});
+    assert.deepEqual(await pressButton(emptyUpper.start, 'down'), {position: emptyLower.start, branch: 'subscript'});
+    assert.equal(await value(), emptyBoundDraft);
+
+    // 已填格：格内逐字符左移，格尾 Right 进入同一行下一格起点。
+    // MathLive 初次装载会把矩阵标准化成带空格的源：12 & 34\\ 56 & 78。
+    const cursorMatrixDraft = '$\\begin{vmatrix}12&34\\\\56&78\\end{vmatrix}$';
+    const normalizedMatrixDraft = '$\\begin{vmatrix}12 & 34\\\\ 56 & 78\\end{vmatrix}$';
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft(cursorMatrixDraft);
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\begin{vmatrix}'));
+    });
+    await field.click();
+    await visibleKeyboard().waitFor();
+    await page.waitForFunction(expected => document.querySelector('#draft').value === expected, normalizedMatrixDraft);
+    const cell00 = await offsetsOf([0, 0]);
+    const cell01 = await offsetsOf([0, 1]);
+    assert.ok(cell00 && cell01, '矩阵格子应该可定位');
+    assert.deepEqual(await pressKey(cell00.end, 'ArrowLeft'), {position: cell00.end - 1, branch: [0, 0]});
+    assert.deepEqual(await pressButton(cell00.end, 'left'), {position: cell00.end - 1, branch: [0, 0]});
+    assert.deepEqual(await pressKey(cell00.end, 'ArrowRight'), {position: cell01.start, branch: [0, 1]});
+    assert.deepEqual(await pressButton(cell00.end, 'right'), {position: cell01.start, branch: [0, 1]});
+    assert.equal(await value(), normalizedMatrixDraft);
+
+    // 空格之间仍能继续跨越，不能被逐字符移动卡住。
+    // 空格 fixture 的标准化细节更多，装载稳定后取移动前的 #draft，按字节比较。
+    const emptyMatrixDraft = '$\\begin{vmatrix}1&\\\\&\\end{vmatrix}$';
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft(emptyMatrixDraft);
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\begin{vmatrix}'));
+    });
+    await field.click();
+    await visibleKeyboard().waitFor();
+    await page.waitForFunction(() => {
+      const text = document.querySelector('#draft').value;
+      return text.includes('\\begin{vmatrix}') && text.includes('\\end{vmatrix}');
+    });
+    const loadedEmptyMatrixDraft = await value();
+    assert.match(loadedEmptyMatrixDraft, /^\$\\begin\{vmatrix\}.*\\end\{vmatrix\}\$$/);
+    assert.equal((loadedEmptyMatrixDraft.match(/&/g) || []).length, 2);
+    assert.equal((loadedEmptyMatrixDraft.match(/\\\\/g) || []).length, 1);
+    const empty00 = await offsetsOf([0, 0]);
+    const empty01 = await offsetsOf([0, 1]);
+    const empty10 = await offsetsOf([1, 0]);
+    assert.ok(empty00 && empty01 && empty10);
+    assert.deepEqual(await pressButton(empty00.end, 'right'), {position: empty01.start, branch: [0, 1]});
+    assert.deepEqual(await pressButton(empty01.start, 'right'), {position: empty10.start, branch: [1, 0]});
+    assert.deepEqual(await pressKey(empty01.start, 'ArrowRight'), {position: empty10.start, branch: [1, 0]});
+
+    assert.equal(await value(), loadedEmptyMatrixDraft);
+    assert.equal(await focusInMainField(), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
     assert.deepEqual(errors, []);
-    console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px。');
+    console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、方向键实体/屏幕对齐。');
   } finally {
     await browser.close();
   }
