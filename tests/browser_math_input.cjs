@@ -145,6 +145,16 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.ok(afterFormula.startsWith('hello中文'), afterFormula);
     assert.equal(await mathCount(afterFormula), 1);
     assert.ok(afterFormula.includes('\\frac'));
+    assert.equal((afterFormula.match(/\$/g) || []).length, 2);
+    const inlineFormula = await page.evaluate(text => {
+      const parts = window.mathInputMode.parseDraft(text).filter(part => part.type === 'math');
+      return parts.length ? parts[0].value : '';
+    }, afterFormula);
+    // #@ 的隐式前置参数捕获会把整段普通文字吞进分子；修复后 plain 必须留在公式外
+    assert.ok(!inlineFormula.includes('hello'), inlineFormula);
+    assert.ok(!inlineFormula.includes('中文'), inlineFormula);
+    assert.ok(!inlineFormula.includes('second'), inlineFormula);
+    assert.ok(afterFormula.startsWith('hello中文\nsecond'), afterFormula);
     assert.ok(await field.evaluate(node => Boolean(node.shadowRoot && node.shadowRoot.querySelector('.ML__mfrac'))));
 
     /* 4. 粘贴带换行的文字：原文保留换行，不变成 $...$ */

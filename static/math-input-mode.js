@@ -1181,16 +1181,38 @@
     }
   }
 
+  // MathLive 的 #@ 会把光标左侧最近的表达式当作隐式参数捕获。在 text 模式的
+  // 折叠光标处，这个「表达式」可能是整段普通文字，导致 `$\frac{hello$中文...}{}$`。
+  // 此时把 #@ 改为 #?：仍是可编辑占位符，但不会捕获左侧文字。
+  // 真实选区（非折叠）和 math 模式里的槽位操作保留原 #@ 语义。
+  function collapsedTextCursor(mf) {
+    if (!isTextField(mf) || editorMode(mf) === "math") return false;
+    try {
+      const ranges = mf.selection && mf.selection.ranges;
+      return Array.isArray(ranges) && ranges.length === 1 && ranges[0][0] === ranges[0][1];
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function templateForInsertion(mf, template) {
+    if (!template || !collapsedTextCursor(mf)) return template;
+    return template.replace(/#@/g, "#?");
+  }
+
   // 原稿字段默认是 text 模式：符号键盘点击时先切到 math 再插入。
   // 有 #@ / #? 占位符的结构模板留在 math 模式，方便继续填分子、分母和矩阵格子；
   // 单个符号和 AI 生成的完整公式插入后回到 text，避免后续普通输入被当成数学变量。
   function insertMathLatex(mf, latex, keepMath) {
     if (!mf || !latex) return false;
+    const source = String(latex);
     const switched = isTextField(mf) && editorMode(mf) !== "math";
+    // 必须在 forceMathMode 之前判断当前是否 text 折叠光标。
+    const insertTemplate = templateForInsertion(mf, source);
     if (switched && !forceMathMode(mf)) return false;
     let ok = false;
     try {
-      ok = mf.insert(String(latex), { format: "latex", mode: "math" });
+      ok = mf.insert(insertTemplate, { format: "latex", mode: "math" });
     } catch (error) {
       ok = false;
     }
