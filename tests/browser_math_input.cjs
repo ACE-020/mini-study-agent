@@ -43,6 +43,14 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       source => window.mathInputMode.parseDraft(source).filter(part => part.type === 'math').length,
       text
     );
+    const waitFieldEmpty = () => page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').trim() === '');
+    });
+    const clearDraft = async () => {
+      await setDraft('');
+      await waitFieldEmpty();
+    };
     const visibleKeyboard = () => page.locator('.mk-panel:visible').first();
     const clickKey = aria => visibleKeyboard().locator(`[data-mk-aria="${aria}"]`).first().click();
     const chooseCategory = id => visibleKeyboard().locator(`[data-mk-cat="${id}"]`).click();
@@ -261,6 +269,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     /* 8. 矩阵 / 行列式两个相邻入口、各自标题、手动预览与插入 */
     await setDraft('');
     await toggle.click();
+    await waitFieldEmpty();
     await field.click();
     await visibleKeyboard().waitFor();
     await chooseCategory('geometry');
@@ -295,6 +304,8 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal((matrixBody.match(/&/g) || []).length, 4);
     assert.equal((matrixBody.match(/\\\\/g) || []).length, 1);
 
+    // 行列式用例必须从空草稿开始，不能把前面 2×3 矩阵的 & 一起算进来
+    await clearDraft();
     await field.click();
     await visibleKeyboard().waitFor();
     await determinantKey.click();
@@ -318,6 +329,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal((determinantBody.match(/\\\\/g) || []).length, 2);
 
     /* 9. 取消面板不改原稿、不丢光标 */
+    await clearDraft();
     await setDraft('abc');
     await field.evaluate(node => node.executeCommand('moveToMathfieldEnd'));
     await openMatrixPanel('matrix');
@@ -329,7 +341,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await focusInMainField(), true);
 
     /* 10. AI 成功：手动 / AI 内容区互斥，结果按当前类型插入 */
-    await setDraft('');
+    await clearDraft();
     await openMatrixPanel('determinant');
     await page.locator('[data-fmx-mode="ai"]').click();
     assert.equal(await page.locator('[data-fmx-content="manual"]').isVisible(), false);
@@ -347,6 +359,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await mathCount(aiDraft), 1);
 
     /* 11. 快速切换 / 关闭后异步返回不串模式、不落旧结果 */
+    await clearDraft();
     await setDraft('保持');
     await openMatrixPanel('matrix');
     await page.locator('[data-fmx-mode="ai"]').click();
@@ -376,6 +389,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
 
     /* 12. 键盘展开时点提交不丢点击；提交携带标准 LaTeX */
     await toggle.click();
+    await setDraft('');
     await setDraft('提交测试 $x^2$');
     await toggle.click();
     await field.click();
