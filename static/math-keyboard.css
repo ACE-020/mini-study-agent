@@ -266,17 +266,6 @@
   min-height: 40px;
 }
 
-.mk-panel.is-compact .mk-arrows {
-  margin-top: 3px;
-  padding-top: 3px;
-}
-
-.mk-panel.is-compact .mk-arrow {
-  flex-basis: 28px;
-  min-height: 22px;
-  font-size: 11px;
-}
-
 /* 近底部空间紧张时先让出说明行，把高度留给符号键。 */
 .mk-panel.is-compact .mk-foot {
   display: none;
@@ -440,62 +429,6 @@
   line-height: 1.6;
 }
 
-/* ---------- 公式键盘的方向键控制盘 ---------- */
-
-.mk-arrows {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed #eef0f6;
-}
-
-.mk-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 34px;
-  min-height: 28px;
-  padding: 0 2px;
-  border: 1px solid #eef0f6;
-  border-radius: 7px;
-  background: #fbfbfd;
-  color: #444a5c;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1;
-  overflow: hidden;
-  cursor: pointer;
-  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
-}
-
-.mk-arrow:hover {
-  background: #f2f0fb;
-  border-color: #ddd6f5;
-  color: #5144b1;
-}
-
-.mk-arrow.is-pressed {
-  background: #e9e4fb;
-  border-color: #c8bcf0;
-  color: #5144b1;
-  transform: translateY(1px);
-}
-
-.mk-arrow:focus-visible {
-  outline: 3px solid #b9aff3;
-  outline-offset: 2px;
-}
-
-.mk-arrows-label {
-  margin-left: 2px;
-  color: #a8a8b8;
-  font-size: 9.5px;
-  line-height: 1.4;
-}
-
 /* ---------- 对话补充框的「∑ 公式」按钮与内嵌编辑区 ---------- */
 
 .composer-formula-toggle {
@@ -544,11 +477,6 @@
 }
 
 @media (max-width: 820px) {
-  .mk-arrow {
-    flex-basis: 38px;
-    min-height: 32px;
-  }
-
   .formula-editor-host math-field {
     font-size: 21px;
     min-height: 84px;
@@ -566,17 +494,6 @@
     line-height: 2;
   }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .mk-arrow {
-    transition: none;
-  }
-
-  .mk-arrow.is-pressed {
-    transform: none;
-  }
-}
-
 
 /* ---------- 矩阵 / 行列式插入面板（.fmx-） ---------- */
 

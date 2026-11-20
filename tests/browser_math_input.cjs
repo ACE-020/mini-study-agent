@@ -619,6 +619,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.evaluate(() => window.mathInputMode.setView('rendered'));
     await field.click();
     await visibleKeyboard().waitFor();
+    assert.equal(await visibleKeyboard().locator('[data-mk-move]').count(), 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await openMatrixPanel('matrix');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -661,9 +662,8 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await noConfig.locator('[data-fmx-content="manual"] .fmx-primary').isDisabled(), false);
     await noConfig.close();
 
-    /* 15. 方向键对齐：屏幕四按钮与实体键走同一 MathLive 移动语义（逐字符、
-       已填格、上下界切换），只移动光标，不改 #draft，也不丢焦点。
-       整式保留截图前缀 \overline{\Delta}x，不涉及任何符号插入。 */
+    /* 15. 网页符号面板没有方向按钮，实体方向键仍能移动光标。
+       上下界和矩阵的导航保留草稿及输入焦点。 */
     await page.setViewportSize({width: 1360, height: 1000});
     const cursorDraft = '$\\overline{\\Delta}x\\cong\\int_{12}^{34}$';
     await page.evaluate(() => window.mathInputMode.setView('source'));
@@ -675,6 +675,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     });
     await field.click();
     await visibleKeyboard().waitFor();
+    assert.equal(await visibleKeyboard().locator('[data-mk-move]').count(), 0);
     await page.waitForFunction(expected => document.querySelector('#draft').value === expected, cursorDraft);
 
     // position 指向光标前的 atom，最后一个 atom 的位置就是界尾 / 格尾。
@@ -701,20 +702,12 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       await page.keyboard.press(key);
       return caret();
     };
-    const pressButton = async (offset, direction) => {
-      await putCaret(offset);
-      await visibleKeyboard().locator(`[data-mk-move="${direction}"]`).click();
-      return caret();
-    };
-
     const upper = await offsetsOf('superscript');
     const lower = await offsetsOf('subscript');
     assert.ok(upper && lower, '积分上下界应该可定位');
     // 上界末尾 Down → 下界末尾；下界起点 Up → 上界起点。
     assert.deepEqual(await pressKey(upper.end, 'ArrowDown'), {position: lower.end, branch: 'subscript'});
-    assert.deepEqual(await pressButton(upper.end, 'down'), {position: lower.end, branch: 'subscript'});
     assert.deepEqual(await pressKey(lower.start, 'ArrowUp'), {position: upper.start, branch: 'superscript'});
-    assert.deepEqual(await pressButton(lower.start, 'up'), {position: upper.start, branch: 'superscript'});
     assert.equal(await value(), cursorDraft);
 
     // 上界留空（截图里的 \int_{12}^{}）也能在上下界之间切换。
@@ -733,7 +726,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     const emptyUpper = await offsetsOf('superscript');
     assert.ok(emptyLower && emptyUpper);
     assert.deepEqual(await pressKey(emptyLower.end, 'ArrowUp'), {position: emptyUpper.start, branch: 'superscript'});
-    assert.deepEqual(await pressButton(emptyUpper.start, 'down'), {position: emptyLower.start, branch: 'subscript'});
+    assert.deepEqual(await pressKey(emptyUpper.start, 'ArrowDown'), {position: emptyLower.start, branch: 'subscript'});
     assert.equal(await value(), emptyBoundDraft);
 
     // 已填格：格内逐字符左移，格尾 Right 进入同一行下一格起点。
@@ -754,9 +747,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     const cell01 = await offsetsOf([0, 1]);
     assert.ok(cell00 && cell01, '矩阵格子应该可定位');
     assert.deepEqual(await pressKey(cell00.end, 'ArrowLeft'), {position: cell00.end - 1, branch: [0, 0]});
-    assert.deepEqual(await pressButton(cell00.end, 'left'), {position: cell00.end - 1, branch: [0, 0]});
     assert.deepEqual(await pressKey(cell00.end, 'ArrowRight'), {position: cell01.start, branch: [0, 1]});
-    assert.deepEqual(await pressButton(cell00.end, 'right'), {position: cell01.start, branch: [0, 1]});
     assert.equal(await value(), normalizedMatrixDraft);
 
     // 空格之间仍能继续跨越，不能被逐字符移动卡住。
@@ -783,8 +774,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     const empty01 = await offsetsOf([0, 1]);
     const empty10 = await offsetsOf([1, 0]);
     assert.ok(empty00 && empty01 && empty10);
-    assert.deepEqual(await pressButton(empty00.end, 'right'), {position: empty01.start, branch: [0, 1]});
-    assert.deepEqual(await pressButton(empty01.start, 'right'), {position: empty10.start, branch: [1, 0]});
+    assert.deepEqual(await pressKey(empty00.end, 'ArrowRight'), {position: empty01.start, branch: [0, 1]});
     assert.deepEqual(await pressKey(empty01.start, 'ArrowRight'), {position: empty10.start, branch: [1, 0]});
 
     assert.equal(await value(), loadedEmptyMatrixDraft);
@@ -836,7 +826,6 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       await chooseCategory('calculus');
       await clickKey(aria);
     };
-    const pressScreen = direction => visibleKeyboard().locator(`[data-mk-move="${direction}"]`).click();
 
     // 不定积分：首填被积函数，没有上下界，积分体后保留 dx。
     await openCalculusKey('积分');
@@ -865,16 +854,16 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.keyboard.type('x');
     await waitCanonicalDraft('\\int_1^3x\\,dx');
 
-    // 求和：下标预填 i=，首填在等号后；屏幕方向上/右方向键。
+    // 求和：下标预填 i=，首填在等号后，再用方向键进入上界和求和项。
     await openCalculusKey('求和');
     await waitCaretBranch('subscript');
     await waitCanonicalDraft('\\sum_i=');
     await page.keyboard.type('1');
     await waitCanonicalDraft('\\sum_i=1');
-    await pressScreen('up');
+    await page.keyboard.press('ArrowUp');
     await waitCaretBranch('superscript');
     await page.keyboard.type('n');
-    await pressScreen('right');
+    await page.keyboard.press('ArrowRight');
     await page.keyboard.type('x');
     await waitCanonicalDraft('\\sum_i=1^nx');
 
@@ -1256,7 +1245,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await waitFieldEmpty();
 
     assert.deepEqual(errors, []);
-    console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、方向键实体/屏幕对齐、微积分模板与空界删除保护、字面符号、隐藏编辑器不越权、历史对话切换后的撤回隔离。');
+    console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、网页无方向按钮且实体方向键可导航、微积分模板与空界删除保护、字面符号、隐藏编辑器不越权、历史对话切换后的撤回隔离。');
   } finally {
     await browser.close();
   }

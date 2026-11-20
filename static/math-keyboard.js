@@ -539,33 +539,7 @@
 
     head.append(tabs, closeButton);
 
-    // 方向键控制盘只给「公式编辑器」实例：◀ ▲ ▼ ▶ 移动槽位光标
-    let arrows = null;
-    if (instanceKind === "formula") {
-      arrows = el("div", "mk-arrows");
-      arrows.setAttribute("role", "group");
-      arrows.setAttribute("aria-label", "移动公式光标");
-      for (const item of [["left", "◀"], ["up", "▲"], ["down", "▼"], ["right", "▶"]]) {
-        const dir = item[0];
-        const arrow = el("button", "mk-arrow", item[1]);
-        arrow.type = "button";
-        arrow.dataset.mkMove = dir;
-        arrow.title = "移动光标到相邻槽位";
-        arrow.setAttribute("aria-label", "移动光标：" + dir);
-        arrow.addEventListener("pointerdown", preventFocusLoss);
-        arrow.addEventListener("mousedown", preventFocusLoss);
-        arrow.addEventListener("click", function (event) {
-          event.preventDefault();
-          moveCursor(dir, arrow, instance);
-        });
-        arrows.append(arrow);
-      }
-      arrows.append(el("span", "mk-arrows-label", "移动光标"));
-    }
-
-    panel.append(head);
-    if (arrows) panel.append(arrows);
-    panel.append(grid, foot);
+    panel.append(head, grid, foot);
 
     const instance = {
       kind: instanceKind,
@@ -728,16 +702,6 @@
       ? api.insertChip({ template: key.chipTemplate })
       : api.insertGlyph(key.mathGlyph != null ? key.mathGlyph : key.label);
     showHint(instance, ok ? "已插入" : "公式编辑器未就绪");
-  }
-
-  function moveCursor(dir, button, instance) {
-    const api = formulaApi();
-    flash(button);
-    if (!api) {
-      showHint(instance, "公式编辑器未就绪");
-      return;
-    }
-    showHint(instance, api.move(dir) ? "已移动光标" : "已到边界");
   }
 
   /* ---------- 插入逻辑 ---------- */
@@ -1251,6 +1215,6 @@
     // 纯函数：主页悬浮符号表的位置、宽度与可用高度（不读 DOM）。
     floatingBox: computeFloatingBox,
     floatingDefaults: FLOATING,
-    version: "20261120-home-math"
+    version: "20261120-home-math-keys"
   };
 })();

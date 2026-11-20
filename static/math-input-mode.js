@@ -1963,8 +1963,7 @@
     return typeof before === "number" && typeof after === "number" ? after !== before : false;
   }
 
-  // 桌面实体 Up/Down 也走 moveCursor：屏幕按钮（桌面 / 手机网页）与实体键盘
-  // 共用同一条移位 + 上下界补齐逻辑，避免 MathLive 原生行为与屏幕按钮不一致。
+  // 上下方向键走自定义导航，在矩阵行和微积分上下界之间移动。
   // Shift/Ctrl/Alt/Meta 组合留给 MathLive 的选区扩展等原生快捷键。
   function bindPhysicalArrows() {
     document.addEventListener("keydown", function (event) {
