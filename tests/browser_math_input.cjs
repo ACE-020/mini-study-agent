@@ -1012,13 +1012,13 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     // 忙碌时 app.js 把 #draft 设为只读：按钮与快捷键都不能再改动原稿。
     await page.evaluate(() => window.mathInputMode.setView('source'));
     const beforeReadonly = await value();
-    await draft.evaluate(node => { node.readOnly = true; });
+    await page.evaluate(() => { state.busy = true; updateButtons(); });
     await page.waitForFunction(() => document.querySelector('#draft-undo').disabled && document.querySelector('#draft-redo').disabled);
     await draft.click();
     await page.keyboard.press('Control+z');
     await page.waitForTimeout(80);
     assert.equal(await value(), beforeReadonly);
-    await draft.evaluate(node => { node.readOnly = false; });
+    await page.evaluate(() => { state.busy = false; updateButtons(); });
     await page.waitForFunction(() => !document.querySelector('#draft-undo').disabled);
 
     assert.deepEqual(errors, []);
