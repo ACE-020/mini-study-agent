@@ -194,6 +194,9 @@ let deepFraction = '1';
 for (let i = 0; i < 40; i += 1) deepFraction = '\\frac{' + deepFraction + '}{}';
 const deepPrepared = api.prepareFractionSlots('$' + deepFraction + '$', true);
 check('deep fraction scan is bounded', typeof deepPrepared === 'string' && deepPrepared.endsWith('$'), true);
+check('new inline math keeps the preceding typed space',
+  api.reconcileDraft('中文 ', '中文 $ x^2 $', true),
+  '中文 $x^2$');
 check('deep fraction still fills the reachable empty slots', deepPrepared.includes('\\placeholder{}'), true);
 
 // 9) 矩阵 / 行列式面板的模板与预览

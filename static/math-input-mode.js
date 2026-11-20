@@ -9,7 +9,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-typed-math";
+  const VERSION = "20261120-typed-math-v2";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -664,10 +664,16 @@
     let out = "";
     let textPos = 0;
     let mathIndex = 0;
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
       if (part.type === "text") {
-        const next = matchTextStream(mapping.text, textPos, unescapeText(part.value));
+        const fragment = unescapeText(part.value);
+        let next = matchTextStream(mapping.text, textPos, fragment);
         if (next < 0) return null;
+        // 新公式前的字面空格跟前一段文字写回；渲染视图里的换行可能也显示为空格。
+        if (parts[index + 1]?.type === "math" && pairs[mathIndex] === null) {
+          const spaceEnd = next + fragment.length - fragment.trimEnd().length;
+          while (next < spaceEnd && mapping.text[next] === " ") next += 1;
+        }
         out += rawTextRange(mapping, textPos, next);
         textPos = next;
       } else {
@@ -1986,6 +1992,9 @@
     if (!match) return;
     const [, base, sign] = match;
     const start = position - base.length - 1 - sign.length;
+    // MathLive 的 input 可能还在队列里，先同步 ^ 前后的原文字面值。
+    // 这样转成公式时，紧挨公式的已输入空格也会保留。
+    handleFieldChange(mf, draft);
     let inserted = false;
     withSync(function () {
       mf.selection = { ranges: [[start, position]] };
