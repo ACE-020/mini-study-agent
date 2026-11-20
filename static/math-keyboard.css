@@ -292,7 +292,9 @@
   font-size: 24px;
   line-height: 2.1;
   --caret-color: #6558c9;
-  --selection-background-color: #eeebfc;
+  --selection-background-color: transparent;
+  --highlight-text: transparent;
+  --text-highlight-background-color: transparent;
   --contains-highlight-background-color: #f2f0fb;
 }
 

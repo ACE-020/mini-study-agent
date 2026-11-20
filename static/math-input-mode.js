@@ -9,13 +9,17 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-typed-math-v2";
+  const VERSION = "20261120-selection-marker";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
   const MATHLIVE_SCRIPT = "/static/vendor/mathlive/mathlive.min.js";
   const MATHLIVE_FONTS = "/static/vendor/mathlive/fonts";
-  const TOGGLES_STYLE = ".ML__menu-toggle,.ML__virtual-keyboard-toggle,.ML__toggles{display:none!important}";
+  const EDITOR_SHADOW_STYLE = [
+    ".ML__menu-toggle,.ML__virtual-keyboard-toggle,.ML__toggles{display:none!important}",
+    ".ML__selection{box-shadow:inset 0 -1px #7667a5}",
+    ".ML__content::selection,.ML__content ::selection,.ML__keyboard-sink::selection{background-color:transparent;color:inherit}"
+  ].join("\n");
   const DRAFT_MAX_LENGTH = 80000;
   // formula-matrix.js 加载失败时的兜底；正常情况下读取它暴露的 maxSize，
   // 让面板输入上限与 MathLive 的 maxMatrixCols 永远一致。
@@ -746,14 +750,14 @@
     state.fontsConfigured = true;
   }
 
-  function hideToggles(mf) {
+  function applyEditorStyles(mf) {
     const apply = function () {
       try {
-        if (!mf.shadowRoot || mf.dataset.mathliveToggles === "hidden") return;
+        if (!mf.shadowRoot || mf.dataset.mathliveEditorStyles === "applied") return;
         const style = document.createElement("style");
-        style.textContent = TOGGLES_STYLE;
+        style.textContent = EDITOR_SHADOW_STYLE;
         mf.shadowRoot.append(style);
-        mf.dataset.mathliveToggles = "hidden";
+        mf.dataset.mathliveEditorStyles = "applied";
       } catch (error) {
         /* 没有 shadowRoot 时忽略 */
       }
@@ -1038,7 +1042,7 @@
     } catch (error) {
       /* 属性名随版本变化时忽略 */
     }
-    hideToggles(mf);
+    applyEditorStyles(mf);
     bindBoundDeletionGuard(mf, textarea);
     mf.addEventListener("input", function () {
       handleFieldChange(mf, textarea);
