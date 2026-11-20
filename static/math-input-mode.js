@@ -820,13 +820,149 @@
     }
   }
 
+  /* ---------- 分式空分支的可填占位 ---------- */
+
+  // MathLive 0.111.4 把 `\frac{}{}` 解析成两个只有 first 原子的空分支：
+  // 没有可填占位符，`.ML__frac-line` 宽度为 0；删除最后一个字符时还会因为
+  // hasEmptyBranch() 把整个分式 removeChild 掉。这里只在「渲染进 MathLive」
+  // 的 LaTeX 上给空分子/分母补 \placeholder{}：
+  //   - #draft 与保存链路不经过这里，读取时 parseTextModeLatex / parseLatexParts
+  //     仍会剔除 \placeholder，所以原文逐字不变；
+  //   - 已有内容的嵌套分式只递归检查、不插入任何东西，内容不丢。
+  const FRACTION_COMMANDS = ["frac", "dfrac", "tfrac", "cfrac"];
+  // 只处理有限层嵌套：恶意 / 极深的 \frac 草稿不能把整段装载拖进无界递归。
+  // 超过上限的更深层保持原样（MathLive 照常排版，只是不再补占位）。
+  const FRACTION_SCAN_LIMIT = 24;
+
+  function hasFractionCommand(source) {
+    for (let i = 0; i < FRACTION_COMMANDS.length; i += 1) {
+      if (source.indexOf("\\" + FRACTION_COMMANDS[i]) >= 0) return true;
+    }
+    return false;
+  }
+
+  function skipLatexSpace(source, from) {
+    let i = from;
+    while (i < source.length && /\s/.test(source[i])) i += 1;
+    return i;
+  }
+
+  // \cfrac 允许一个可选的 [l]/[r] 对齐参数；其他分式命令没有可选参数。
+  function skipOptionalBracket(source, from) {
+    let i = skipLatexSpace(source, from);
+    if (source[i] !== "[") return from;
+    let depth = 0;
+    for (; i < source.length; i += 1) {
+      if (source[i] === "[") depth += 1;
+      else if (source[i] === "]") {
+        depth -= 1;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return from;
+  }
+
+  function injectFractionSlots(source, depth) {
+    const level = depth == null ? 0 : depth;
+    if (level >= FRACTION_SCAN_LIMIT || !hasFractionCommand(source)) return source;
+    let out = "";
+    let i = 0;
+    while (i < source.length) {
+      if (source[i] !== "\\" || isEscaped(source, i)) {
+        out += source[i];
+        i += 1;
+        continue;
+      }
+      const match = /^\\([A-Za-z]+)/.exec(source.slice(i));
+      if (!match || FRACTION_COMMANDS.indexOf(match[1]) < 0) {
+        // 整段复制命令名，避免在 \fracfoo 里把 frac 当成命令。
+        out += match ? match[0] : source[i];
+        i += match ? match[0].length : 1;
+        continue;
+      }
+      let cursor = i + match[0].length;
+      if (match[1] === "cfrac") cursor = skipOptionalBracket(source, cursor);
+      const args = [];
+      let complete = true;
+      for (let n = 0; n < 2; n += 1) {
+        cursor = skipLatexSpace(source, cursor);
+        if (source[cursor] !== "{") {
+          complete = false;
+          break;
+        }
+        const end = matchBrace(source, cursor);
+        if (end < 0) {
+          complete = false;
+          break;
+        }
+        args.push({ start: cursor, end: end, body: source.slice(cursor + 1, end) });
+        cursor = end + 1;
+      }
+      if (!complete) {
+        // 不完整/非标准写法保持原样，交给 MathLive 自己报错或排版。
+        out += source[i];
+        i += 1;
+        continue;
+      }
+      const fill = function (body) {
+        if (!body.trim()) return "\\placeholder{}";
+        const inner = injectFractionSlots(body, level + 1);
+        return inner.trim() === "" ? "\\placeholder{}" : inner;
+      };
+      // 保留命令与两个参数之间的原始空白，只替换空参数的内容。
+      out += source.slice(i, args[0].start);
+      out += "{" + fill(args[0].body) + "}";
+      out += source.slice(args[0].end + 1, args[1].start);
+      out += "{" + fill(args[1].body) + "}";
+      i = args[1].end + 1;
+    }
+    return out;
+  }
+
+  // text 模式的字段里，数学段由 mixedToLatex 显式包成 $...$ / $$...$$；
+  // 普通文字里的 \frac 不能被当成公式（也不该出现占位符）。只处理数学段。
+  function prepareFractionSlots(latex, textMode) {
+    const source = String(latex == null ? "" : latex);
+    if (!textMode) return injectFractionSlots(source);
+    let out = "";
+    let i = 0;
+    while (i < source.length) {
+      if (source[i] !== "$" || isEscaped(source, i)) {
+        out += source[i];
+        i += 1;
+        continue;
+      }
+      if (source.startsWith("$$", i)) {
+        const end = findToken(source, i + 2, "$$", false);
+        if (end > i + 2) {
+          out += "$$" + injectFractionSlots(source.slice(i + 2, end)) + "$$";
+          i = end + 2;
+          continue;
+        }
+        out += "$$";
+        i += 2;
+        continue;
+      }
+      const end = findInlineMathEnd(source, i + 1);
+      if (end >= 0) {
+        out += "$" + injectFractionSlots(source.slice(i + 1, end)) + "$";
+        i = end + 1;
+        continue;
+      }
+      out += "$";
+      i += 1;
+    }
+    return out;
+  }
+
   function setLatex(mf, latex) {
     if (!mf) return;
     const textMode = isTextField(mf);
     if (textMode) ensureTextMode(mf);
+    const prepared = prepareFractionSlots(latex || "", textMode);
     withSync(function () {
       try {
-        mf.setValue(latex || "", {
+        mf.setValue(prepared, {
           mode: textMode ? "text" : "math",
           format: "latex",
           insertionMode: "replaceAll"
@@ -1369,6 +1505,115 @@
     return true;
   }
 
+  // MathLive 的 genfrac 用 above/below 两个分支保存分子/分母，空分支只有
+  // first 原子。删除 / 清空最后一个内容 atom 时 To() 会直接 removeChild，
+  // 两侧都空时还会连整个分式一起删；ct() 选中整个分支时也会扩展到父分式。
+  // 这里把「删除后该分支将没有内容」的那一次删除换成可填占位符：
+  // 横线宽度保留、可以继续输入、MathLive 的原生撤销仍能恢复被删内容。
+  function fractionBranchOf(atom) {
+    if (!atom || atom.type === "first") return null;
+    const branch = atom.parentBranch;
+    if (branch !== "above" && branch !== "below") return null;
+    const parent = atom.parent;
+    if (!parent || parent.type !== "genfrac") return null;
+    return { parent: parent, branch: branch };
+  }
+
+  function fractionBranchAtoms(info) {
+    if (!info) return [];
+    const atoms = info.parent.branch(info.branch);
+    if (!Array.isArray(atoms)) return [];
+    return atoms.filter(function (atom) {
+      return atom.type !== "first";
+    });
+  }
+
+  function replaceSelectionWithSlot(mf, start, end) {
+    try {
+      mf.selection = { ranges: [[start, end]], direction: "forward" };
+    } catch (error) {
+      return false;
+    }
+    try {
+      mf.insert("\\placeholder{}", {
+        format: "latex",
+        mode: "math",
+        insertionMode: "replaceSelection",
+        selectionMode: "placeholder"
+      });
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // 返回 "blocked"（只拦下，不动内容）、"rescued"（已换成占位符，需要回写）
+  // 或 false（不是分式空分支删除，交给 MathLive 原生路径）。
+  function guardFractionDeletion(mf, event, forward) {
+    const model = modelFor(mf);
+    if (!model) return false;
+    const ranges = model.selection && model.selection.ranges;
+    if (!Array.isArray(ranges) || ranges.length !== 1) return false;
+    const range = ranges[0];
+    if (!Array.isArray(range)) return false;
+    const start = Math.min(range[0], range[1]);
+    const end = Math.max(range[0], range[1]);
+
+    if (start !== end) {
+      let atoms = [];
+      try {
+        atoms = model.getAtoms([start, end]);
+      } catch (error) {
+        return false;
+      }
+      atoms = atoms.filter(function (atom) {
+        return atom.type !== "first";
+      });
+      if (!atoms.length) return false;
+      const info = fractionBranchOf(atoms[0]);
+      if (!info) return false;
+      const content = fractionBranchAtoms(info);
+      // 只有「选区恰好覆盖这个分支的全部内容」才接管；局部选区 / 跨分支 /
+      // 整条公式仍走原生删除（整段选中删除分式必须照常工作）。
+      if (content.length !== atoms.length) return false;
+      const selected = new Set(atoms);
+      if (content.some(function (atom) { return !selected.has(atom); })) return false;
+      event.preventDefault();
+      if (atoms.every(function (atom) { return atom.type === "placeholder"; })) return "blocked";
+      return replaceSelectionWithSlot(mf, start, end) ? "rescued" : "blocked";
+    }
+
+    let target = null;
+    try {
+      const cursor = model.at(start);
+      target = forward ? (cursor ? cursor.rightSibling : null) : cursor;
+    } catch (error) {
+      return false;
+    }
+    const info = fractionBranchOf(target);
+    if (!info) return false;
+    const content = fractionBranchAtoms(info);
+    if (target.type === "placeholder") {
+      // 分支里只剩占位符时，Backspace / Delete 不能把槽位本身删掉。
+      if (content.every(function (atom) { return atom.type === "placeholder"; })) {
+        event.preventDefault();
+        return "blocked";
+      }
+      return false;
+    }
+    if (content.length !== 1 || content[0] !== target) return false;
+    event.preventDefault();
+    let after = 0;
+    let before = 0;
+    try {
+      after = model.offsetOf(target);
+      before = target.leftSibling ? model.offsetOf(target.leftSibling) : 0;
+    } catch (error) {
+      return "blocked";
+    }
+    return replaceSelectionWithSlot(mf, before, after) ? "rescued" : "blocked";
+  }
+
   function bindBoundDeletionGuard(mf, textarea) {
     if (!mf) return;
     mf.addEventListener("beforeinput", function (event) {
@@ -1378,6 +1623,11 @@
       // 也不往撤销栈里加一步。有内容的删除才交给下面两条窄路径。
       if (deletionWouldDropBound(mf)) {
         event.preventDefault();
+        return;
+      }
+      const fraction = guardFractionDeletion(mf, event, type === "deleteContentForward");
+      if (fraction) {
+        if (fraction === "rescued" && textarea) handleFieldChange(mf, textarea);
         return;
       }
       // beforeinput 里嵌套执行 MathLive 操作时 silenceNotifications 会吞掉 input，
@@ -1489,6 +1739,71 @@
       event.preventDefault();
       event.stopPropagation();
       moveCursor(event.key === "ArrowUp" ? "up" : "down", mf);
+    }, true);
+  }
+
+  // MathLive 的 moveToNextGroup 在分母里按 Tab、且后面没有待填占位时，
+  // 会选中整个 genfrac（选区覆盖分子到分母）；继续键入就覆盖整条分式。
+  // 这里仍先执行原生跳转，保留「下一占位 / leftright / 文本组」的有效跳转；
+  // 只有结果恰好是整个分式的主动选中时，才把折叠光标移到分式之后。
+  // 用 mf.position 公共 setter（而不是 model.position）触发重画，清掉残留的
+  // ML__selected 高亮。双击与 Ctrl+A 的主动选中不经过这里，行为不变。
+  function tabOutOfFilledFraction(mf) {
+    const model = modelFor(mf);
+    if (!model || !model.selectionIsCollapsed) return false;
+    const ranges = model.selection && model.selection.ranges;
+    if (!Array.isArray(ranges) || ranges.length !== 1) return false;
+    const range = ranges[0];
+    if (!Array.isArray(range) || range[0] !== range[1]) return false;
+    let atom = null;
+    try {
+      atom = model.at(range[0]);
+    } catch (error) {
+      return false;
+    }
+    if (!atom || atom.parentBranch !== "below") return false;
+    const parent = atom.parent;
+    if (!parent || parent.type !== "genfrac") return false;
+    try {
+      mf.executeCommand("moveToNextGroup");
+    } catch (error) {
+      return false;
+    }
+    const after = model.selection && model.selection.ranges;
+    let fractionStart = 0;
+    let fractionEnd = 0;
+    try {
+      fractionStart = parent.leftSibling ? model.offsetOf(parent.leftSibling) : 0;
+      fractionEnd = model.offsetOf(parent);
+    } catch (error) {
+      return true;
+    }
+    if (after && after.length === 1) {
+      const selectedStart = Math.min(after[0][0], after[0][1]);
+      const selectedEnd = Math.max(after[0][0], after[0][1]);
+      if (selectedStart === fractionStart && selectedEnd === fractionEnd) {
+        try {
+          mf.position = fractionEnd;
+          if (model.mathfield && typeof model.mathfield.stopCoalescingUndo === "function") {
+            model.mathfield.stopCoalescingUndo();
+          }
+          if (typeof model.announce === "function") model.announce("move");
+        } catch (error) {
+          /* 保持 MathLive 的选中结果 */
+        }
+      }
+    }
+    return true;
+  }
+
+  function bindFractionTab() {
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Tab" || event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+      const mf = resolveFocusedEditor();
+      if (!mf) return;
+      if (!tabOutOfFilledFraction(mf)) return;
+      event.preventDefault();
+      event.stopPropagation();
     }, true);
   }
 
@@ -2193,6 +2508,7 @@
     },
     // 暴露转换函数，便于自检与后续调试
     mixedToLatex: mixedToLatex,
+    prepareFractionSlots: prepareFractionSlots,
     latexToMixed: latexToMixed,
     parseDraft: parseMixed,
     parseFormula: parseLatexParts,
@@ -2241,6 +2557,7 @@
     resetHistory();
     bindSubmitSync();
     bindPhysicalArrows();
+    bindFractionTab();
     initFollowEditors();
     // 对话补充框的 .composer-toolbar 由 chat-composer.js 在 window 的 DOMContentLoaded 里创建；
     // 若它们的初始化顺序意外靠后，下一帧再补一次（幂等，已有按钮的会跳过）。
