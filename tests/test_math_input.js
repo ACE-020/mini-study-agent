@@ -233,6 +233,102 @@ check('switching back to the same conversation id is still idempotent', api.sync
 // 隐藏的编辑器没有所有权：没有可见渲染编辑器时 flush 不写回、也不报成功。
 check('flush without a visible rendered editor is a no-op', api.flush(), false);
 
+// 12) 主页主稿的软换行：MathLive 单行排不下长中文 / 连续英文，注入 shadowRoot 的
+//     折行规则必须还在（这是「长文本自动折行、不靠裁剪」的唯一来源）。
+assert.equal(typeof api.wrapStyle, 'string', 'mathInputMode.wrapStyle 应暴露注入的折行规则');
+for (const rule of [
+  '.ML__content{align-items:start}',
+  '.ML__latex{width:100%;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}',
+  '>.ML__base{display:inline;white-space:normal;overflow-wrap:anywhere}',
+  '>.ML__text{white-space:pre-wrap;overflow-wrap:anywhere}'
+]) {
+  check('wrap style keeps ' + JSON.stringify(rule), api.wrapStyle.includes(rule), true);
+}
+
+// 13) 输入区高度上限：内容够多才长高；首屏以集合行末边为准（留 10px 页面边距），
+//     有消息时给顶部对话区保留空间；任何情况下都有可用下限，且没有固定天花板。
+assert.equal(typeof api.editorCap, 'function', 'mathInputMode.editorCap 应暴露高度计算');
+check('cap: 首屏以集合行末边为准（留 10px 页面边距）',
+  api.editorCap({rect: {top: 300, bottom: 480, height: 180}, metaBottom: 900, viewportHeight: 1000, empty: true}),
+  270);
+check('cap: 大视口里继续增长到集合行接近视口底部（没有 720px 天花板）',
+  api.editorCap({rect: {top: 100, bottom: 600, height: 500}, metaBottom: 640, viewportHeight: 2000, empty: true}),
+  1850);
+check('cap: 没有集合行时退回外框底边推算',
+  api.editorCap({rect: {top: 300, bottom: 480, height: 180}, wrapBottom: 560, viewportHeight: 1000, empty: true}),
+  610);
+check('cap: 有消息时给顶部对话区留出空间',
+  api.editorCap({rect: {top: 500, bottom: 895, height: 395}, wrapBottom: 1000, viewportHeight: 1000, bodyTop: 120, empty: false}),
+  679);
+check('cap: 贴底时不低于可用下限（避免只剩分类条）',
+  api.editorCap({rect: {top: 900, bottom: 990, height: 90}, metaBottom: 995, viewportHeight: 1000, bodyTop: 120, empty: true}),
+  api.heightLimits.minRendered);
+check('cap: 原文视图用自己的下限',
+  api.editorCap({rect: {top: 940, bottom: 985, height: 45}, metaBottom: 996, viewportHeight: 1000, bodyTop: 120, empty: true, minHeight: api.heightLimits.minSource}),
+  api.heightLimits.minSource);
+check('cap: 不再有固定高度天花板', api.heightLimits.preferredMax, undefined);
+
+// 14) 主页悬浮符号表：宽度只取加号 / 发送两按钮之间，两个按钮永远露出来；
+//     高度按输入框下方到视口底部的可用空间限量，近底部保留一行符号键。
+const floating = keyboard.floatingBox;
+assert.equal(typeof floating, 'function', 'mathKeyboard.floatingBox 应暴露悬浮层几何');
+const desktopBox = floating({
+  anchor: {left: 100, right: 900, top: 300, bottom: 420},
+  attach: {left: 60, right: 92, top: 448, bottom: 480},
+  submit: {left: 780, right: 900, top: 448, bottom: 480},
+  viewport: {width: 1000, height: 900}
+});
+check('floating width is capped at 480', desktopBox.width, 480);
+check('floating keeps the attach button clear', desktopBox.left >= 92, true);
+check('floating keeps the submit button clear', desktopBox.left + desktopBox.width <= 780, true);
+check('floating starts below the input', desktopBox.top, 426);
+check('floating uses the full preferred height when there is room', desktopBox.maxHeight, 240);
+check('floating is not compact when there is room', desktopBox.compact, false);
+
+const narrowBox = floating({
+  anchor: {left: 20, right: 370, top: 400, bottom: 480},
+  attach: {left: 10, right: 38, top: 500, bottom: 530},
+  submit: {left: 250, right: 370, top: 500, bottom: 530},
+  viewport: {width: 390, height: 844}
+});
+check('floating narrows to the space between the two buttons', narrowBox.width, 200);
+check('floating narrow starts at the attach edge', narrowBox.left, 44);
+check('floating narrow ends before the submit button', narrowBox.left + narrowBox.width <= 250, true);
+check('floating never exceeds the viewport width', narrowBox.left + narrowBox.width <= 390 - 8, true);
+
+const lowBox = floating({
+  anchor: {left: 100, right: 900, top: 800, bottom: 895},
+  attach: {left: 60, right: 92, top: 903, bottom: 935},
+  submit: {left: 780, right: 900, top: 903, bottom: 935},
+  viewport: {width: 1000, height: 1000}
+});
+check('floating near the bottom switches to compact', lowBox.compact, true);
+check('floating near the bottom keeps one key row visible', lowBox.maxHeight, keyboard.floatingDefaults.minHeight);
+check('floating near the bottom never covers the input edge', lowBox.top >= 895, true);
+
+const wrappedBox = floating({
+  anchor: {left: 100, right: 900, top: 300, bottom: 420},
+  attach: {left: 60, right: 92, top: 448, bottom: 480},
+  submit: {left: 780, right: 900, top: 700, bottom: 740},
+  viewport: {width: 1000, height: 900}
+});
+check('floating falls back to the input width when buttons are on different rows',
+  wrappedBox.width, 480);
+check('floating fallback still stays inside the viewport', wrappedBox.left + wrappedBox.width <= 992, true);
+
+// 15) 主页「不允许横向滚动条」：软换行覆盖不到的单个超宽数学盒要被识别，
+//     交给原文层回退（LaTeX 原文可折行、可编辑），而不是硬剪掉或横滚。
+assert.equal(typeof api.contentOverflows, 'function', 'mathInputMode.contentOverflows 应暴露横滚检测');
+const fakeField = (scrollWidth, clientWidth) => ({
+  shadowRoot: { querySelector: () => ({ scrollWidth, clientWidth }) }
+});
+check('overflow: 超宽不可断公式被识别', api.contentOverflows(fakeField(14596, 772)), true);
+check('overflow: 折行后的普通长文不算横滚', api.contentOverflows(fakeField(772, 772)), false);
+check('overflow: 2px 以内不算横滚', api.contentOverflows(fakeField(774, 772)), false);
+check('overflow: 没有 shadowRoot 时安全返回 false', api.contentOverflows({}), false);
+check('overflow: 隐藏字段（0 宽）不误判', api.contentOverflows(fakeField(0, 0)), false);
+check('overflow: 尚未进入回退态', api.overflowFallback(), false);
+
 if (process.exitCode) {
   console.error('math input tests failed');
 } else {

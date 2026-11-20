@@ -8,6 +8,23 @@
   const AUTO_STORAGE_KEY = "math-keyboard:auto";
   const PRESSED_MS = 140;
   const HINT_MS = 1600;
+  // 主页输入框的符号表：窄的悬浮层，锚在输入框下方，不参与布局。
+  // 水平范围取「加号按钮右边界 … 发送按钮左边界」，所以两个按钮永远露在外面可点；
+  // 桌面最多 480px，窄屏直接收在两按钮之间。纵向按输入框下方到视口底部的可用高度
+  // 限量，近底部时保证至少能看到一行符号键，更多键由面板自己纵向滚动。
+  const FLOATING = {
+    maxWidth: 480,
+    minWidth: 120,
+    gap: 6,
+    edge: 8,
+    bottomGap: 8,
+    preferredHeight: 240,
+    minHeight: 96,
+    compactBelow: 180,
+    attachSelector: "#home-attach-button",
+    submitSelector: "#organize-submit",
+    composerSelector: ".home-composer-panel"
+  };
 
   /* ---------- 符号目录 ---------- */
 
@@ -396,13 +413,112 @@
     return instance;
   }
 
+  /* ---------- 悬浮层几何（纯函数，便于自测） ---------- */
+
+  function isFloatingAnchor(field) {
+    return Boolean(
+      field && field.closest && field.closest(FLOATING.composerSelector)
+    );
+  }
+
+  function rectOf(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") return null;
+    const rect = node.getBoundingClientRect();
+    if (!rect) return null;
+    // 隐藏元素量出来是 0×0：当作没有这个节点。
+    if (!rect.width && !rect.height) return null;
+    return {
+      left: Number(rect.left) || 0,
+      right: Number(rect.right) || 0,
+      top: Number(rect.top) || 0,
+      bottom: Number(rect.bottom) || 0,
+      width: Number(rect.width) || 0,
+      height: Number(rect.height) || 0
+    };
+  }
+
+  // 计算悬浮符号表的落位与可用高度。
+  // anchor：输入框矩形；attach / submit：加号与发送按钮矩形（可缺省）。
+  // 返回 {left, top, width, maxHeight, compact}。
+  function computeFloatingBox(input) {
+    const anchor = input && input.anchor;
+    if (!anchor) return null;
+    const viewport = (input && input.viewport) || {};
+    const vw = Number(viewport.width) || 0;
+    const vh = Number(viewport.height) || 0;
+    if (!vw || !vh) return null;
+    const maxWidth = input.maxWidth == null ? FLOATING.maxWidth : Number(input.maxWidth);
+    const minWidth = input.minWidth == null ? FLOATING.minWidth : Number(input.minWidth);
+    const gap = input.gap == null ? FLOATING.gap : Number(input.gap);
+    const edge = input.edge == null ? FLOATING.edge : Number(input.edge);
+    const bottomGap = input.bottomGap == null ? FLOATING.bottomGap : Number(input.bottomGap);
+    const preferred = input.preferredHeight == null ? FLOATING.preferredHeight : Number(input.preferredHeight);
+    const minHeight = input.minHeight == null ? FLOATING.minHeight : Number(input.minHeight);
+    const compactBelow = input.compactBelow == null ? FLOATING.compactBelow : Number(input.compactBelow);
+
+    // 水平：默认贴着输入框，但绝不越过加号 / 发送按钮的实际边界。
+    let left = Math.max(edge, anchor.left);
+    let right = Math.min(vw - edge, anchor.right);
+    const attach = input.attach;
+    const submit = input.submit;
+    let bounded = false;
+    if (attach && submit) {
+      const sameRow = Math.abs(attach.top - submit.top) < 80;
+      const from = Math.max(edge, attach.right);
+      const to = Math.min(vw - edge, submit.left);
+      // 两个按钮在同一行且中间还有可用空间：面板只占这段，按钮永远露出来。
+      if (sameRow && to - from >= 80) {
+        left = from + gap;
+        right = to - gap;
+        bounded = true;
+      }
+    }
+    let width = Math.min(maxWidth, right - left);
+    if (!bounded) width = Math.max(width, minWidth);
+    width = Math.max(0, Math.min(Math.round(width), Math.max(0, vw - edge * 2)));
+
+    // 居中于输入框，再夹回可用区间，保证不压到两侧按钮。
+    const center = (anchor.left + anchor.right) / 2;
+    let x = Math.round(center - width / 2);
+    if (right - width >= left) x = Math.max(left, Math.min(x, right - width));
+    else x = left;
+    x = Math.max(edge, Math.min(x, vw - width - edge));
+
+    // 垂直：锚在输入框下方；可用高度 = 视口底部余量。
+    const anchorTop = Math.round(anchor.bottom + gap);
+    const available = vh - anchorTop - bottomGap;
+    let top = anchorTop;
+    let maxHeight;
+    if (available >= minHeight) {
+      maxHeight = Math.max(minHeight, Math.min(preferred, available));
+    } else {
+      // 视口过矮：宁可让面板向上多占一点，也要保证分类条 + 至少一行符号键可见，
+      // 而不是只剩分类条。
+      maxHeight = minHeight;
+      top = Math.max(edge, vh - bottomGap - minHeight);
+    }
+    return {
+      left: Math.round(x),
+      top: Math.round(top),
+      width: Math.round(width),
+      maxHeight: Math.round(maxHeight),
+      compact: maxHeight < compactBelow
+    };
+  }
+
   function createInstance(field, kind) {
     const instanceKind = kind === "formula" ? "formula" : "text";
+    const floating = isFloatingAnchor(field);
     const panel = el("div", "mk-panel");
     panel.hidden = true;
     panel.setAttribute("data-mk-panel", "");
     panel.setAttribute("role", "group");
     panel.setAttribute("aria-label", "数学符号键盘");
+    if (floating) {
+      // 悬浮层：position:fixed，不占布局高度，不会把输入区和集合行挤走。
+      panel.classList.add("mk-panel-floating");
+      panel.setAttribute("data-mk-floating", "");
+    }
 
     const head = el("div", "mk-head");
     const tabs = el("div", "mk-tabs");
@@ -464,7 +580,11 @@
       categoryButtons: Object.create(null),
       tabButtons: Object.create(null),
       hintTimer: null,
-      open: false
+      open: false,
+      floating: floating,
+      floatFrame: 0,
+      floatBound: false,
+      floatHandlers: []
     };
 
     for (const category of CATALOG) {
@@ -852,6 +972,119 @@
 
   /* ---------- 展开 / 收起 ---------- */
 
+  function floatingViewport() {
+    const visual = window.visualViewport;
+    const width = (visual && Number(visual.width)) || Number(window.innerWidth) || 0;
+    const height = (visual && Number(visual.height)) || Number(window.innerHeight) || 0;
+    if (width && height) return { width: width, height: height };
+    const html = document.documentElement;
+    return {
+      width: Math.max(0, (html && html.clientWidth) || 0),
+      height: Math.max(0, (html && html.clientHeight) || 0)
+    };
+  }
+
+  function positionFloating(instance) {
+    if (!instance || !instance.floating || !instance.open) return;
+    if (!instance.panel || instance.panel.hidden) return;
+    const anchor = rectOf(instance.field);
+    if (!anchor) {
+      // 锚点已经不在页面上了（切到原文 / 切页 / 表单收起）：直接收起，别留悬空面板。
+      close(instance);
+      return;
+    }
+    let attach = null;
+    let submit = null;
+    try {
+      attach = rectOf(document.querySelector(FLOATING.attachSelector));
+      submit = rectOf(document.querySelector(FLOATING.submitSelector));
+    } catch (error) {
+      /* 其它页面没有这两个按钮，退回输入框宽度 */
+    }
+    const box = computeFloatingBox({
+      anchor: anchor,
+      attach: attach,
+      submit: submit,
+      viewport: floatingViewport()
+    });
+    if (!box) return;
+    instance.panel.style.left = box.left + "px";
+    instance.panel.style.top = box.top + "px";
+    instance.panel.style.width = box.width + "px";
+    instance.panel.style.maxHeight = box.maxHeight + "px";
+    instance.panel.classList.toggle("is-compact", box.compact);
+    instance.box = box;
+  }
+
+  function scheduleFloating(instance) {
+    if (!instance || !instance.floating || !instance.open) return;
+    if (instance.floatFrame) return;
+    const raf = window.requestAnimationFrame || function (fn) {
+      return window.setTimeout(fn, 16);
+    };
+    instance.floatFrame = raf(function () {
+      instance.floatFrame = 0;
+      positionFloating(instance);
+    });
+  }
+
+  function bindFloatingTracking(instance) {
+    if (!instance.floating || instance.floatBound) return;
+    instance.floatBound = true;
+    const update = function () {
+      scheduleFloating(instance);
+    };
+    const add = function (target, type, handler, capture) {
+      if (!target || typeof target.addEventListener !== "function") return;
+      target.addEventListener(type, handler, Boolean(capture));
+      instance.floatHandlers.push([target, type, handler, Boolean(capture)]);
+    };
+    add(window, "resize", update);
+    add(window, "orientationchange", update);
+    add(document, "scroll", update, true);
+    add(instance.field, "input", update);
+    if (window.visualViewport && window.visualViewport.addEventListener) {
+      add(window.visualViewport, "resize", update);
+      add(window.visualViewport, "scroll", update);
+    }
+    // 输入框自己变高变矮（长文换行、视图切换）时跟着挪。
+    if (typeof window.ResizeObserver === "function") {
+      try {
+        const observer = new window.ResizeObserver(update);
+        observer.observe(instance.field);
+        instance.floatObserver = observer;
+      } catch (error) {
+        instance.floatObserver = null;
+      }
+    }
+  }
+
+  function unbindFloatingTracking(instance) {
+    if (!instance || !instance.floatBound) return;
+    instance.floatBound = false;
+    while (instance.floatHandlers.length) {
+      const entry = instance.floatHandlers.pop();
+      try {
+        entry[0].removeEventListener(entry[1], entry[2], entry[3]);
+      } catch (error) {
+        /* 环境不支持时忽略 */
+      }
+    }
+    if (instance.floatObserver) {
+      try {
+        instance.floatObserver.disconnect();
+      } catch (error) {
+        /* 忽略 */
+      }
+      instance.floatObserver = null;
+    }
+    if (instance.floatFrame) {
+      const cancel = window.cancelAnimationFrame;
+      if (typeof cancel === "function") cancel(instance.floatFrame);
+      instance.floatFrame = 0;
+    }
+  }
+
   function open(instance) {
     if (openInstance && openInstance !== instance) close(openInstance);
     instance.panel.hidden = false;
@@ -859,12 +1092,20 @@
     instance.open = true;
     instance.openedAt = Date.now();
     openInstance = instance;
+    if (instance.floating) {
+      // 先定位再显示，避免面板先出现在左上角闪一下。
+      positionFloating(instance);
+      if (!instance.open) return;
+      bindFloatingTracking(instance);
+      scheduleFloating(instance);
+    }
   }
 
   function close(instance) {
     instance.panel.hidden = true;
     instance.panel.classList.remove("is-open");
     instance.open = false;
+    if (instance.floating) unbindFloatingTracking(instance);
     if (openInstance === instance) openInstance = null;
   }
 
@@ -993,15 +1234,13 @@
     }, 0);
   });
 
-  // 从渲染视图切回可编辑 LaTeX 原文时，只收起原稿主编辑器的键盘面板；
-  // 对话补充框的公式面板不受原稿视图切换影响。
-  window.addEventListener("math-draft-view-change", function (event) {
-    if (!openInstance || openInstance.kind !== "formula") return;
-    const mainHost = document.querySelector("#formula-editor-host");
-    if (!mainHost || openInstance.field !== mainHost) return;
-    const view = event && event.detail ? event.detail.view : "";
-    if (view === "rendered") return;
-    close(openInstance);
+  // 切换「原文 / 渲染」后，主页输入框这一侧的符号表要跟着换锚点：旧锚点被藏起来
+  // （rect 变 0）就收起，焦点落到新编辑器时 focusin 会重新开在同一位置。
+  window.addEventListener("math-draft-view-change", function () {
+    if (!openInstance) return;
+    if (!isFloatingAnchor(openInstance.field)) return;
+    if (!rectOf(openInstance.field)) close(openInstance);
+    else scheduleFloating(openInstance);
   });
 
   // 供调试 / 自动化测试读取目录规模，不暴露任何写操作。
@@ -1011,6 +1250,9 @@
     }),
     // 纯函数：只计算这次插入的落点和是否需要包定界符，便于自检。
     planInsert: planInsertion,
-    version: "20261120-calculus-templates"
+    // 纯函数：主页悬浮符号表的位置、宽度与可用高度（不读 DOM）。
+    floatingBox: computeFloatingBox,
+    floatingDefaults: FLOATING,
+    version: "20261120-floating-panel"
   };
 })();

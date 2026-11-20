@@ -24,11 +24,17 @@ class MaterialJobs:
         self.condition = threading.Condition(threading.RLock())
         self.started = False
 
-    def submit(self, owner, text, source, documents=None, metadata=None, source_files=None):
+    def submit(self, owner, text, source, documents=None, metadata=None, source_files=None,
+               conversation_id=None, attachment_ids=None):
         if not isinstance(text, str) or (not text.strip() and not documents) or len(text) > 80000:
             raise ValueError("请提供 1 到 80000 字的资料。")
         if not isinstance(source, str) or not source.strip() or len(source) > 180:
             raise ValueError("请填写 1 到 180 字的资料名称。")
+        if conversation_id is not None and (not isinstance(conversation_id, str) or not conversation_id or len(conversation_id) > 100):
+            raise ValueError("对话 id 格式有误。")
+        if attachment_ids is not None and (not isinstance(attachment_ids, list) or len(attachment_ids) > 20 or
+                                           any(not isinstance(item, str) or not item or len(item) > 100 for item in attachment_ids)):
+            raise ValueError("附件引用格式有误。")
         metadata = batch_metadata(metadata)
         with self.condition:
             now = time.time()
@@ -48,7 +54,9 @@ class MaterialJobs:
                    "text": text, "status": "queued", "created_at": now, "updated_at": now,
                    "token": CancellationToken(), "progress": {}, "result": None, "error": "",
                    "documents": documents or [], "metadata": metadata, "image_bytes": size,
-                   "source_files":source_files or [],"segments":{}}
+                   "source_files":source_files or [],"segments":{},
+                   "conversation_id": conversation_id,
+                   "attachment_ids": list(attachment_ids or [])}
             self.jobs[job["id"]] = job
             self.queue.append(job["id"])
             if not self.started:
@@ -65,6 +73,9 @@ class MaterialJobs:
         result["count"] = len((job["result"] or {}).get("exercises", []))
         result["source_files"]=deepcopy(job.get("source_files",[]))
         result["failed_parts"]=len((job["result"] or {}).get("failures",[]))
+        # 主页统一入口按对话归属批次：同一浏览器里换一条对话不应看到另一条的预览。
+        result["conversation_id"]=job.get("conversation_id")
+        result["attachment_ids"]=list(job.get("attachment_ids") or [])
         if detail:
             result.update(text=job["text"], result=deepcopy(job["result"]), documents=[{key: value for key, value in doc.items() if key != "image"} for doc in job["documents"]])
         return result
@@ -75,9 +86,11 @@ class MaterialJobs:
             raise KeyError("这项任务不存在或已过期。")
         return job
 
-    def list(self, owner):
+    def list(self, owner, conversation_id=None):
         with self.condition:
-            return [self._public(job) for job in reversed(list(self.jobs.values())) if job["owner"] == owner]
+            return [self._public(job) for job in reversed(list(self.jobs.values()))
+                    if job["owner"] == owner
+                    and (conversation_id is None or job.get("conversation_id") == conversation_id)]
 
     def get(self, owner, identity):
         with self.condition:

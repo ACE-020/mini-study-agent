@@ -212,6 +212,80 @@
   outline-offset: 2px;
 }
 
+/* ---------- 主页输入框的悬浮符号表 ----------
+   见 math-keyboard.js 的 FLOATING：position: fixed，锚在输入框下方，宽度只取
+   加号 / 发送两按钮之间的可用区间（两个按钮永远露在外面、可真实点击），高度由 JS
+   按「输入框下方到视口底部」的可用高度写入 max-height。超出后面板自己纵向滚动，
+   所以近底部时也至少能看到分类条和一行符号键，而不是只剩分类条。
+   悬浮层不占布局高度：输入区与「所在集合」不会被挤走；被覆盖的只是下方模型文字 /
+   两个下拉框。 */
+.mk-panel.mk-panel-floating {
+  position: fixed;
+  z-index: 46;
+  margin: 0;
+  padding: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 16px 38px #2c2e5926;
+}
+
+.mk-panel-floating .mk-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+}
+
+.mk-panel-floating .mk-tabs {
+  background: #fff;
+}
+
+/* 纵向滚动交给整个面板：网格不再二次裁切，所有键都能滚到。 */
+.mk-panel-floating .mk-grid {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
+}
+
+.mk-panel.is-compact {
+  padding: 5px 6px;
+}
+
+.mk-panel.is-compact .mk-tab {
+  padding: 3px 5px;
+  font-size: 10.5px;
+}
+
+.mk-panel.is-compact .mk-key {
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.mk-panel.is-compact .mk-key-wide {
+  min-height: 40px;
+}
+
+.mk-panel.is-compact .mk-arrows {
+  margin-top: 3px;
+  padding-top: 3px;
+}
+
+.mk-panel.is-compact .mk-arrow {
+  flex-basis: 28px;
+  min-height: 22px;
+  font-size: 11px;
+}
+
+/* 近底部空间紧张时先让出说明行，把高度留给符号键。 */
+.mk-panel.is-compact .mk-foot {
+  display: none;
+}
+
+.mk-panel.is-compact .mk-key-caption {
+  font-size: 9px;
+}
+
 @media (max-width: 820px) {
   .mk-panel {
     max-height: 260px;

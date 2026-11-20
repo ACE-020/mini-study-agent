@@ -130,7 +130,7 @@
         "tags": [
           "对话"
         ],
-        "description": "所有对话页共用的接口，按 view 区分：\n- organize：整理混合原稿（笔记 + 错题），可带图片；按对话隔离上下文与锁，不同对话可并行处理；\n- notes：整理笔记；\n- review：复习答疑，只看当前题，可附图作答；\n- analysis：分析勾选的笔记/错题/题目，可生成待确认的删除/合并方案。\n同一对话同时只允许一个请求（否则 409）；review/notes/analysis 仍是会话级串行。用 request_id 停止或轮询进度。停止返回 499，context_retained=true 表示已保留上下文可继续对话。",
+        "description": "所有对话页共用的接口，按 view 区分：\n- organize：整理混合原稿（笔记 + 错题），可带图片；按对话隔离上下文与锁，不同对话可并行处理；\n- notes：整理笔记；\n- review：复习答疑，只看当前题，可附图作答；\n- analysis：分析勾选的笔记/错题/题目，可生成待确认的删除/合并方案。\n同一对话同时只允许一个请求（否则 409）；review/notes/analysis 仍是会话级串行。用 request_id 停止或轮询进度。停止返回 499，context_retained=true 表示已保留上下文可继续对话。\nunified=true（仅 organize，主页统一发送入口）时，一条消息里的多个动作按顺序完成，保存/入库仍以工具与既有核对流程的真实结果为准，结果只追加一条 assistant 消息；instruction 只用于动作分派，OCR 转写与拼接内容只作为资料送给模型。",
         "requestBody": {
           "required": true,
           "content": {
@@ -303,16 +303,78 @@
         "operationId": "chat_attachments"
       }
     },
+    "/api/collections": {
+      "get": {
+        "summary": "集合列表",
+        "tags": [
+          "对话"
+        ],
+        "description": "列出本浏览器的对话集合与各自对话数；集合只用于分组，不移动或删除任何对话。",
+        "responses": {
+          "200": {
+            "description": "集合列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionsResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "list_collections"
+      },
+      "post": {
+        "summary": "新建集合",
+        "tags": [
+          "对话"
+        ],
+        "description": "创建用于分组历史对话的集合；名称 1–40 字且不能同名。集合不设数量上限。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "新集合",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "名称非法或同名",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "create_collection"
+      }
+    },
     "/api/conversations": {
       "get": {
         "summary": "历史对话列表",
         "tags": [
           "对话"
         ],
-        "description": "按创建时间倒序（最新在前）返回本浏览器的全部对话摘要；active 是最近一次使用的对话 id。",
+        "description": "按创建时间倒序（最新在前）返回本浏览器的全部对话摘要与集合；active 是最近一次使用的对话 id。历史不设条数上限。",
         "responses": {
           "200": {
-            "description": "对话列表（conversations 与 active）",
+            "description": "对话列表（conversations、active 与 collections）",
             "content": {
               "application/json": {
                 "schema": {
@@ -329,7 +391,7 @@
         "tags": [
           "对话"
         ],
-        "description": "可带 title；新对话立即成为 active。每个浏览器会话最多 20 个对话，超出返回 400。",
+        "description": "可带 title；新对话立即成为 active 并写入历史。不设对话数量上限，不需要先删除旧对话。",
         "requestBody": {
           "required": false,
           "content": {
@@ -352,7 +414,7 @@
             }
           },
           "400": {
-            "description": "标题非法或对话数量已达上限",
+            "description": "标题非法",
             "content": {
               "application/json": {
                 "schema": {
@@ -367,11 +429,11 @@
     },
     "/api/conversations/<identity>": {
       "get": {
-        "summary": "对话详情（含消息与上传区）",
+        "summary": "对话详情（含消息、上传区与附件）",
         "tags": [
           "对话"
         ],
-        "description": "返回摘要、messages（user/assistant/error/notice）与 intake（草稿文字、已上传原图 id）。用于刷新后恢复对话。",
+        "description": "返回摘要、完整 messages（user/assistant/error/notice，不截断条数）、intake（草稿文字、已上传原图 id）与 attachments（本对话文件元数据）。用于刷新或服务重启后恢复对话。",
         "parameters": [
           {
             "name": "identity",
@@ -408,11 +470,11 @@
         "operationId": "conversation_detail_route"
       },
       "patch": {
-        "summary": "保存对话标题或草稿",
+        "summary": "保存对话标题、草稿或集合归属",
         "tags": [
           "对话"
         ],
-        "description": "只保存标题（≤60 字）或上传区草稿文字（≤80000 字），不涉及模型请求；该对话处理中也允许保存草稿。",
+        "description": "保存标题（≤60 字）、上传区草稿文字（≤80000 字）或 collection_id（null 表示移回未归类）。不涉及模型请求；该对话处理中也允许保存草稿与移动。",
         "parameters": [
           {
             "name": "identity",
@@ -456,7 +518,7 @@
             }
           },
           "404": {
-            "description": "对话不存在或已删除",
+            "description": "对话或集合不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -473,7 +535,7 @@
         "tags": [
           "对话"
         ],
-        "description": "删除该对话的消息、上传原图与上下文；处理中返回 409。删除最后一个对话时会自动新建一个空对话并设为 active，返回新的 active。",
+        "description": "删除该对话的消息、草稿、附件原文件与上下文；处理中返回 409。删除最后一个对话时会自动新建一个空对话并设为 active，返回新的 active。",
         "parameters": [
           {
             "name": "identity",
@@ -508,6 +570,16 @@
           },
           "409": {
             "description": "对话正在处理中",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "历史文件无法写入",
             "content": {
               "application/json": {
                 "schema": {
@@ -561,6 +633,414 @@
           }
         },
         "operationId": "activate_conversation"
+      }
+    },
+    "/api/conversations/<identity>/attachments": {
+      "get": {
+        "summary": "本对话文件列表（附件元数据）",
+        "tags": [
+          "对话"
+        ],
+        "description": "列出该对话上传过的原文件：kind=image/pdf/text、名称、大小、页数/图片尺寸、是否可用与占位信息，并给出缩略图/预览/PDF 分页地址。只返回 id 与接口地址，不含本地路径。",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "description": "对话 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "附件列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationAttachmentListResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "对话不存在或已删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "list_attachments"
+      }
+    },
+    "/api/conversations/<identity>/attachments/<attachment_id>/pages/<int:page>": {
+      "get": {
+        "summary": "预览 PDF 附件的某一页",
+        "tags": [
+          "对话"
+        ],
+        "description": "把已保存的 PDF 原文件的指定页渲染为 JPEG。页码从 1 开始，超出范围返回 404。",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "description": "对话 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "description": "附件 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "path",
+            "description": "页码（从 1 开始）",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "页面 JPEG",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "附件不存在、不是 PDF 或页码越界",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "attachment_page"
+      }
+    },
+    "/api/conversations/<identity>/attachments/<attachment_id>/preview": {
+      "get": {
+        "summary": "预览附件原文件",
+        "tags": [
+          "对话"
+        ],
+        "description": "图片返回原图（JPG/PNG/WebP），PDF 返回原 PDF（也可用 pages 接口逐页预览），TXT/Markdown 按 UTF-8 返回文字。附件按对话隔离，只能用本对话的附件 id。",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "description": "对话 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "description": "附件 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "附件内容",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "附件不存在、不属于该对话、原文件未保留或仅有占位信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "attachment_preview"
+      }
+    },
+    "/api/conversations/<identity>/attachments/<attachment_id>/thumbnail": {
+      "get": {
+        "summary": "附件真实缩略图",
+        "tags": [
+          "对话"
+        ],
+        "description": "图片返回缩放后的 JPEG；PDF 返回第一页渲染图；文字文件没有缩略图。旧记录只有占位信息时返回 404，不伪造图片。",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "description": "对话 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "description": "附件 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "缩略图 JPEG",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "附件不存在、不属于该对话、无缩略图或仅有占位信息",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "attachment_thumbnail"
+      }
+    },
+    "/api/conversations/<identity>/move": {
+      "post": {
+        "summary": "把对话移入集合或移回未归类",
+        "tags": [
+          "对话"
+        ],
+        "description": "collection_id 为集合 id；null 表示移回未归类列表。只改分组，不删除消息、草稿或附件。",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "description": "对话 id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationMove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "移动后的摘要",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummaryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求格式有误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "对话或集合不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "历史文件无法写入",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "move_conversation"
       }
     },
     "/api/exercises": {
@@ -858,7 +1338,25 @@
                   "format": "binary"
                 }
               },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
               "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -943,7 +1441,7 @@
         "tags": [
           "学习内容"
         ],
-        "description": "清空指定对话（省略则为当前 active 对话）的未提交草稿文字与上传原图；不影响复习问答、已保存记录和其他对话。",
+        "description": "清空指定对话（省略则为当前 active 对话）正在编辑的未提交草稿文字、当前原稿图片与模型上下文；历史消息、集合归属和已接受的附件目录保留，其他对话与复习问答也不受影响。",
         "requestBody": {
           "required": false,
           "content": {
@@ -956,7 +1454,7 @@
         },
         "responses": {
           "200": {
-            "description": "已清空",
+            "description": "已清空上传区（历史与附件保留）",
             "content": {
               "application/json": {
                 "schema": {
@@ -1005,7 +1503,7 @@
         "tags": [
           "学习内容"
         ],
-        "description": "把上传的图片/PDF 转成“原页图像 + 版面标签”，直接交给视觉模型拆题时不产生文字中间层。不调用模型。",
+        "description": "把上传的图片/PDF 转成“原页图像 + 版面标签”，直接交给视觉模型拆题时不产生文字中间层。不调用模型。返回的 attachments[*].page_ids 与 pages[*].attachment_id 给出“原页 id ↔ 本对话附件 id”的对应关系，随后可直接用 POST /api/materials/jobs {conversation_id, attachment_ids} 复用原文件做资料预览。",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -1337,7 +1835,25 @@
                   "format": "binary"
                 }
               },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
               "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -1476,7 +1992,25 @@
                   "format": "binary"
                 }
               },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
               "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -1509,6 +2043,18 @@
         "tags": [
           "资料整理"
         ],
+        "description": "按会话列出后台批次。带 conversation_id 时只返回归属这条对话的批次（主页切换对话不串数据）；省略则保持原行为列出全部。",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "query",
+            "description": "只列出归属这条对话的批次",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "任务列表",
@@ -1529,6 +2075,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "对话不存在或已删除",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "operationId": "material_jobs"
@@ -1538,7 +2094,7 @@
         "tags": [
           "资料整理"
         ],
-        "description": "提交后立即返回 202 与任务 id，后台线程去识别/拆题；用户核对预览后才入库。表单一式（带 files）与 JSON 两种提交方式都支持。",
+        "description": "提交后立即返回 202 与任务 id，后台线程去识别/拆题；用户核对预览后才入库。表单一式（带 files）、JSON 的 source_file_ids 与 text 三种来源都支持。主页可直接复用这条对话已接受的原文件：传 conversation_id + attachment_ids，不必让用户重新选择/上传；附件归属按该对话校验，混用其他对话的附件返回 404。确认入库仍走 POST /api/exercises（confirmed=true），本接口从不写题库。",
         "requestBody": {
           "content": {
             "multipart/form-data": {
@@ -1560,6 +2116,10 @@
                   },
                   "text": {
                     "type": "string"
+                  },
+                  "conversation_id": {
+                    "type": "string",
+                    "description": "把批次归属到这条对话"
                   }
                 }
               }
@@ -1584,6 +2144,16 @@
           },
           "400": {
             "description": "资料名称/内容/页数非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "对话或附件不存在",
             "content": {
               "application/json": {
                 "schema": {
@@ -1764,7 +2334,25 @@
                   "format": "binary"
                 }
               },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
               "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -2155,7 +2743,25 @@
                   "format": "binary"
                 }
               },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
               "text/markdown": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "text/plain": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -2577,14 +3183,14 @@
     },
     "/api/reset": {
       "post": {
-        "summary": "清除临时会话",
+        "summary": "清除临时会话（保留历史）",
         "tags": [
           "系统"
         ],
-        "description": "清空本会话的对话上下文、临时图片与待确认方案；已保存的笔记/错题/题库不受影响。请求处理中返回 409。",
+        "description": "只清空进程内的临时状态：临时预览、待确认方案、材料任务归属与后台上下文。历史对话、集合、草稿、消息和已接受的附件都会保留，服务重启后仍可读回；删除单条历史请用 DELETE /api/conversations/{id}。请求处理中返回 409。",
         "responses": {
           "200": {
-            "description": "已清除",
+            "description": "已清除临时会话（历史保留）",
             "content": {
               "application/json": {
                 "schema": {
@@ -3190,6 +3796,16 @@
             "maxLength": 80000,
             "description": "可选：仅 organize，本轮在对话历史中展示给用户的文字；省略时用 message。用于把给模型的整理指令与用户可见原稿分开。"
           },
+          "instruction": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80000,
+            "description": "可选：仅 organize 且 unified=true。用户本轮自己输入的指令，只用于动作分派；OCR 转写、原稿拼接等资料不要放在这里。省略时用 message。"
+          },
+          "unified": {
+            "type": "boolean",
+            "description": "可选：仅 organize。打开主页统一发送入口：一条消息里的多个动作按顺序完成，结果只追加一条 assistant 消息，并返回 unified/route/intake 说明。默认 false，旧调用行为不变。"
+          },
           "request_id": {
             "type": "string",
             "maxLength": 100,
@@ -3306,6 +3922,45 @@
           "conversation_id": {
             "type": "string",
             "description": "仅 organize：本轮消息记入的对话 id"
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "chat+intake",
+              "materials_intake"
+            ],
+            "description": "仅统一发送：chat=普通对话；chat+intake=对话里还要求资料入库；materials_intake=只要求资料入库（未请求模型）"
+          },
+          "unified": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnifiedTurnPlan"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "仅统一发送：本轮动作计划"
+          },
+          "one_user_message": {
+            "type": "boolean",
+            "description": "仅统一发送：整轮只追加一条用户消息与一条 assistant 消息"
+          },
+          "intake": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UnifiedIntakeDirective"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "仅统一发送且要求资料入库时：既有预览/核对/确认流程的接入约定"
+          },
+          "warning": {
+            "type": "string",
+            "description": "历史记录未能写入磁盘时的提示"
           }
         }
       },
@@ -3323,6 +3978,87 @@
           "conversation_id": {
             "type": "string",
             "description": "整理页目标对话；省略则用当前 active 对话"
+          }
+        }
+      },
+      "Collection": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "created_at",
+          "updated_at",
+          "conversation_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "conversation_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "CollectionCreate": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          }
+        },
+        "additionalProperties": false
+      },
+      "CollectionResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "collection"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "collection": {
+            "$ref": "#/components/schemas/Collection"
+          }
+        }
+      },
+      "CollectionsResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "collections"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Collection"
+            }
           }
         }
       },
@@ -3386,6 +4122,144 @@
           }
         }
       },
+      "ConversationAttachment": {
+        "type": "object",
+        "description": "对话上传过的原文件元数据。只含 id 与接口地址，不含本地路径；available=false / placeholder=true 表示旧记录只保留了占位信息。",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "mime",
+          "size",
+          "available",
+          "placeholder",
+          "legacy",
+          "thumbnail_url",
+          "preview_url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "image",
+              "pdf",
+              "text"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "展示用文件名（已去掉目录与控制字符）"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "page_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "width": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "height": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "原文件是否仍可读"
+          },
+          "placeholder": {
+            "type": "boolean",
+            "description": "是否只能显示占位信息"
+          },
+          "legacy": {
+            "type": "boolean",
+            "description": "是否来自旧版数据/旧页面图"
+          },
+          "reason": {
+            "type": "string",
+            "description": "不可用或占位时的说明"
+          },
+          "thumbnail_url": {
+            "type": "string"
+          },
+          "preview_url": {
+            "type": "string"
+          },
+          "pages_url": {
+            "type": "string",
+            "description": "仅 PDF：把 {page} 换成页码的预览地址"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConversationAttachmentListResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "conversation_id",
+          "attachments",
+          "counts"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationAttachment"
+            }
+          },
+          "counts": {
+            "type": "object",
+            "required": [
+              "total",
+              "image",
+              "document",
+              "unavailable"
+            ],
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "image": {
+                "type": "integer"
+              },
+              "document": {
+                "type": "integer"
+              },
+              "unavailable": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
       "ConversationCreate": {
         "type": "object",
         "properties": {
@@ -3406,7 +4280,8 @@
             "type": "object",
             "required": [
               "messages",
-              "intake"
+              "intake",
+              "attachments"
             ],
             "properties": {
               "messages": {
@@ -3417,6 +4292,12 @@
               },
               "intake": {
                 "$ref": "#/components/schemas/ConversationIntake"
+              },
+              "attachments": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ConversationAttachment"
+                }
               }
             }
           }
@@ -3469,7 +4350,8 @@
         "required": [
           "ok",
           "active",
-          "conversations"
+          "conversations",
+          "collections"
         ],
         "properties": {
           "ok": {
@@ -3484,6 +4366,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ConversationSummary"
+            }
+          },
+          "collections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Collection"
             }
           }
         }
@@ -3516,9 +4404,25 @@
         },
         "additionalProperties": false
       },
+      "ConversationMove": {
+        "type": "object",
+        "required": [
+          "collection_id"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "目标集合 id；null 表示移回未归类"
+          }
+        },
+        "additionalProperties": false
+      },
       "ConversationPatch": {
         "type": "object",
-        "description": "只保存标题或上传区草稿；两者都可省略各自的字段。",
+        "description": "保存标题、上传区草稿或集合归属；三者都可省略各自的字段。",
         "properties": {
           "title": {
             "type": "string",
@@ -3529,6 +4433,13 @@
             "type": "string",
             "maxLength": 80000,
             "description": "上传区草稿文字"
+          },
+          "collection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "目标集合 id；null 移回未归类"
           }
         },
         "additionalProperties": false
@@ -3555,14 +4466,15 @@
       },
       "ConversationSummary": {
         "type": "object",
-        "description": "历史对话摘要：列表与详情共用。busy 表示该对话是否有请求在处理。",
+        "description": "历史对话摘要：列表与详情共用。busy 表示该对话是否有请求在处理；collection_id 为 null 表示未归入集合。",
         "required": [
           "id",
           "title",
           "created_at",
           "updated_at",
           "busy",
-          "message_count"
+          "message_count",
+          "collection_id"
         ],
         "properties": {
           "id": {
@@ -3589,7 +4501,14 @@
           "message_count": {
             "type": "integer",
             "minimum": 0,
-            "description": "已记录的消息条数（每个对话最多保留最近 200 条）"
+            "description": "已记录的可见消息条数；历史不截断条数"
+          },
+          "collection_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "所属集合 id；null 表示未归类"
           }
         },
         "additionalProperties": false
@@ -4115,40 +5034,8 @@
           "text",
           "image_ids",
           "pages",
-          "metadata"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "const": true
-          },
-          "text": {
-            "type": "string"
-          },
-          "image_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "pages": {
-            "type": "array",
-            "items": {
-              "type": "object"
-            }
-          },
-          "metadata": {
-            "type": "object"
-          }
-        }
-      },
-      "IntakeReadResult": {
-        "type": "object",
-        "required": [
-          "ok",
-          "text",
-          "image_ids",
-          "pages"
+          "metadata",
+          "attachments"
         ],
         "properties": {
           "ok": {
@@ -4169,6 +5056,97 @@
             "items": {
               "$ref": "#/components/schemas/PageInfo"
             }
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "attachments": {
+            "type": "array",
+            "description": "本次新接受的原文件（含缩略图/预览地址）与它生成的 image_ids（page_ids）",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "kind",
+                "name",
+                "page_ids"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "image",
+                    "pdf",
+                    "text"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "mime": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "available": {
+                  "type": "boolean"
+                },
+                "thumbnail_url": {
+                  "type": "string"
+                },
+                "preview_url": {
+                  "type": "string"
+                },
+                "page_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "IntakeReadResult": {
+        "type": "object",
+        "required": [
+          "ok",
+          "text",
+          "image_ids",
+          "pages",
+          "attachments"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "text": {
+            "type": "string"
+          },
+          "image_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PageInfo"
+            }
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationAttachment"
+            },
+            "description": "本次新接受的原文件；可用 id 在 /api/materials/jobs 里按当前对话复用"
           }
         }
       },
@@ -4250,6 +5228,20 @@
               "type": "object"
             },
             "description": "保留的原文件引用"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "批次所属对话；从主页发起的批次带此字段，可用于按对话过滤"
+          },
+          "attachment_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "本批次复用的本对话附件 id"
           }
         }
       },
@@ -4338,19 +5330,16 @@
       },
       "MaterialJobSubmit": {
         "type": "object",
-        "required": [
-          "source"
-        ],
         "properties": {
           "source": {
             "type": "string",
             "maxLength": 180,
-            "description": "资料名称，会显示在任务列表与入库来源中"
+            "description": "资料名称，会显示在任务列表与入库来源中；省略时按附件名或对话生成"
           },
           "text": {
             "type": "string",
             "maxLength": 80000,
-            "description": "已粘贴/读取的资料文字"
+            "description": "已粘贴/读取的资料文字（纯文字资料可只传它）"
           },
           "page_range": {
             "type": "string",
@@ -4364,6 +5353,20 @@
               "maxLength": 100
             },
             "description": "复用之前保留的原文件"
+          },
+          "conversation_id": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "把批次归属到这条对话；省略则不归属（按对话过滤时看不到）"
+          },
+          "attachment_ids": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "复用这条对话已接受的原文件（不必让用户重新选择/上传）；需同时提供 conversation_id，附件归属按该对话校验"
           },
           "metadata": {
             "type": "object",
@@ -4859,6 +5862,10 @@
           },
           "page_index": {
             "type": "integer"
+          },
+          "attachment_id": {
+            "type": "string",
+            "description": "仅 /api/intake/prepare：这张原页来自哪个本对话附件"
           },
           "method": {
             "type": "string"
@@ -5796,6 +6803,213 @@
           },
           "value": {
             "type": "object"
+          }
+        }
+      },
+      "UnifiedIntakeDirective": {
+        "type": "object",
+        "description": "本条消息里还要求资料预览/入库时返回：只给既有“预览 → 核对 → 确认”流程的入口，聊天本轮不写题库。prepare.json 是可直接提交的请求体，attachment_ids 复用本对话已接受的原文件。",
+        "required": [
+          "route",
+          "requires_confirmation",
+          "auto_write",
+          "conversation_id",
+          "prepare"
+        ],
+        "properties": {
+          "route": {
+            "type": "string",
+            "const": "materials"
+          },
+          "requires_confirmation": {
+            "type": "boolean",
+            "const": true
+          },
+          "auto_write": {
+            "type": "boolean",
+            "const": false
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "conversation_id": {
+            "type": "string",
+            "description": "预览与聊天结果所属的对话"
+          },
+          "endpoints": {
+            "type": "object",
+            "description": "既有资料流程的端点表"
+          },
+          "prepare": {
+            "type": "object",
+            "required": [
+              "endpoint",
+              "method",
+              "json"
+            ],
+            "properties": {
+              "endpoint": {
+                "type": "string",
+                "const": "/api/materials/jobs"
+              },
+              "method": {
+                "type": "string",
+                "const": "POST"
+              },
+              "json": {
+                "type": "object",
+                "description": "可直接提交的请求体（conversation_id/attachment_ids/source/text）",
+                "properties": {
+                  "conversation_id": {
+                    "type": "string"
+                  },
+                  "attachment_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "UnifiedTurnPlan": {
+        "type": "object",
+        "description": "统一发送入口对本轮消息的解析结果（只读展示，供前端决定是否打开预览面板）。",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "label",
+                "prompt"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "organize_mistake",
+                    "organize_note",
+                    "practice",
+                    "question"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string",
+                  "description": "该动作沿用的原有提示与工具"
+                }
+              }
+            }
+          },
+          "multi_action": {
+            "type": "boolean"
+          },
+          "deferred_practice": {
+            "type": "boolean",
+            "description": "练习排在整理之后，由程序在整理完成后接续"
+          },
+          "practice": {
+            "type": "object",
+            "properties": {
+              "requested": {
+                "type": "boolean"
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "library",
+                  "generate"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              }
+            }
+          },
+          "intake": {
+            "type": "object",
+            "properties": {
+              "requested": {
+                "type": "boolean"
+              },
+              "upload": {
+                "type": "boolean"
+              },
+              "requires_confirmation": {
+                "type": "boolean",
+                "const": true
+              },
+              "auto_write": {
+                "type": "boolean",
+                "const": false
+              },
+              "stages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "attachment": {
+            "type": "object",
+            "properties": {
+              "purpose": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "mistake",
+                  "note",
+                  "material",
+                  "answer",
+                  "question",
+                  "mixed",
+                  "unknown"
+                ]
+              },
+              "ask_once": {
+                "type": "boolean"
+              },
+              "retain_raw": {
+                "type": "boolean",
+                "const": true
+              }
+            }
+          },
+          "teaching": {
+            "type": "object",
+            "properties": {
+              "rules": {
+                "type": "string"
+              },
+              "one_step": {
+                "type": "boolean"
+              },
+              "attachments_optional": {
+                "type": "boolean"
+              }
+            }
           }
         }
       }

@@ -1,0 +1,1938 @@
+/* 统一对话首页：全局窄导航、左侧历史、居中对话、右侧本对话文件。
+   交互状态由 home-panels.js 通过 data 属性与 CSS 变量输出；本文件只负责布局与过渡。 */
+
+:root {
+  --home-nav-collapsed: 72px;
+  /* 与原站导航展开宽度一致：>1150px 为 224px，<=1150px 为 200px。 */
+  --home-nav-expanded: 224px;
+  --home-topbar: 64px;
+  --home-line: #e8eaf1;
+  --home-purple: #6558c9;
+  --home-purple-soft: #eeebfc;
+  --home-canvas: #f6f7fb;
+  --home-ink: #252b3b;
+  --home-muted: #767c90;
+}
+
+@media (max-width: 1150px) {
+  :root {
+    --home-nav-expanded: 200px;
+  }
+}
+
+body.home-shell {
+  overflow: hidden;
+  background: var(--home-canvas);
+}
+
+body.home-shell .app-shell {
+  display: block;
+  min-height: 100dvh;
+}
+
+/* ---------- 全局导航：窄栏 + 500ms 浮层 ---------- */
+
+.home-nav {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 40;
+  width: var(--home-nav-collapsed);
+  padding: 14px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow: hidden;
+  white-space: nowrap;
+  background: #fff;
+  border-right: 1px solid var(--home-line);
+  transition: width 0.22s cubic-bezier(0.22, 0.8, 0.26, 1), box-shadow 0.22s ease;
+}
+
+.home-nav[data-home-nav="open"] {
+  width: var(--home-nav-expanded);
+  box-shadow: 16px 0 44px #2d284a1c;
+}
+
+.home-nav .home-nav-brand {
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 3px 7px;
+  border-radius: 13px;
+  font-size: 21px;
+  letter-spacing: 1.4px;
+  overflow: hidden;
+}
+
+.home-nav .home-nav-brand .brand-mark {
+  width: 38px;
+  height: 42px;
+  border-radius: 12px;
+  flex: none;
+}
+
+.home-nav .home-nav-brand .brand-mark svg {
+  width: 23px;
+  height: 23px;
+}
+
+.home-nav-brand-text {
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.home-nav[data-home-nav="open"] .home-nav-brand-text {
+  opacity: 1;
+  transform: none;
+}
+
+.home-nav .home-nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 0;
+}
+
+.home-nav .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #6f7488;
+  font-size: 14px;
+  overflow: hidden;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.home-nav .nav-item svg {
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+
+.home-nav .nav-item:hover {
+  background: #f7f6fc;
+}
+
+.home-nav .nav-item.active {
+  color: var(--home-purple);
+  background: var(--home-purple-soft);
+  font-weight: 600;
+}
+
+.home-nav-label {
+  opacity: 0;
+  width: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.home-nav[data-home-nav="open"] .home-nav-label {
+  opacity: 1;
+  width: auto;
+  transform: none;
+}
+
+.home-nav .nav-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f1eefb;
+  color: #7367b7;
+  font-size: 10px;
+  line-height: 18px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.home-nav[data-home-nav="open"] .nav-count {
+  opacity: 1;
+}
+
+.home-nav-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 4px;
+  color: #9aa0b0;
+  font-size: 10px;
+}
+
+.home-nav:not([data-home-nav="open"]) .home-nav-foot span:last-child {
+  display: none;
+}
+
+/* ---------- 主区域与顶部工具条 ---------- */
+
+.home-main {
+  margin-left: var(--home-nav-collapsed);
+  width: calc(100% - var(--home-nav-collapsed));
+  height: 100dvh;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.home-topbar {
+  position: relative;
+  flex: none;
+  height: var(--home-topbar);
+  min-height: var(--home-topbar);
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--home-line);
+  z-index: 20;
+}
+
+.home-topbar .breadcrumb {
+  min-width: 0;
+  color: var(--home-muted);
+  font-size: 12px;
+}
+
+.home-topbar .breadcrumb strong {
+  color: #4b4563;
+  font-weight: 600;
+}
+
+.home-topbar .topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.home-model-status {
+  max-width: 170px;
+  margin-right: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.home-shell .page-content {
+  flex: 1;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+body.home-shell .page-heading {
+  display: none !important;
+}
+
+body.home-shell .view:not(.home-view) {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 22px clamp(14px, 3vw, 32px) 96px;
+}
+
+.home-view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.home-view[hidden] {
+  display: none !important;
+}
+
+.home-view > #notice,
+.home-view > #config-banner {
+  margin: 10px 16px 0;
+}
+
+/* ---------- 三栏骨架 ---------- */
+
+.home-panels {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+  background: var(--home-canvas);
+}
+
+.home-side-panel {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: #fff;
+  transition: width 0.24s cubic-bezier(0.22, 0.8, 0.26, 1);
+}
+
+.home-history-panel {
+  width: var(--home-left-width, 0px);
+  border-right: 1px solid var(--home-line);
+}
+
+.home-files-panel {
+  width: var(--home-right-width, 0px);
+  border-left: 1px solid var(--home-line);
+}
+
+.home-panels[data-home-left="closed"] .home-history-panel {
+  border-right: 0;
+}
+
+.home-panels[data-home-right="closed"] .home-files-panel {
+  border-left: 0;
+}
+
+.home-panel-inner {
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.home-history-inner {
+  /* 左栏可拖到 196px（home-panels.js 的 minLeftWidth）。250px 的旧下限会让它在
+     196px 时被外层裁掉，这里把内部布局一起收紧到 184px，保证下限处不截断。 */
+  min-width: 184px;
+  padding: 14px 12px 10px;
+  gap: 12px;
+}
+
+.home-files-inner {
+  min-width: 296px;
+  padding: 18px 16px;
+}
+
+/* 分隔手柄：不占布局宽度，用伪元素在边界两侧覆盖 10px 拖拽区，
+   这样 JS 的最小对话宽度计算与可见对话宽度一致。 */
+
+.home-resize-handle {
+  flex: 0 0 auto;
+  width: 0;
+  align-self: stretch;
+  position: relative;
+  z-index: 6;
+  overflow: visible;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.home-panels[data-home-left="closed"] .home-resize-left,
+.home-panels[data-home-right="closed"] .home-resize-right {
+  pointer-events: none;
+}
+
+.home-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
+  background: transparent;
+}
+
+.home-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.15s ease, width 0.15s ease;
+  pointer-events: none;
+}
+
+.home-resize-handle:hover::after,
+.home-resize-handle:focus-visible::after {
+  width: 2px;
+  background: #c8c0ee;
+}
+
+.home-resize-handle:focus-visible {
+  outline: none;
+}
+
+.home-resize-handle:focus-visible::after {
+  background: var(--home-purple);
+}
+
+.home-panels[data-home-dragging] .home-side-panel {
+  transition: none !important;
+}
+
+/* ---------- 左栏：品牌、固定新聊天、集合与历史 ---------- */
+
+.home-history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  flex: none;
+  padding: 2px 2px 0;
+}
+
+.home-history-brand {
+  font-size: 22px;
+  letter-spacing: 1.4px;
+  min-width: 0;
+}
+
+.home-history-brand .brand-mark {
+  width: 38px;
+  height: 42px;
+  border-radius: 12px;
+  flex: none;
+}
+
+.home-history-brand > span:last-child {
+  white-space: nowrap;
+}
+
+.home-new-chat {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #ded8f5;
+  border-radius: 12px;
+  background: var(--home-purple-soft);
+  color: #564aa8;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.home-new-chat:hover {
+  background: #e6e1fb;
+  border-color: #cfc5f0;
+}
+
+.home-new-chat svg {
+  width: 16px;
+  height: 16px;
+}
+
+.home-history-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding-right: 2px;
+}
+
+.home-section-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 7px;
+}
+
+.home-section-head h2 {
+  margin: 0;
+  color: #7a7690;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+}
+
+.home-history-title {
+  margin-top: 10px;
+}
+
+.home-collections {
+  flex: none;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #f0eef6;
+}
+
+.home-collection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px 8px;
+}
+
+.home-collection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #fbfbfe;
+  color: #615b78;
+  font-size: 12px;
+}
+
+.home-collection-row strong {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-collection-row small {
+  color: #a19bad;
+  font-size: 10px;
+  flex: none;
+}
+
+#organize-follow-form .formula-follow-pane {
+  display: none !important;
+}
+
+.home-file-card a.text-button {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 10.5px;
+}
+
+.home-panel-empty {
+  margin: 0;
+  padding: 9px 8px;
+  color: #a09cad;
+  font-size: 11px;
+  line-height: 1.7;
+  border: 1px dashed #e5e2f0;
+  border-radius: 9px;
+  text-align: center;
+}
+
+.home-history-panel .conversation-list {
+  flex: 1;
+  max-height: none;
+  overflow-y: auto;
+  padding: 0 2px 6px;
+  gap: 4px;
+}
+
+.home-history-panel .conversation-item {
+  background: #fbfbfe;
+  border-color: transparent;
+}
+
+.home-history-panel .conversation-item:hover {
+  background: #f6f4fd;
+  border-color: #e8e3f7;
+}
+
+.home-history-panel .conversation-item.active {
+  background: var(--home-purple-soft);
+  border-color: #ded6fa;
+}
+
+.home-history-panel .conversation-open {
+  padding: 8px 6px 8px 9px;
+}
+
+.home-history-panel .conversation-hint {
+  flex: none;
+  padding: 7px 4px 0;
+  color: #a09cad;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.home-drawer-close {
+  display: none;
+  flex: none;
+}
+
+.home-icon-button.home-drawer-close {
+  display: none;
+}
+
+/* 旧的“清空本次上传”不再出现在首页；模块与监听保留给开发/兼容入口。 */
+#clear-intake {
+  display: none !important;
+}
+
+/* ---------- 中间：对话与输入 ---------- */
+
+.home-conversation {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #f8f8fd 0%, var(--home-canvas) 46%);
+}
+
+.home-conversation-head {
+  flex: none;
+  min-height: 54px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-panel-toggle {
+  flex: none;
+  width: 38px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e4e0f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #756d92;
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease;
+}
+
+.home-panel-toggle:hover {
+  background: #f7f5fe;
+  border-color: #d6cff0;
+  color: #5d51a8;
+}
+
+.home-panel-toggle[aria-expanded="true"] {
+  background: var(--home-purple-soft);
+  border-color: #d9d1f5;
+  color: var(--home-purple);
+}
+
+.home-panel-toggle svg {
+  width: 19px;
+  height: 19px;
+}
+
+.home-conversation-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.home-conversation-title strong {
+  max-width: 100%;
+  color: #3b3550;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-conversation-title small {
+  color: #9b96ab;
+  font-size: 10px;
+}
+
+.home-conversation-title small:empty {
+  display: none;
+}
+
+.home-chat-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 空白会话：引导语与输入框作为一组贴近顶部，给下面的真实输入区留出高度。
+   出现消息后只保留输入框在底部，消息区自行滚动。
+   三行说明同一字号（取旧标题与旧副文案之间），第四行只作提示。 */
+.home-empty-copy {
+  display: none;
+  flex: none;
+  width: 100%;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0 18px;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.home-panels[data-home-empty="true"] .home-chat-body {
+  justify-content: flex-start;
+  gap: 16px;
+  padding: clamp(10px, 4vh, 40px) 0 12px;
+}
+
+.home-panels[data-home-empty="true"] .home-empty-copy {
+  display: flex;
+}
+
+.home-panels[data-home-empty="true"] #organize-messages,
+.home-panels[data-home-empty="true"] #organize-suggestions,
+.home-panels[data-home-empty="true"] #organize-results,
+.home-panels[data-home-empty="true"] #organize-trace,
+.home-panels[data-home-empty="true"] #organize-operation,
+.home-panels[data-home-empty="true"] #organize-follow-form {
+  display: none !important;
+}
+
+.home-panels[data-home-empty="true"] .home-composer-wrap {
+  background: transparent;
+  /* 底边与「所在集合」行之间只留 10px 页面边距：输入区长高时以集合行末边为准
+     （math-input-mode.js 直接测量 .home-compose-meta 的末边）。 */
+  padding-bottom: 10px;
+}
+
+/* 首屏输入区初始更高：删掉「图片 · PDF · TXT · Markdown」独立提示行后，腾出的
+   纵向空间直接给真正的文字区（宽度仍是 840px 上限，不变）；顶边上移、底边落到
+   原附件提示行所在的位置。MathLive 字段本身的下限与 JS 的最小可用高度保持一致
+   （120px），更高的初始观感由外框 min-height 提供，避免矮窗口里字段高度下限
+   反而把集合行顶出视口。 */
+.home-panels[data-home-empty="true"] .home-composer-inner {
+  padding: 10px 14px 12px;
+}
+
+.home-panels[data-home-empty="true"] #draft {
+  min-height: 132px;
+}
+
+.home-panels[data-home-empty="true"] .home-composer-panel .formula-editor-host {
+  min-height: 168px;
+}
+
+.home-panels[data-home-empty="true"] .home-composer-panel .formula-editor-host math-field {
+  min-height: 120px;
+}
+
+/* 三行说明共用同一字号：介于旧标题 clamp(28-40px) 与旧副文案 clamp(15-18px) 之间。
+   第四行「都在这里输入 ↓」只作提示，比说明小一档，不参与同字号组。 */
+.home-empty-copy h1,
+.home-empty-line {
+  margin: 0;
+  color: #2c2a42;
+  font-size: clamp(21px, 2.2vw, 26px);
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -0.3px;
+}
+
+.home-empty-copy h1 {
+  font-weight: 700;
+}
+
+.home-empty-line {
+  color: #4d4664;
+}
+
+.home-empty-line + .home-empty-line {
+  margin-top: 2px;
+}
+
+.home-empty-hint {
+  margin: 10px 0 0;
+  color: #a29bb5;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#organize-messages {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  padding: 10px clamp(16px, 4vw, 56px) 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+#organize-messages > * {
+  width: 100%;
+  max-width: 840px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#organize-messages .empty-chat {
+  display: none;
+}
+
+#organize-messages .message {
+  border-bottom: 1px solid #eceaf4;
+}
+
+#organize-messages .message-body,
+#organize-messages .message.user .message-body {
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+#organize-messages .message.user .message-body {
+  background: #f1effa;
+  border-radius: 12px;
+  max-height: 260px;
+}
+
+#organize-messages .message-label {
+  font-size: 11px;
+}
+
+.home-results {
+  flex: none;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 56px);
+  width: 100%;
+}
+
+.home-results:empty {
+  display: none;
+}
+
+.home-results h2 {
+  margin: 8px 0;
+  color: #6b6285;
+  font-size: 12px;
+}
+
+#organize-trace {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 56px);
+  width: 100%;
+}
+
+#organize-trace[hidden] {
+  display: none;
+}
+
+#organize-operation {
+  margin: 0 auto 8px;
+  width: calc(100% - clamp(32px, 8vw, 112px));
+  max-width: 840px;
+}
+
+#organize-suggestions {
+  flex: none;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 56px) 8px;
+}
+
+/* 旧补充输入框只保留队列渲染，不再作为可见输入；唯一可见输入是 #draft。 */
+#organize-follow-form {
+  display: none !important;
+  flex: none;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 56px) 6px;
+  border: 0;
+  background: none;
+}
+
+#organize-follow-form:has(.chat-queue:not([hidden])) {
+  display: block !important;
+}
+
+#organize-follow-form > textarea,
+#organize-follow-form .composer-toolbar,
+#organize-follow-form .composer-status,
+#organize-follow-form > button[type="submit"],
+#organize-follow-form [data-steer-draft] {
+  display: none !important;
+}
+
+/* ---------- 输入区：固定在对话底部，随可见区域居中 ---------- */
+
+.home-composer-wrap {
+  flex: none;
+  padding: 0 clamp(12px, 3vw, 32px) 18px;
+  background: linear-gradient(180deg, #f6f7fb00 0%, #f6f7fb 42%);
+}
+
+#source-panel.home-composer-panel {
+  width: 100%;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.home-composer-inner {
+  padding: 9px 14px 11px;
+  border: 1px solid #e2ddf2;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 12px 34px #2c2e5914;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.home-composer-inner:focus-within {
+  border-color: #cbc1ef;
+  box-shadow: 0 14px 38px #4b3ba01c;
+}
+
+.home-compose-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+}
+
+.home-compose-head > label {
+  color: #8a839e;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+}
+
+.home-compose-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.home-compose-tools .text-button {
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+#draft {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  /* 高度由 math-input-mode.js 按内容与视口算：先随内容长高，触及视口边界后
+     只让输入区自己纵向滚动。这里不再用固定 max-height 把内容裁掉。 */
+  max-height: none;
+  margin: 2px 0 0;
+  padding: 7px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--home-ink);
+  font-size: 15px;
+  line-height: 1.75;
+  resize: none;
+  outline: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 长中文 / 连续英文 / 粘贴多行都按原生折行显示，绝不靠裁剪藏内容。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+#draft::placeholder {
+  color: #a8a3b6;
+}
+
+/* 上次把这里限到 190px：MathLive 内容 + 符号面板一起被压扁，面板只剩分类条。
+   现在不限高，纵向高度交给 math-field 自己的 max-height（JS 计算）。 */
+.home-composer-panel .formula-pane {
+  margin: 2px 0 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-height: none;
+  overflow: visible;
+}
+
+.home-composer-panel .formula-editor-host {
+  min-height: 118px;
+  /* 纵向滚动交给 math-field 自己（MathLive 的 caret 跟随也认它的 scrollTop）。 */
+  overflow: hidden;
+}
+
+.home-composer-panel .formula-editor-host math-field {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 主页主稿不允许出现横向滚动条：软换行覆盖不到的超宽单个数学盒由
+   math-input-mode.js 检测（content.scrollWidth > clientWidth）并自动切到
+   「原文」层（LaTeX 原文，可折行、可编辑），所以这里直接关掉内部横滚。
+   其他页面的 .formula-editor-host（对话补充框 / 资料 / 复习）仍保留旧的横滚。 */
+.home-composer-panel .formula-editor-host math-field::part(content) {
+  overflow-x: hidden;
+}
+
+.home-composer-panel .formula-hint {
+  display: none;
+}
+
+.home-file-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 6px;
+}
+
+.home-file-queue:empty {
+  display: none;
+}
+
+.home-file-queue .queued-file {
+  padding: 5px 7px;
+  border-radius: 8px;
+  background: #f8f7fd;
+}
+
+.home-file-queue .queued-file span {
+  font-size: 11px;
+}
+
+/* 附件提示行已删（「图片 · PDF · TXT · Markdown」不再单占一行），这一行只在真要
+   显示 PDF 页码或恢复提示时才占高度，平时把空间让给上面的文字区。 */
+.home-intake-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+}
+
+.home-intake-row:has(> .page-range-field:not([hidden])),
+.home-intake-row:has(> #intake-restored-hint:not([hidden])) {
+  min-height: 34px;
+  margin-top: 4px;
+}
+
+.home-attach {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e4e0f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #675d8d;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.home-attach:hover {
+  background: #f6f4fd;
+  border-color: #d5cef0;
+}
+
+.home-attach svg {
+  width: 17px;
+  height: 17px;
+}
+
+.home-intake-row .page-range-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+
+.home-intake-row .page-range-field label {
+  font-size: 10px;
+  color: #8f899f;
+  white-space: nowrap;
+}
+
+.home-intake-row .page-range-field input {
+  width: 128px;
+  min-height: 30px;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.home-restored-hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #9b93b4;
+}
+
+.home-compose-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 8px 4px 0;
+  color: #8f899f;
+  font-size: 10.5px;
+}
+
+.home-collection {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.home-collection select {
+  max-width: 130px;
+  min-height: 26px;
+  padding: 1px 6px;
+  border: 1px solid #ebe7f4;
+  border-radius: 8px;
+  background: #fbfaff;
+  color: #7e7696;
+  font-size: 10.5px;
+}
+
+.home-draft-count {
+  margin-left: auto;
+  color: #aaa4b6;
+  font-size: 10px;
+}
+
+.home-compose-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: nowrap;
+}
+
+.home-models {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.home-models::-webkit-scrollbar {
+  display: none;
+}
+
+.home-model-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  flex-wrap: nowrap;
+  color: #7e7696;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.home-model-choice select {
+  min-width: 0;
+  max-width: 170px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid #ebe7f4;
+  border-radius: 8px;
+  background: #fbfaff;
+  color: #655d80;
+  font-size: 10.5px;
+}
+
+.home-model-choice .ocr-choice-feedback {
+  display: none;
+}
+
+.home-submit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid #5b4fbe;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #6f63d6, #5b4fbe);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  box-shadow: 0 6px 16px #5b4fbe2e;
+}
+
+.home-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #776bdd, #6154c8);
+}
+
+.home-submit svg {
+  width: 16px;
+  height: 16px;
+}
+
+.home-submit:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+}
+
+/* 旧上传区：入口已移到输入区左下角，保留节点供附件读取流程使用。 */
+#source-panel .home-legacy-pane,
+.source-summary.home-legacy-summary,
+#intake-clear-help {
+  display: none !important;
+}
+
+/* ---------- 右栏：本对话文件 ---------- */
+
+.home-files-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0eef6;
+}
+
+.home-kicker {
+  color: #a29bb5;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+}
+
+.home-files-head h2 {
+  margin: 2px 0 0;
+  color: #2f2a44;
+  font-size: 18px;
+}
+
+.home-icon-button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e8e4f2;
+  border-radius: 9px;
+  background: #fff;
+  color: #8b849e;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.home-icon-button:hover {
+  background: #f7f5fe;
+  color: #5d51a8;
+}
+
+.home-files-summary {
+  flex: none;
+  margin: 12px 0 0;
+  color: #8b849e;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.home-files-summary:empty {
+  display: none;
+}
+
+.home-files-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+.home-files-list:empty {
+  display: none;
+}
+
+.home-file-card {
+  padding: 9px 10px;
+  border: 1px solid #ece9f4;
+  border-radius: 11px;
+  background: #fbfaff;
+}
+
+.home-file-card strong {
+  display: block;
+  color: #4a4462;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-file-card small {
+  display: block;
+  margin-top: 2px;
+  color: #9b95ab;
+  font-size: 10px;
+}
+
+.home-file-card img {
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  margin-top: 7px;
+  border-radius: 7px;
+  background: #f2effa;
+}
+
+.home-files-panel .home-panel-empty {
+  flex: none;
+  margin-top: auto;
+}
+
+/* ---------- 窄屏：只通过按钮开关覆盖抽屉 ---------- */
+
+@media (max-width: 820px) {
+  :root {
+    --home-nav-collapsed: 58px;
+    --home-topbar: 56px;
+  }
+
+  .home-nav {
+    padding: 10px 6px;
+  }
+
+  .home-nav .home-nav-brand {
+    justify-content: center;
+    padding: 2px;
+  }
+
+  .home-nav-brand-text,
+  .home-nav .home-nav-label,
+  .home-nav .nav-count,
+  .home-nav-foot {
+    display: none;
+  }
+
+  .home-nav .home-nav-items {
+    margin-top: 12px;
+    gap: 4px;
+  }
+
+  .home-nav .nav-item {
+    justify-content: center;
+    padding: 10px 8px;
+  }
+
+  .home-main {
+    margin-left: var(--home-nav-collapsed);
+    width: calc(100% - var(--home-nav-collapsed));
+  }
+
+  .home-topbar {
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .home-topbar .breadcrumb,
+  .home-model-status {
+    display: none;
+  }
+
+  .home-topbar .topbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .home-topbar .topbar-actions .button {
+    flex: none;
+    min-height: 30px;
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  #clear-intake {
+    display: none !important;
+  }
+
+  .home-panels {
+    display: block;
+    overflow: hidden;
+  }
+
+  .home-conversation {
+    height: 100%;
+  }
+
+  .home-side-panel {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: min(84vw, 330px);
+    z-index: 70;
+    transition: transform 0.24s cubic-bezier(0.22, 0.8, 0.26, 1);
+    box-shadow: 0 18px 60px #26203c33;
+  }
+
+  .home-history-panel {
+    left: 0;
+    border-right: 1px solid var(--home-line);
+    transform: translateX(-102%);
+  }
+
+  .home-files-panel {
+    right: 0;
+    border-left: 1px solid var(--home-line);
+    transform: translateX(102%);
+  }
+
+  .home-panels[data-home-left="open"] .home-history-panel,
+  .home-panels[data-home-right="open"] .home-files-panel {
+    transform: none;
+  }
+
+  .home-panels[data-home-left="closed"] .home-history-panel {
+    border-right: 0;
+  }
+
+  .home-panels[data-home-right="closed"] .home-files-panel {
+    border-left: 0;
+  }
+
+  .home-history-inner,
+  .home-files-inner {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .home-drawer-close,
+  .home-icon-button.home-drawer-close {
+    display: inline-flex;
+  }
+
+  .home-conversation-head {
+    min-height: 50px;
+    padding: 7px 10px;
+    gap: 7px;
+  }
+
+  .home-panel-toggle {
+    width: 35px;
+    height: 32px;
+  }
+
+  .home-empty-copy {
+    padding: 0 14px;
+  }
+
+  #organize-messages {
+    padding: 8px 14px 4px;
+  }
+
+  .home-composer-wrap {
+    padding: 0 10px 10px;
+  }
+
+  .home-composer-inner {
+    padding: 7px 10px 9px;
+    border-radius: 17px;
+  }
+
+  .home-compose-head {
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+
+  .home-compose-tools {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .home-compose-tools .text-button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    font-size: 10px;
+    white-space: nowrap;
+    padding: 4px;
+  }
+
+  .home-compose-tools #draft-view-toggle {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  #draft {
+    min-height: 40px;
+    font-size: 14px;
+  }
+
+  /* 窄屏首屏输入区同样更高（顶部空间与集合行都要留在视口里）。 */
+  .home-panels[data-home-empty="true"] #draft {
+    min-height: 132px;
+  }
+
+  .home-panels[data-home-empty="true"] .home-composer-panel .formula-editor-host {
+    min-height: 150px;
+  }
+
+  .home-panels[data-home-empty="true"] .home-composer-panel .formula-editor-host math-field {
+    min-height: 132px;
+  }
+
+  .home-compose-meta {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  /* 工具区在窄屏允许换行：加号与发送一行，双模型各占一行/半行，均可见可点。 */
+  .home-compose-actions {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 6px;
+  }
+
+  .home-attach {
+    order: 1;
+  }
+
+  .home-submit {
+    order: 2;
+    margin-left: auto;
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+
+  .home-models {
+    order: 3;
+    flex: 1 1 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px 10px;
+    overflow: visible;
+  }
+
+  .home-model-choice {
+    flex: 1 1 118px;
+    min-width: 0;
+    font-size: 10px;
+  }
+
+  .home-model-choice > span {
+    display: inline-flex;
+    flex: none;
+  }
+
+  .home-model-choice select {
+    flex: 1 1 0;
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    min-height: 32px;
+  }
+
+  .home-resize-handle {
+    display: none;
+  }
+
+  .home-files-list {
+    padding-bottom: 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* 三行说明在窄屏仍保持同一字号（不回到标题 / 副文案两档）。 */
+  .home-empty-copy h1,
+  .home-empty-line {
+    font-size: 19px;
+  }
+
+  .home-empty-hint {
+    font-size: 11.5px;
+  }
+
+  .home-compose-head > label {
+    display: none;
+  }
+
+  .home-compose-tools {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  #organize-messages .message-body,
+  #organize-messages .message.user .message-body {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 380px) {
+  .home-attach {
+    width: 28px;
+    height: 28px;
+  }
+
+  .home-submit {
+    min-height: 32px;
+    padding: 0 9px;
+    font-size: 11px;
+  }
+
+  .home-compose-actions {
+    gap: 4px;
+  }
+
+  /* 320px：两个模型控件按行放置并约束在容器内，避免 select 的内容宽度把
+     .home-models 撑出横向 17px 的溢出；原文切换（#draft-view-toggle）保持可见。 */
+  .home-models {
+    gap: 4px;
+    flex-direction: column;
+    align-items: stretch;
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .home-model-choice {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
+
+  .home-model-choice > span {
+    flex: none;
+  }
+
+  .home-model-choice select {
+    /* 行内 flex：select 用 flex-basis 0 收缩，width:100% 会和左侧标签一起超宽。 */
+    flex: 1 1 0;
+    width: auto;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
+
+/* 练习资料：可见导入入口移到主页对话，资料页直接呈现题库；
+   后台整理任务的预览 / 核对 / 恢复面板仍在原位置继续工作。 */
+#view-materials #materials-import-area[data-stage="source"] {
+  display: none !important;
+}
+
+#view-materials #material-import-summary #import-more-materials {
+  display: none !important;
+}
+
+.home-materials-note {
+  margin: 0 0 16px;
+  padding: 10px 13px;
+  border: 1px dashed #ded8f2;
+  border-radius: 11px;
+  color: #7d7693;
+  background: #fbfaff;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* 减少动态效果时仍能完成全部操作，只关闭过渡与动画。 */
+@media (prefers-reduced-motion: reduce) {
+  .home-nav,
+  .home-side-panel,
+  .home-resize-handle,
+  .home-panel-toggle,
+  .home-attach,
+  .home-composer-inner,
+  .home-empty-copy,
+  .home-new-chat {
+    transition: none !important;
+  }
+
+  body.home-shell * {
+    scroll-behavior: auto !important;
+    animation: none !important;
+  }
+}
+
+/* ---------- 集合 / 会话分组 / 资料批次：真实数据接线后的控件 ---------- */
+
+.home-section-head {
+  position: relative;
+}
+
+.home-collection-add {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid #e6e2f3;
+  border-radius: 7px;
+  background: #fbfaff;
+  color: #6f68a8;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.home-collection-add:hover {
+  background: var(--home-purple-soft);
+  color: var(--home-purple);
+}
+
+.home-collection-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-collection-toggle[aria-expanded="true"] .home-collection-name::before {
+  content: "▾ ";
+}
+
+.home-collection-toggle[aria-expanded="false"] .home-collection-name::before {
+  content: "▸ ";
+}
+
+.home-collection-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-collection-count {
+  flex: none;
+  color: #a19bad;
+  font-size: 10px;
+}
+
+.conversation-group-head {
+  margin: 6px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+
+.conversation-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  background: #f7f5fc;
+  color: #6b6386;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.conversation-group-toggle[aria-expanded="false"] .conversation-group-name::before {
+  content: "▸ ";
+}
+
+.conversation-group-toggle[aria-expanded="true"] .conversation-group-name::before {
+  content: "▾ ";
+}
+
+.conversation-group-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-group-count {
+  flex: none;
+  color: #a19bad;
+}
+
+.conversation-group-unfiled {
+  padding: 5px 8px;
+  color: #8d879e;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.conversation-item .conversation-move {
+  flex: none;
+  width: 14px;
+  max-width: 14px;
+  min-width: 0;
+  height: 20px;
+  /* 只显示一个“移动”点，展开后才出现集合列表，避免每行太挤。 */
+  opacity: 0.55;
+  border: 1px solid #eae6f6;
+  border-radius: 6px;
+  background: #fbfaff;
+  color: transparent;
+  font-size: 10px;
+  text-indent: -999px;
+  overflow: hidden;
+  transition: width 0.12s ease, opacity 0.12s ease;
+}
+
+.conversation-item:hover .conversation-move,
+.conversation-item .conversation-move:focus {
+  width: 96px;
+  max-width: 96px;
+  opacity: 1;
+  color: #615b78;
+  text-indent: 0;
+}
+
+.home-file-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-file-kind {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--home-purple-soft);
+  color: var(--home-purple);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.home-file-name {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a4462;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-file-meta {
+  display: block;
+  margin-top: 2px;
+  color: #9b95ab;
+  font-size: 10px;
+}
+
+.home-file-open {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 10.5px;
+}
+
+.home-file-reason {
+  margin: 6px 0 0;
+  color: #a2756b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.home-chat-batches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 6px;
+}
+
+.home-chat-batches[hidden] {
+  display: none;
+}
+
+.home-batch-card {
+  padding: 9px 11px;
+  border: 1px solid #e6e2f3;
+  border-radius: 11px;
+  background: #fbfaff;
+}
+
+.home-batch-card[data-batch-status="ready"] {
+  border-color: #cfc6f0;
+  background: #f7f4ff;
+}
+
+.home-batch-card[data-batch-status="failed"] {
+  border-color: #f0d5cf;
+  background: #fdf7f5;
+}
+
+.home-batch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-batch-title {
+  font-size: 12px;
+  color: #4a4462;
+}
+
+.home-batch-state {
+  margin-left: auto;
+  color: var(--home-purple);
+  font-size: 10.5px;
+}
+
+.home-batch-card[data-batch-status="failed"] .home-batch-state {
+  color: #b4573f;
+}
+
+.home-batch-note {
+  margin: 5px 0 0;
+  color: #837d96;
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+.home-batch-error {
+  margin: 5px 0 0;
+  color: #b4573f;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.home-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.home-batch-actions .home-batch-button {
+  font-size: 11px;
+}

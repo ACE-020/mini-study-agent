@@ -156,6 +156,7 @@ class FakeServer {
   constructor() {
     this.conversations = new Map();
     this.active = null;
+    this.collections = [];
     this.calls = [];
     this.chats = [];
     this.patchLog = [];
@@ -163,8 +164,9 @@ class FakeServer {
     this.counter = 0;
     this.imageCounter = 0;
   }
-  create(id, title = "新对话") {
-    const conversation = { id, title, messages: [], intake_text: "", images: [] };
+  create(id, title = "新对话", draft = false) {
+    const conversation = { id, title, messages: [], intake_text: "", images: [], draft,
+      collection_id: null };
     this.conversations.set(id, conversation);
     this.active = id;
     return conversation;
@@ -172,7 +174,10 @@ class FakeServer {
   summary(conversation) {
     return { id: conversation.id, title: conversation.title,
       created_at: "2026-11-19T00:00:00+08:00", updated_at: "2026-11-19T00:00:00+08:00",
-      busy: false, message_count: conversation.messages.length };
+      busy: false, message_count: conversation.messages.length,
+      collection_id: conversation.collection_id || null,
+      draft: Boolean(conversation.draft),
+      empty: !conversation.messages.length && !conversation.intake_text && !conversation.images.length };
   }
   detail(conversation) {
     return { ...this.summary(conversation),
@@ -180,7 +185,20 @@ class FakeServer {
       intake: { text: conversation.intake_text, image_ids: [...conversation.images], image_count: conversation.images.length } };
   }
   list() {
-    return { active: this.active, conversations: [...this.conversations.values()].map((item) => this.summary(item)) };
+    return { active: this.active, conversations: [...this.conversations.values()].map((item) => this.summary(item)),
+      collections: this.collections };
+  }
+  // 新首页接口：草稿单独返回，历史里不再出现草稿；ensure=0 时只读，不补草稿。
+  index(ensure = true) {
+    let draft = [...this.conversations.values()].find((item) => item.draft && !item.messages.length);
+    if (!draft && ensure) {
+      const previous = this.active;
+      draft = this.create(`c${++this.counter}`, "新对话", true);
+      this.active = previous;
+    }
+    return { active: this.active,
+      conversations: [...this.conversations.values()].filter((item) => !item.draft).map((item) => this.summary(item)),
+      collections: this.collections, draft: draft ? this.summary(draft) : null };
   }
   gate(method, pathname) {
     let enteredResolve;
@@ -203,18 +221,27 @@ class FakeServer {
       gate.enteredResolve();
       await gate.release;
     }
-    if (pathname === "/api/conversations" && method === "GET") return ok(this.list());
+    if (pathname === "/api/conversations" && method === "GET") {
+      return ok(url.searchParams.get("draft") === "1"
+        ? this.index(url.searchParams.get("ensure") !== "0")
+        : this.list());
+    }
     if (pathname === "/api/conversations" && method === "POST") {
       const id = `c${++this.counter}`;
       const conversation = this.create(id);
       return ok({ active: id, conversation: this.summary(conversation) });
     }
-    const match = /^\/api\/conversations\/([^/]+)(\/activate)?$/.exec(pathname);
+    const match = /^\/api\/conversations\/([^/]+)(\/activate|\/move)?$/.exec(pathname);
     if (match) {
       const id = decodeURIComponent(match[1]);
       const conversation = this.conversations.get(id);
       if (!conversation) return fail("对话不存在或已删除，请刷新网页后重试。", 404);
       if (method === "GET") return ok({ conversation: this.detail(conversation) });
+      if (method === "POST" && match[2] === "/move") {
+        const payload = JSON.parse(body || "{}");
+        conversation.collection_id = payload.collection_id || null;
+        return ok({ conversation: this.summary(conversation) });
+      }
       if (method === "POST" && match[2]) { this.active = id; return ok({ active: id, conversation: this.summary(conversation) }); }
       if (method === "PATCH") {
         const payload = JSON.parse(body || "{}");
@@ -268,6 +295,7 @@ class FakeServer {
         const visible = String(payload.display_text || payload.message).replace(/\s+/g, " ").trim().slice(0, 18);
         if (visible) conversation.title = visible;
       }
+      conversation.draft = false;
       conversation.messages.push({ role: "user", text: payload.display_text || payload.message }, { role: "assistant", text: answer });
       return ok({ answer, events: [], proposals: [], current_question: null, conversation_id: id });
     }
@@ -323,9 +351,12 @@ function setDraft(runtime, value) {
 function snapshot(runtime) {
   return JSON.parse(runtime.run(`JSON.stringify({
     active:conversationStore.activeId,
+    draftId:conversationStore.draftId,
+    listIds:conversationStore.list.map(item=>item.id),
     draft:document.querySelector("#draft").value,
     queue:intake.queue.map(item=>item.file.name),
     queueRead:intake.queue.map(item=>Boolean(item.read)),
+    imageIds:[...intake.imageIds],
     messagesA:conversationCache("A").messages.map(item=>item.text),
     messagesB:conversationCache("B").messages.map(item=>item.text),
     draftA:conversationCache("A").draft,
@@ -574,6 +605,150 @@ scenario("refresh recovers an unsaved long draft from the same tab", async () =>
   await second.context.patchConversationIntake("A", longDraft, version);
   assert.equal(second.sessionStorage.getItem("study-history-draft:A"), null, "a successful same-version PATCH clears the tab cache");
   assert.equal(server.conversations.get("A").intake_text, longDraft);
+});
+
+scenario("new chat reuses one draft and never POSTs an empty history row", async () => {
+  const server = new FakeServer();
+  const history = server.create("H", "历史对话");
+  history.messages.push({ role: "user", text: "旧问题" }, { role: "assistant", text: "旧回答" });
+  const runtime = createRuntime(server);
+  runtime.run("state.configured=true;");
+  await runtime.context.loadConversations();
+  const draftId = snapshot(runtime).active;
+  assert.ok(draftId && draftId !== "H", "首页应进入草稿");
+  await runtime.context.openConversation(draftId, { silent: true });
+  assert.equal(snapshot(runtime).draftId, draftId);
+  assert.equal(server.calls.filter((item) => item.method === "POST" && item.pathname === "/api/conversations").length, 0);
+  setDraft(runtime, "保留的草稿文字");
+  runtime.run(`addFiles([${JSON.stringify(file("queued-draft.txt", "queued-draft"))}])`);
+
+  await Promise.all([runtime.context.newConversation(), runtime.context.newConversation(),
+    runtime.context.newConversation()]);
+  const current = snapshot(runtime);
+  assert.equal(current.active, draftId, "连续点击仍回到同一草稿");
+  assert.equal(current.draftId, draftId);
+  assert.equal(current.draft, "保留的草稿文字");
+  assert.deepEqual(current.queue, ["queued-draft.txt"]);
+  assert.equal(server.conversations.get(draftId).messages.length, 0);
+  assert.equal(server.conversations.get(draftId).draft, true);
+  assert.equal(server.calls.filter((item) => item.method === "POST" && item.pathname === "/api/conversations").length, 0,
+    "点击新聊天不能创建历史行");
+});
+
+scenario("history → new chat returns to the same draft with text, files, images and collection", async () => {
+  const server = new FakeServer();
+  server.collections = [{ id: "col-1", name: "函数" }];
+  const history = server.create("H", "历史对话");
+  history.messages.push({ role: "user", text: "旧问题" }, { role: "assistant", text: "旧回答" });
+  const runtime = createRuntime(server);
+  runtime.run("state.configured=true;");
+  await runtime.context.loadConversations();
+  const draftId = snapshot(runtime).active;
+  await runtime.context.openConversation(draftId, { silent: true });
+  setDraft(runtime, "草稿原稿 $x^2$");
+  runtime.run(`addFiles([${JSON.stringify(file("draft-file.txt", "draft"))}]);intake.imageIds=["keep-img"];`);
+  await runtime.context.moveConversationToCollection(draftId, "col-1");
+  assert.equal(server.conversations.get(draftId).collection_id, "col-1", "草稿集合写入草稿而不是历史");
+
+  await runtime.context.openConversation("H");
+  assert.equal(snapshot(runtime).active, "H");
+  await runtime.context.newConversation();
+  const current = snapshot(runtime);
+  assert.equal(current.active, draftId);
+  assert.equal(current.draft, "草稿原稿 $x^2$");
+  assert.deepEqual(current.queue, ["draft-file.txt"]);
+  assert.deepEqual(current.imageIds, ["keep-img"]);
+  const draftSummary = JSON.parse(runtime.run("JSON.stringify(conversationStore.list.find(item=>item.draft))"));
+  assert.equal(draftSummary.collection_id, "col-1");
+  assert.equal(server.calls.filter((item) => item.method === "POST" && item.pathname === "/api/conversations").length, 0);
+});
+
+scenario("first real send promotes the draft, then a fresh blank draft is available", async () => {
+  const server = new FakeServer();
+  server.collections = [{ id: "col-1", name: "函数" }];
+  const draft = server.create("D", "新对话", true);
+  server.active = "D";
+  const runtime = createRuntime(server);
+  runtime.run("state.configured=true;");
+  await runtime.context.loadConversations();
+  assert.equal(snapshot(runtime).active, "D");
+  await runtime.context.openConversation("D", { silent: true });
+  setDraft(runtime, "第一轮原稿");
+  runtime.run(`addFiles([${JSON.stringify(file("first.txt", "第一轮补充"))}])`);
+  await runtime.context.moveConversationToCollection("D", "col-1");
+
+  const first = runtime.context.submitOriginalIntake();
+  const duplicate = runtime.context.submitOriginalIntake();
+  await first;
+  await duplicate;
+  await waitFor(() => server.chats.length === 1);
+  await runtime.context.refreshConversations();
+  assert.equal(snapshot(runtime).draftId, null, "刷新列表不应凭空创建新草稿");
+  assert.equal(server.chats.length, 1, "快速重复发送不能创建第二个请求");
+  assert.equal(server.chats[0].conversation_id, "D");
+  assert.ok(server.chats[0].image_ids.length >= 1, "草稿已接受的原稿随首次发送进入聊天");
+  assert.equal(draft.messages.length, 2);
+  assert.equal(draft.draft, false, "首次发送后草稿提升为正式历史");
+  assert.equal(draft.collection_id, "col-1");
+  const promoted = snapshot(runtime);
+  assert.equal(promoted.active, "D", "发送后仍停留在刚提升的对话");
+
+  await runtime.context.newConversation();
+  const fresh = snapshot(runtime);
+  assert.notEqual(fresh.active, "D");
+  assert.equal(fresh.active, fresh.draftId);
+  assert.equal(fresh.draft, "");
+  assert.deepEqual(fresh.queue, []);
+  assert.equal(server.conversations.get(fresh.active).messages.length, 0);
+  assert.equal(server.calls.filter((item) => item.method === "POST" && item.pathname === "/api/conversations").length, 0);
+});
+
+scenario("legacy empty rows stay hidden and never become the new chat", async () => {
+  const server = new FakeServer();
+  const empty = server.create("E", "新对话");
+  const history = server.create("H", "历史对话");
+  history.messages.push({ role: "user", text: "旧问题" }, { role: "assistant", text: "旧回答" });
+  const runtime = createRuntime(server);
+  runtime.run("state.configured=true;");
+  await runtime.context.loadConversations();
+  const draftId = snapshot(runtime).active;
+  assert.notEqual(draftId, "E");
+  const list = runtime.document.querySelector("#conversation-list");
+  const ids = list.children.map((node) => node.dataset.conversationId).filter(Boolean);
+  assert.ok(ids.includes("H"), "历史消息仍显示");
+  assert.ok(!ids.includes("E"), "旧版空行不占新历史");
+  await runtime.context.newConversation();
+  assert.equal(snapshot(runtime).active, draftId);
+  assert.equal(server.conversations.has("E"), true, "旧空行不删除，只是不显示");
+  assert.equal(empty.messages.length, 0);
+});
+
+scenario("a new blank draft can open while the first draft send is still waiting", async () => {
+  const server = new FakeServer();
+  const draft = server.create("D", "新对话", true);
+  server.active = "D";
+  const runtime = createRuntime(server);
+  runtime.run("state.configured=true;");
+  await runtime.context.loadConversations();
+  await runtime.context.openConversation("D", { silent: true });
+  setDraft(runtime, "第一轮原稿");
+  const gate = server.gate("POST", "/api/chat");
+  runtime.context.submitOriginalIntake();
+  await gate.entered;
+  // 服务端在模型等待前已经把用户消息记入草稿，草稿此时已提升为正式对话。
+  draft.draft = false;
+  await runtime.context.refreshConversations();
+  assert.notEqual(snapshot(runtime).draftId, "D");
+  await runtime.context.newConversation();
+  const fresh = snapshot(runtime);
+  assert.notEqual(fresh.active, "D");
+  assert.equal(fresh.active, fresh.draftId);
+  assert.equal(fresh.draft, "");
+  gate.release();
+  await waitFor(() => draft.messages.length === 2);
+  assert.equal(draft.messages[0].role, "user");
+  assert.equal(snapshot(runtime).active, fresh.active, "旧对话的答案不能把新草稿切走");
+  assert.equal(server.calls.filter((item) => item.method === "POST" && item.pathname === "/api/conversations").length, 0);
 });
 
 (async () => {

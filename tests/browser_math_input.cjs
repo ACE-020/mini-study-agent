@@ -59,13 +59,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       return Boolean(active && active.closest && active.closest('.formula-editor-host'));
     });
     const openMatrixPanel = async kind => {
-      // Escape 关闭面板时会把焦点还给 math-field。再次点击已聚焦的编辑器
-      // 不会触发 focusin。先移开焦点，让测试从一次新的聚焦开始。
-      const fieldFocused = await field.evaluate(node => {
-        const active = document.activeElement;
-        return active === node || Boolean(node.shadowRoot && node.shadowRoot.activeElement);
-      });
-      if (fieldFocused) await page.locator('#page-title').click();
+      // 同一个编辑器关闭符号浮层后，也能再次点击打开。
       await field.click();
       await visibleKeyboard().waitFor();
       await chooseCategory('geometry');
@@ -94,15 +88,14 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       return body.split(/\\\\/).map(row => row.split('&').length);
     }, text);
 
-    /* 1. 首屏：默认上传页仍然显示渲染编辑，标题行唯一按钮是「查看原文」 */
+    /* 1. 首屏：统一输入区默认显示渲染编辑 */
     assert.equal(await field.evaluate(node => node.defaultMode), 'text');
     assert.equal(await fieldMode(), 'text');
-    assert.equal(await page.locator('[data-source="image"]').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#image-pane').isVisible(), true);
+    assert.equal(await page.locator('#home-attach-button').isVisible(), true);
     assert.equal(await page.locator('#formula-pane').isVisible(), true);
     assert.equal(await draft.isVisible(), false);
     assert.equal(await toggle.innerText(), '查看原文');
-    assert.deepEqual(await page.locator('.editor-heading-actions .text-button').allTextContents(), ['撤回', '重做', '查看原文']);
+    assert.deepEqual(await page.locator('.home-compose-tools .text-button').allTextContents(), ['撤回', '重做', '查看原文']);
     assert.equal(await page.locator('#draft-undo').isDisabled(), true);
     assert.equal(await page.locator('#draft-redo').isDisabled(), true);
     assert.equal(await page.locator('#draft-count').innerText(), '0 / 80000');
@@ -133,19 +126,12 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await draft.isVisible(), true);
     assert.equal(await page.locator('#formula-pane').isVisible(), false);
     assert.equal(await value(), '原稿 Hello 123');
-    assert.equal(await page.locator('[data-source="image"]').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#image-pane').isVisible(), true);
-
-    /* 切来源标签不应改变查看模式 / 草稿 / 上传区 */
-    await page.locator('[data-source="text"]').click();
+    /* 打开文件选择器后，查看模式和草稿保持原样 */
+    const chooseFiles = page.waitForEvent('filechooser');
+    await page.locator('#home-attach-button').click();
+    await (await chooseFiles).setFiles([]);
     assert.equal(await draft.isVisible(), true);
     assert.equal(await page.locator('#formula-pane').isVisible(), false);
-    assert.equal(await page.locator('[data-source="text"]').getAttribute('aria-pressed'), 'true');
-    assert.equal(await page.locator('#image-pane').isVisible(), false);
-    assert.equal(await value(), '原稿 Hello 123');
-    await page.locator('[data-source="image"]').click();
-    assert.equal(await draft.isVisible(), true);
-    assert.equal(await page.locator('#image-pane').isVisible(), true);
     assert.equal(await value(), '原稿 Hello 123');
 
     /* 原文 → 渲染 → 原文，内容不被隐藏编辑器回写覆盖 */
@@ -482,12 +468,15 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await toggle.click();
     await field.click();
     await visibleKeyboard().waitFor();
-    const chatRequest = page.waitForRequest(request => request.method() === 'POST' && request.url().endsWith('/api/chat'));
+    const sent = page.waitForResponse(response =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/chat');
     await page.locator('#organize-submit').click();
-    const request = await chatRequest;
-    assert.ok(request.postDataJSON().message.includes('提交测试 $x^2$'));
+    const response = await sent;
+    assert.ok(response.request().postDataJSON().message.includes('提交测试 $x^2$'));
+    assert.ok(response.ok(), await response.text());
+    await page.locator('#organize-messages').getByText('提交测试', {exact: false}).first().waitFor();
     await page.waitForFunction(() => !state.busy);
-    assert.match(await page.locator('#organize-submit span').innerText(), /已提交/);
+    await page.evaluate(() => newConversation());
 
     /* 13. 390px：渲染编辑、键盘、两个矩阵面板都不撑破页面 */
     await page.setViewportSize({width: 390, height: 844});
@@ -986,10 +975,12 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.keyboard.press('Control+y');
     await waitDraftExactly('x再源');
 
-    // 刷新会恢复当前对话的草稿，先新建空白对话再验证模板的可填选区。
-    await page.evaluate(() => newConversation());
-    await waitFieldEmpty();
+    // 刷新会恢复当前草稿；再次打开「新聊天」须保留已经输入的内容。
     const freshConversationId = await page.evaluate(() => conversationStore.activeId);
+    await page.evaluate(() => newConversation());
+    assert.equal(await page.evaluate(() => conversationStore.activeId), freshConversationId);
+    assert.equal(await value(), 'x再源');
+    await clearDraft();
     await page.reload();
     await page.waitForFunction(id => {
       return conversationStore.activeId === id && conversationStore.cache.has(id);
@@ -1075,19 +1066,29 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
 
     /* 22. 历史对话切换：渲染编辑器跟随新对话的原稿；撤回历史按对话重置，
        所以 A 对话的原稿不会在 B 对话里被撤回，同一对话内的撤回仍继续有效。 */
-    const conversationsBefore = await page.evaluate(() => conversationStore.list.length);
-    await page.locator('#new-conversation').click();
-    await page.waitForFunction(count => conversationStore.list.length === count + 1 && Boolean(conversationStore.activeId), conversationsBefore);
+    const historyCount = () => page.evaluate(() =>
+      conversationStore.list.filter(item => !item.draft && !item.empty).length);
+    const conversationsBefore = await historyCount();
     const conversationA = await page.evaluate(() => conversationStore.activeId);
+    await setDraft('请解释 x 的平方。');
+    const firstSend = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/chat' && response.ok());
+    await page.locator('#organize-submit').click();
+    await firstSend;
+    await page.waitForFunction(count =>
+      conversationStore.list.filter(item => !item.draft && !item.empty).length === count + 1,
+      conversationsBefore);
+    await page.waitForFunction(() => !document.querySelector('#draft').readOnly);
     await setDraft('A 对话原稿 $x^2$');
     await page.waitForFunction(() => {
       const node = document.querySelector('#formula-editor-host math-field');
       return Boolean(node && node.getValue('latex').includes('x^2'));
     });
     await page.locator('#new-conversation').click();
-    await page.waitForFunction(count => conversationStore.list.length === count + 2, conversationsBefore);
+    await page.waitForFunction(id => conversationStore.activeId !== id, conversationA);
     const conversationB = await page.evaluate(() => conversationStore.activeId);
     assert.notEqual(conversationA, conversationB);
+    assert.equal(await historyCount(), conversationsBefore + 1);
     assert.equal(await value(), '');
     await page.waitForFunction(() => document.querySelector('#formula-editor-host math-field').getValue('latex').trim() === '');
     await setDraft('B 对话原稿 $y^2$');

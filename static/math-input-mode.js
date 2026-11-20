@@ -16,6 +16,18 @@
   const MATHLIVE_SCRIPT = "/static/vendor/mathlive/mathlive.min.js";
   const MATHLIVE_FONTS = "/static/vendor/mathlive/fonts";
   const TOGGLES_STYLE = ".ML__menu-toggle,.ML__virtual-keyboard-toggle,.ML__toggles{display:none!important}";
+  // 主页主稿的软换行。MathLive 默认把内容排成一条不换行的单行：shadowRoot 里
+  // .ML__content / .ML__base 全是带 white-space:pre 的单字符盒，长中文和连续英文
+  // 会一直向右延伸（实测 772px 字段的 scrollWidth 到 14596px）。在真实 Chrome 里
+  // 给主页主稿注入下面几条即可按字段宽度折行，公式排版照旧：同一段长文折行后
+  // width / scrollWidth 都是 772，内层内容约 332px 高。
+  // 只注入主页主稿；对话补充框仍是单行公式输入，不受影响。
+  const WRAP_STYLE = [
+    ".ML__content{align-items:start}",
+    ".ML__content>.ML__latex{width:100%;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}",
+    ".ML__content>.ML__latex>.ML__base{display:inline;white-space:normal;overflow-wrap:anywhere}",
+    ".ML__content>.ML__latex>.ML__base>.ML__text{white-space:pre-wrap;overflow-wrap:anywhere}"
+  ].join("");
   const DRAFT_MAX_LENGTH = 80000;
   // formula-matrix.js 加载失败时的兜底；正常情况下读取它暴露的 maxSize，
   // 让面板输入上限与 MathLive 的 maxMatrixCols 永远一致。
@@ -40,6 +52,8 @@
     docs: new WeakMap(), // <math-field> → 最近一次同步的草稿分段（保留原分隔符与换行）
     conversationId: null, // 当前编辑器里这份 #draft 属于哪个历史对话
     switching: false,    // 对话切换装载期间忽略 async MathLive input
+    overflowFallback: false, // 主页主稿因不可断的超宽公式切到了原文层
+    overflowGuarded: false,  // 防止回退切换自身触发下一轮检测
     initialized: false,
     fontsConfigured: false,
     scriptRequested: false
@@ -739,14 +753,21 @@
     state.fontsConfigured = true;
   }
 
-  function hideToggles(mf) {
+  function shadowStyle(wrap) {
+    return TOGGLES_STYLE + (wrap ? WRAP_STYLE : "");
+  }
+
+  // 把外框样式（以及主页主稿的折行规则）注入 MathLive 的 shadowRoot。
+  // 用 dataset 标记避免重复注入；shadowRoot 还没建好时下一帧再补一次。
+  function injectShadowStyle(mf, wrap) {
+    const marker = wrap ? "wrap" : "base";
     const apply = function () {
       try {
-        if (!mf.shadowRoot || mf.dataset.mathliveToggles === "hidden") return;
+        if (!mf.shadowRoot || mf.dataset.mathliveStyle === marker) return;
         const style = document.createElement("style");
-        style.textContent = TOGGLES_STYLE;
+        style.textContent = shadowStyle(wrap);
         mf.shadowRoot.append(style);
-        mf.dataset.mathliveToggles = "hidden";
+        mf.dataset.mathliveStyle = marker;
       } catch (error) {
         /* 没有 shadowRoot 时忽略 */
       }
@@ -865,9 +886,11 @@
     return latex === null ? null : latexToMixed(latex, isTextField(mf));
   }
 
-  function createEditor(host, textarea, placeholder, defaultMode) {
+  function createEditor(host, textarea, placeholder, defaultMode, options) {
     if (!host || !mathfieldClass()) return null;
     configureFonts();
+    // wrap：主页主稿是长文正文，需要注入 MathLive 的软换行规则；补充框仍是单行。
+    const wrap = Boolean(options && options.wrap);
     const maxMatrixCols = matrixMaxSize();
     let mf = null;
     try {
@@ -894,27 +917,11 @@
     } catch (error) {
       /* 属性名随版本变化时忽略 */
     }
-    hideToggles(mf);
+    injectShadowStyle(mf, wrap);
     bindBoundDeletionGuard(mf, textarea);
     mf.addEventListener("input", function () {
       handleFieldChange(mf, textarea);
     });
-    // 长公式横向滚动：浏览器不会把纵向滚轮自动转成横向（只会滚整页），
-    // 而 MathLive 的内容区又缺少可见的滚动条，用户只能挪光标看前面。
-    // 这里在有横向溢出时把滚轮转成内容的横向滚动；Ctrl+滚轮留给缩放，不拦。
-    mf.addEventListener(
-      "wheel",
-      function (event) {
-        if (event.ctrlKey) return;
-        const content = mf.shadowRoot && mf.shadowRoot.querySelector(".ML__content");
-        if (!content || content.scrollWidth <= content.clientWidth + 2) return;
-        const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-        if (!delta) return;
-        content.scrollLeft += delta;
-        event.preventDefault();
-      },
-      { passive: false }
-    );
     state.docs.set(mf, parseDoc(textarea ? textarea.value : ""));
     setLatex(mf, mixedToLatex(textarea ? textarea.value : "", defaultMode === "text"));
     setReadOnly(mf, textarea ? textarea.readOnly || textarea.disabled : false);
@@ -944,6 +951,8 @@
     // 上一个对话（或已收起的补充框）里迟到的异步 input 绝不能回写进新对话的草稿。
     const owner = entryOfField(mf);
     if (owner ? !followEditorShown(owner) : !mainEditorShown()) return;
+    // 主稿内容一变，折行行数就可能变：下一帧重算输入区高度。
+    if (mf === state.field) scheduleHeightSync();
     // 原文视图下 #draft 是权威来源。隐藏的 MathLive 仍可能因 setLatex 的异步
     // input 走到这里，把归一化后的公式（以及末尾光标）回写覆盖 textarea，
     // 所以主稿处于 source 时绝不从隐藏编辑器回写；切回渲染时 setView 会重新装载。
@@ -956,6 +965,7 @@
       // 必须派发 input：app.js 的 #draft-count / 发送按钮 / 待发送队列都靠它更新
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    if (mf === state.field) scheduleHeightSync();
   }
 
   // 把公式编辑器的内容写回 textarea。未编辑的段按原稿 raw 保留，所以换行、
@@ -976,7 +986,7 @@
   function initMainField() {
     if (!draft || !formulaPane || !formulaHost || !sourcePanel) return false;
     ensureMathliveScript();
-    state.field = createEditor(formulaHost, draft, DRAFT_PLACEHOLDER, "text");
+    state.field = createEditor(formulaHost, draft, DRAFT_PLACEHOLDER, "text", { wrap: true });
     if (!state.field) {
       // MathLive 没加载成功：保留可编辑的 LaTeX 源，禁用视图切换按钮并说明原因。
       if (viewToggle) {
@@ -1009,6 +1019,11 @@
     viewToggle.textContent = rendered ? "查看原文" : "查看渲染后文字";
     viewToggle.setAttribute("aria-pressed", rendered ? "false" : "true");
     viewToggle.title = rendered ? "查看可编辑的 LaTeX 原文" : "查看渲染后的原稿";
+    if (!rendered && state.overflowFallback) {
+      // 自动回退时说明原因：这段内容在渲染态放不下，原文层才是可折行、可编辑的。
+      viewToggle.title =
+        "这段内容里有比输入区更宽的公式，已切到原文：可折行、可编辑，也能继续插符号";
+    }
   }
 
   function rememberSourceCursor() {
@@ -1060,6 +1075,7 @@
     state.view = target;
     updateViewUi();
     if (options && options.focus) focusVisibleEditor();
+    scheduleHeightSync();
     dispatchViewChange(target);
     return true;
   }
@@ -1077,6 +1093,7 @@
   function onExternalChange() {
     // OCR / 清空 / 程序化回填不经过 input，但按钮可用状态要跟着变。
     updateHistoryButtons();
+    scheduleHeightSync();
     if (!state.field || state.syncing || state.suppressExternalSync) return;
     // 原文视图直接以 textarea 为准；隐藏 MathLive 的装载/归一化只会造成
     // 「异步 input → 覆盖原文和光标」的回路。切回渲染时 setView 会从 textarea 重新装载。
@@ -1099,7 +1116,214 @@
     if (getLatex(state.field) !== latex) setLatex(state.field, latex);
   }
 
-  /* ---------- 光标 / 插入（供符号键盘调用） ---------- */
+  /* ---------- 输入区高度：随内容长高，触到视口边界后只让输入区滚动 ---------- */
+
+  // 三条约束：
+  //  1) 内容够多才随行逐渐向下撑高（MathLive 软换行后内容是多行，字段本身随内容长高）；
+  //  2) 保留顶部空间与「所在集合」：首屏整组贴顶时，以集合行（.home-compose-meta）的
+  //     末边为准，留 pageMargin 的页面边距就停止增高；已有消息时输入区贴底，
+  //     顶部对话区保留 topReserve 的空间；
+  //  3) 到上限后只让输入区出现纵向滚动：渲染视图把 max-height 加到 math-field 上
+  //     （MathLive 的 caret 跟随读的就是 host.scrollTop），原文视图按 scrollHeight
+  //     设 height 并让 textarea 自己滚动。
+  // 不设固定高度天花板：大视口里内容够长就继续长到集合行接近视口底部。
+  const HEIGHT = Object.freeze({
+    bottomGap: 10,
+    pageMargin: 10,
+    topReserve: 96,
+    minRendered: 120,
+    minSource: 44
+  });
+
+  const composerWrap = document.querySelector(".home-composer-wrap");
+  const composeMeta = document.querySelector(".home-compose-meta");
+  const chatBody = document.querySelector(".home-chat-body");
+  const panelsRoot = document.querySelector("#organize-workspace");
+
+  function viewportHeight() {
+    const visual = window.visualViewport ? Number(window.visualViewport.height) : 0;
+    const height = visual || Number(window.innerHeight) || 0;
+    if (height > 0) return height;
+    const html = document.documentElement;
+    return Math.max(0, (html && html.clientHeight) || 0);
+  }
+
+  function homeEmptyLayout() {
+    return Boolean(
+      panelsRoot &&
+        panelsRoot.dataset &&
+        String(panelsRoot.dataset.homeEmpty) === "true"
+    );
+  }
+
+  // 纯函数（便于自测）：rect 是输入区自身的矩形，wrapBottom 是输入区外框底边，
+  // bodyTop 是对话区顶边，metaBottom 是「所在集合」行的末边。
+  // empty=true：以集合行末边为准，留 pageMargin 就停（没有 metaBottom 时退回用
+  // wrap 底边推算）；empty=false：输入区顶边不低于对话区顶 + topReserve。
+  // 结果不设固定天花板，只保证一个可用下限。
+  function editorHeightCap(input) {
+    if (!input || !input.rect) return 0;
+    const rect = input.rect;
+    const viewport = Number(input.viewportHeight) || 0;
+    const pageMargin = input.pageMargin == null ? HEIGHT.pageMargin : Number(input.pageMargin);
+    const bottomGap = input.bottomGap == null ? HEIGHT.bottomGap : Number(input.bottomGap);
+    const topReserve = input.topReserve == null ? HEIGHT.topReserve : Number(input.topReserve);
+    const minHeight = input.minHeight == null ? HEIGHT.minRendered : Number(input.minHeight);
+    const wrapBottom = Number(input.wrapBottom);
+    const metaBottom = Number(input.metaBottom);
+    const below = Number.isFinite(wrapBottom) ? Math.max(0, wrapBottom - rect.bottom) : 0;
+    let cap;
+    if (input.empty) {
+      if (Number.isFinite(metaBottom)) {
+        // 集合行跟着输入区一起向下走：可用高度 = 当前高度 + 集合行还能下移的距离。
+        cap = rect.height + (viewport - pageMargin - metaBottom);
+      } else {
+        cap = viewport - below - rect.top - bottomGap;
+      }
+    } else {
+      cap = rect.bottom - (Number(input.bodyTop) || 0) - topReserve;
+    }
+    return Math.max(Math.round(minHeight), Math.round(cap));
+  }
+
+  let heightFrame = 0;
+
+  function scheduleHeightSync() {
+    if (heightFrame) return;
+    const raf = window.requestAnimationFrame || function (fn) {
+      return window.setTimeout(fn, 16);
+    };
+    heightFrame = raf(function () {
+      heightFrame = 0;
+      syncHeightNow();
+      checkOverflowFallback();
+    });
+  }
+
+  function syncHeightNow() {
+    if (!draft || !composerWrap || !composerWrap.getBoundingClientRect) return;
+    const viewport = viewportHeight();
+    if (!viewport) return;
+    const wrapRect = composerWrap.getBoundingClientRect();
+    if (!wrapRect || (!wrapRect.width && !wrapRect.height)) return;
+    const bodyRect =
+      chatBody && chatBody.getBoundingClientRect ? chatBody.getBoundingClientRect() : null;
+    const metaRect =
+      composeMeta && composeMeta.getBoundingClientRect
+        ? composeMeta.getBoundingClientRect()
+        : null;
+    const base = {
+      viewportHeight: viewport,
+      wrapBottom: wrapRect.bottom,
+      bodyTop: bodyRect ? bodyRect.top : 0,
+      metaBottom: metaRect ? metaRect.bottom : undefined,
+      empty: homeEmptyLayout()
+    };
+    if (state.view === VIEW_RENDERED && state.field) {
+      const rect = state.field.getBoundingClientRect();
+      if (!rect || (!rect.width && !rect.height)) return;
+      const cap = editorHeightCap(
+        Object.assign({ rect: rect, minHeight: HEIGHT.minRendered }, base)
+      );
+      state.field.style.maxHeight = cap + "px";
+      draft.style.height = "";
+      return;
+    }
+    // 原文视图：#draft 在渲染视图里是 display:none，量不到就跳过。
+    draft.style.height = "auto";
+    const rect = draft.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) return;
+    const cap = editorHeightCap(
+      Object.assign({ rect: rect, minHeight: HEIGHT.minSource }, base)
+    );
+    const natural = Math.max(HEIGHT.minSource, draft.scrollHeight || 0);
+    draft.style.height = Math.min(natural, cap) + "px";
+  }
+
+  function bindEditorHeight() {
+    window.addEventListener("resize", scheduleHeightSync);
+    if (window.visualViewport && window.visualViewport.addEventListener) {
+      window.visualViewport.addEventListener("resize", scheduleHeightSync);
+      window.visualViewport.addEventListener("scroll", scheduleHeightSync);
+    }
+    if (draft) {
+      // IME 组合期间也会触发 input；统一走 rAF 节流，不打断输入法。
+      draft.addEventListener("input", scheduleHeightSync);
+      draft.addEventListener("compositionend", scheduleHeightSync);
+    }
+    // 左右面板收展 / 窗口变化都会改变可用宽度：宽度一变，换行行数就变。
+    if (composerWrap && typeof window.ResizeObserver === "function") {
+      try {
+        const observer = new ResizeObserver(function () {
+          scheduleHeightSync();
+        });
+        observer.observe(composerWrap);
+      } catch (error) {
+        /* 观察器不可用时只靠 resize 事件 */
+      }
+    }
+    if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+      document.fonts.ready.then(scheduleHeightSync).catch(function () {});
+    }
+    scheduleHeightSync();
+  }
+
+  /* ---------- 主页主稿：不可断的超宽数学盒 → 复用「原文」作为可编辑回退 ---------- */
+
+  // 注入软换行后，长中文 / 连续英文 / 混排都会折行；只有单个不可断的数学盒
+  // （例如超宽矩阵）仍会比字段宽。主页不允许出现横向滚动条，也不把公式硬剪掉：
+  // 检测到真正需要横滚的内容时，自动切到已有的「原文」编辑层（LaTeX 原文 + 原生
+  // 折行），原稿、焦点和符号插入继续可用。正常尺寸公式不动，仍在渲染编辑态；
+  // 专门的公式面板与其他页面维持旧的横向滚动行为。
+  const OVERFLOW_TOLERANCE = 2;
+
+  function contentOverflows(mf) {
+    if (!mf || !mf.shadowRoot || typeof mf.shadowRoot.querySelector !== "function") {
+      return false;
+    }
+    const content = mf.shadowRoot.querySelector(".ML__content");
+    if (!content) return false;
+    const scroll = Number(content.scrollWidth) || 0;
+    const client = Number(content.clientWidth) || 0;
+    if (!scroll || !client) return false;
+    return scroll > client + OVERFLOW_TOLERANCE;
+  }
+
+  function checkOverflowFallback() {
+    if (state.switching) return false;
+    const emptyDraft = !draft.value.trim();
+    // 窄屏中占位说明本身也会超宽；只有用户的原稿可以触发回退。
+    if (emptyDraft || state.view !== VIEW_RENDERED || !state.field) {
+      if (state.overflowFallback && emptyDraft) {
+        state.overflowFallback = false;
+        updateViewUi();
+      }
+      return false;
+    }
+    if (!contentOverflows(state.field)) {
+      if (state.overflowFallback) {
+        state.overflowFallback = false;
+        updateViewUi();
+      }
+      return false;
+    }
+    if (state.overflowGuarded) return false;
+    state.overflowGuarded = true;
+    state.overflowFallback = true;
+    // 只有编辑器当前真的持有焦点时才把焦点一起搬到原文层；
+    // 窗口缩小 / 加载旧对话等被动触发的检测只切视图，绝不抢走别的控件（对话框、下拉框）的焦点。
+    const heldFocus = isMainDraftFocus();
+    try {
+      // 原文层是同一份 #draft：切过去后 LaTeX 原文可折行、可编辑、可继续插符号。
+      setView(VIEW_SOURCE, { focus: heldFocus });
+      updateViewUi();
+    } finally {
+      state.overflowGuarded = false;
+    }
+    return true;
+  }
+
+
 
   // 与 MathLive 实体方向键使用同一组命令：实体键的 ArrowLeft/Right 走
   // moveToPreviousChar / moveToNextChar（逐字符、可跨矩阵格），而不是占位符跳转。
@@ -1558,6 +1782,7 @@
       ok = false;
     }
     if (switched && (!ok || !keepMath)) ensureTextMode(mf);
+    if (ok) scheduleHeightSync();
     return ok;
   }
 
@@ -1631,6 +1856,7 @@
     } finally {
       state.suppressExternalSync = false;
     }
+    scheduleHeightSync();
     return true;
   }
 
@@ -1894,6 +2120,7 @@
     }
     updateHistoryButtons();
     focusVisibleEditor();
+    scheduleHeightSync();
   }
 
   function syncExternalHistory() {
@@ -2027,6 +2254,7 @@
       state.switching = false;
     }
     resetHistory();
+    scheduleHeightSync();
     return true;
   }
 
@@ -2194,6 +2422,16 @@
     // 暴露转换函数，便于自检与后续调试
     mixedToLatex: mixedToLatex,
     latexToMixed: latexToMixed,
+    // 输入区高度：纯计算函数 + 手动重算，便于自测与调试。
+    editorCap: editorHeightCap,
+    syncHeight: syncHeightNow,
+    wrapStyle: WRAP_STYLE,
+    heightLimits: HEIGHT,
+    // 不可断的超宽公式检测：true 表示主页主稿需要横滚，已自动切到原文层。
+    contentOverflows: contentOverflows,
+    overflowFallback: function () {
+      return state.overflowFallback;
+    },
     parseDraft: parseMixed,
     parseFormula: parseLatexParts,
     parseTextModeFormula: parseTextModeLatex,
@@ -2241,6 +2479,7 @@
     resetHistory();
     bindSubmitSync();
     bindPhysicalArrows();
+    bindEditorHeight();
     initFollowEditors();
     // 对话补充框的 .composer-toolbar 由 chat-composer.js 在 window 的 DOMContentLoaded 里创建；
     // 若它们的初始化顺序意外靠后，下一帧再补一次（幂等，已有按钮的会跳过）。
