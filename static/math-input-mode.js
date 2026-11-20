@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-calculus-templates";
+  const VERSION = "20261120-calculus-slots";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -868,7 +868,7 @@
       /* 属性名随版本变化时忽略 */
     }
     hideToggles(mf);
-    bindBoundDeletionGuard(mf);
+    bindBoundDeletionGuard(mf, textarea);
     mf.addEventListener("input", function () {
       handleFieldChange(mf, textarea);
     });
@@ -1196,17 +1196,21 @@
     }
   }
 
-  /* ---------- 既有积分 / 求和 / 连乘上下界的删除保护 ---------- */
+  /* ---------- 微积分模板界槽的删除保护 ---------- */
 
-  // MathLive 0.111.4 的 To() 在上下界只剩 first/placeholder 时，会把整个
-  // 分支 removeBranch() 掉；光标随后移出公式，下一次键入就变成普通文字。
+  // MathLive 0.111.4 的 To() 在界槽只剩 first/placeholder 时，会把整个分支
+  // removeBranch() 掉；光标随后移出公式，下一次键入就变成普通文字。
   // MathLive 的 gp/bp 删除路径都会先走 contentWillChange → 宿主上派发
-  // cancelable beforeinput，因此在这里只拦「删除会清空一个既有上下界」的情况：
+  // cancelable beforeinput，因此在这里只拦「删除会清空一个既有界槽」的情况：
   // 普通 i=、数字、有内容的选区仍然照常删除；不定积分原本没有界，也不会被新建。
+  // \lim 的趋近条件和带底数对数的底数是各自模板唯一的界槽；手打的
+  // \lim^ / \log^ 不是模板结构，不在这里保护，仍可正常退格删除。
   const CALCULUS_BOUND_COMMANDS = {
-    "\\int": true,
-    "\\sum": true,
-    "\\prod": true
+    "\\int": { subscript: true, superscript: true },
+    "\\sum": { subscript: true, superscript: true },
+    "\\prod": { subscript: true, superscript: true },
+    "\\lim": { subscript: true },
+    "\\log": { subscript: true }
   };
 
   function calculusBoundOf(atom) {
@@ -1214,7 +1218,8 @@
     const branch = atom.parentBranch;
     if (branch !== "subscript" && branch !== "superscript") return null;
     const parent = atom.parent;
-    if (!parent || !CALCULUS_BOUND_COMMANDS[parent.command]) return null;
+    const allowed = parent && CALCULUS_BOUND_COMMANDS[parent.command];
+    if (!allowed || !allowed[branch]) return null;
     return { parent: parent, branch: branch };
   }
 
@@ -1264,13 +1269,88 @@
     return boundHasOnlyEmptySlots(calculusBoundOf(model.at(start)));
   }
 
-  function bindBoundDeletionGuard(mf) {
+  // \log 的底数还有一个 MathLive 自身的特判：To() 在 backward 删除下标里的
+  // 任意 atom 时会直接删掉整个 \log（连底数带正文）。不能靠禁止删除底数绕开：
+  // 先把折叠光标移到目标 atom 的左侧哨兵，再执行原生 deleteForward。它不走
+  // 这个特判，只删掉当前字符、保留空下标，并照常进入撤销栈。
+  function rescueLogBaseDeletion(mf, event) {
+    const model = modelFor(mf);
+    if (!model || !model.selectionIsCollapsed) return false;
+    const ranges = model.selection && model.selection.ranges;
+    if (!Array.isArray(ranges) || ranges.length !== 1) return false;
+    const range = ranges[0];
+    if (!Array.isArray(range) || range[0] !== range[1]) return false;
+    const target = model.at(range[0]);
+    if (!target || target.type === "placeholder") return false;
+    const parent = target.parent;
+    if (!parent || parent.command !== "\\log" || target.parentBranch !== "subscript") return false;
+    // 光标停在下标起点（first）时前面没有可删字符；MathLive 的 To() 特判仍会
+    // 把整个 \log 删掉。这里直接拦下，光标留在下标里，不能删本体。
+    if (target.type === "first") {
+      event.preventDefault();
+      return true;
+    }
+    const left = target.leftSibling;
+    if (!left) return false;
+    event.preventDefault();
+    try {
+      model.position = model.offsetOf(left);
+      mf.executeCommand("deleteForward");
+    } catch (error) {
+      return false;
+    }
+    return true;
+  }
+
+  // 选中「整个」lim/log 下标时，MathLive 的 ct() 会把这个下标所在的运算符
+  // 一并扩展删除。用占位符替换选区：运算符和空槽保留，后续输入直接填入，
+  // 撤销仍能恢复原底数 / 趋近条件。只匹配这两个模板的单下标槽；起点必须是
+  // 下标 first，且选区边界与 getBranchRange 完全一致（含下标里的嵌套原子）。
+  function rescueWholeBoundSelection(mf, event) {
+    const model = modelFor(mf);
+    if (!model || model.selectionIsCollapsed) return false;
+    const ranges = model.selection && model.selection.ranges;
+    if (!Array.isArray(ranges) || ranges.length !== 1) return false;
+    const range = ranges[0];
+    if (!Array.isArray(range)) return false;
+    const start = Math.min(range[0], range[1]);
+    const end = Math.max(range[0], range[1]);
+    const info = calculusBoundOf(model.at(start));
+    if (!info || info.branch !== "subscript") return false;
+    if (info.parent.command !== "\\lim" && info.parent.command !== "\\log") return false;
+    const bounds = branchRange(model, info.parent, info.branch);
+    if (!bounds || bounds[0] !== start || bounds[1] !== end) return false;
+    event.preventDefault();
+    try {
+      mf.insert("\\placeholder{}", {
+        format: "latex",
+        mode: "math",
+        insertionMode: "replaceSelection",
+        selectionMode: "placeholder"
+      });
+    } catch (error) {
+      return false;
+    }
+    return true;
+  }
+
+  function bindBoundDeletionGuard(mf, textarea) {
     if (!mf) return;
     mf.addEventListener("beforeinput", function (event) {
       const type = event && event.inputType;
       if (type !== "deleteContentBackward" && type !== "deleteContentForward") return;
-      if (!deletionWouldDropBound(mf)) return;
-      event.preventDefault();
+      // 空界占位符（包括重复删除已选中的空占位符）直接拦下：不换成新占位符，
+      // 也不往撤销栈里加一步。有内容的删除才交给下面两条窄路径。
+      if (deletionWouldDropBound(mf)) {
+        event.preventDefault();
+        return;
+      }
+      // beforeinput 里嵌套执行 MathLive 操作时 silenceNotifications 会吞掉 input，
+      // #draft 仍停在删除前的值；操作成功后复用既有回写路径补一次同步。
+      let changed = false;
+      if (type === "deleteContentBackward") changed = rescueLogBaseDeletion(mf, event);
+      if (!changed) changed = rescueWholeBoundSelection(mf, event);
+      if (changed && textarea) handleFieldChange(mf, textarea);
     });
   }
 

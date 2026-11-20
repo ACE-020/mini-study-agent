@@ -679,12 +679,28 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
         .replace(/\^\{([^{}]*)\}/g, (match, inner) => '^' + inner);
       return text.includes(value);
     }, needle);
+    const waitCanonical = expected => page.waitForFunction(value => {
+      const text = document.querySelector('#draft').value
+        .replace(/\s+/g, '')
+        .replace(/_\{([^{}]*)\}/g, (match, inner) => '_' + inner)
+        .replace(/\^\{([^{}]*)\}/g, (match, inner) => '^' + inner);
+      return text === value;
+    }, expected);
     const waitCaretBranch = branch => page.waitForFunction(wanted => {
       const node = document.querySelector('#formula-editor-host math-field');
       const model = node && node._mathfield && node._mathfield.model;
       const atom = model && model.at(node.position);
       return Boolean(atom && atom.parentBranch === wanted);
     }, branch);
+    // 选中光标所在下标分支的全部内容（与直接拖选整个下标等价）。
+    const selectSubscript = () => field.evaluate(node => {
+      const model = node._mathfield.model;
+      const atom = model.at(node.position);
+      const parent = atom && atom.parent;
+      if (!parent) return false;
+      model.selection = {ranges: [model.getBranchRange(model.offsetOf(parent), 'subscript')]};
+      return true;
+    });
     const openCalculusKey = async aria => {
       await clearDraft();
       await field.click();
@@ -805,6 +821,64 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       return index >= 0 && text.slice(index + 6).includes('x');
     });
 
+    // 极限：真实点击后把预填 x→ 和占位符一起删空，再按 Backspace / Delete
+    // 不能丢掉下标分支；新的趋近条件要能继续填回去。
+    await openCalculusKey('极限');
+    await waitCaretBranch('subscript');
+    for (let i = 0; i < 3; i += 1) await page.keyboard.press('Backspace');
+    await waitCanonical('$\\lim_$');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Delete');
+    await waitCanonical('$\\lim_$');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('t');
+    await chooseCategory('relation');
+    await clickKey('趋于');
+    await page.keyboard.type('0');
+    await waitCanonical('$\\lim_t\\to0$');
+
+    // 对数底数：删掉最后一位数字不能连 \log 一起删；空下标可继续退格和重填，
+    // 撤销要能恢复原来的底数。
+    await openCalculusKey('对数');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('2');
+    await waitCanonicalDraft('\\log_2');
+    await page.keyboard.press('Backspace');
+    await waitCanonical('$\\log_$');
+    await waitCaretBranch('subscript');
+    await page.keyboard.press('Backspace');
+    await waitCanonical('$\\log_$');
+    await page.keyboard.press('Control+z');
+    await waitCanonical('$\\log_2$');
+    // 原生与原稿工具栏的撤回都可能恢复不同的光标位置。退格前确保光标在数字后。
+    const atBaseStart = await field.evaluate(node => node._mathfield.model.at(node.position).type === 'first');
+    if (atBaseStart) await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Backspace');
+    await waitCanonical('$\\log_$');
+    await page.keyboard.type('7');
+    await waitCanonical('$\\log_7$');
+
+    // 整个下标选区删除：lim / log 只清空下标内容，运算符和可填槽位保留。
+    await openCalculusKey('极限');
+    await page.keyboard.type('1');
+    await waitCanonical('$\\lim_x\\to1$');
+    assert.equal(await selectSubscript(), true);
+    await page.keyboard.press('Backspace');
+    await waitCanonical('$\\lim_$');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('u');
+    await waitCanonical('$\\lim_u$');
+
+    await openCalculusKey('对数');
+    await page.keyboard.type('2');
+    await waitCanonicalDraft('\\log_2');
+    assert.equal(await selectSubscript(), true);
+    await page.keyboard.press('Delete');
+    await waitCanonical('$\\log_$');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('e');
+    await waitCanonical('$\\log_e$');
+
     // 接在已有公式后：折叠光标不会把 z^2+ 捕获进积分体；原文往返不丢内容。
     await page.evaluate(() => window.mathInputMode.setView('source'));
     await setDraft('$z^2+$');
@@ -836,7 +910,8 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       ['定积分', '$\\int_{}^{} \\,dx$', 7],
       ['求和', '$\\sum_{i=}^{} $', 9],
       ['连乘', '$\\prod_{i=}^{} $', 10],
-      ['对数', '$\\log_{}$', 7]
+      ['对数', '$\\log_{}$', 7],
+      ['极限', '$\\lim_{x\\to }$', 12]
     ];
     for (const [aria, expected, caret] of rawCases) {
       await setDraft('');
@@ -852,7 +927,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await toggle.click();
     await page.waitForFunction(() => {
       const node = document.querySelector('#formula-editor-host math-field');
-      return Boolean(node && node.getValue('latex').includes('\\log'));
+      return Boolean(node && node.getValue('latex').includes('\\lim'));
     });
 
     assert.deepEqual(errors, []);
