@@ -986,8 +986,9 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.keyboard.press('Control+y');
     await waitDraftExactly('x再源');
 
-    // 渲染模板：撤回插入后再重做，MathLive 占位符与选区必须还能继续填。
-    await clearDraft();
+    // 用新打开的原稿验证模板。重做以后应恢复初次插入时可填的选区。
+    await page.reload();
+    await page.waitForFunction(() => window.mathInputMode?.field && window.mathInputMode.isRendered());
     await field.click();
     await visibleKeyboard().waitFor();
     await chooseCategory('fraction');
