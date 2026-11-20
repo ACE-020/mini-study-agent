@@ -663,8 +663,200 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await focusInMainField(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 
+    /* 16. 微积分模板：真实点击后打字、实体/屏幕方向键、空界删除保护和原文往返。
+       模板的首填槽由 MathLive 的第一个占位符决定；正文用 #0，选中真实公式时仍包住选区。 */
+    const canonicalDraft = () => page.evaluate(() => {
+      const text = document.querySelector('#draft').value
+        .replace(/\s+/g, '')
+        .replace(/_\{([^{}]*)\}/g, (match, inner) => '_' + inner)
+        .replace(/\^\{([^{}]*)\}/g, (match, inner) => '^' + inner);
+      return text;
+    });
+    const waitCanonicalDraft = needle => page.waitForFunction(value => {
+      const text = document.querySelector('#draft').value
+        .replace(/\s+/g, '')
+        .replace(/_\{([^{}]*)\}/g, (match, inner) => '_' + inner)
+        .replace(/\^\{([^{}]*)\}/g, (match, inner) => '^' + inner);
+      return text.includes(value);
+    }, needle);
+    const waitCaretBranch = branch => page.waitForFunction(wanted => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      const model = node && node._mathfield && node._mathfield.model;
+      const atom = model && model.at(node.position);
+      return Boolean(atom && atom.parentBranch === wanted);
+    }, branch);
+    const openCalculusKey = async aria => {
+      await clearDraft();
+      await field.click();
+      await visibleKeyboard().waitFor();
+      await chooseCategory('calculus');
+      await clickKey(aria);
+    };
+    const pressScreen = direction => visibleKeyboard().locator(`[data-mk-move="${direction}"]`).click();
+
+    // 不定积分：首填被积函数，没有上下界，积分体后保留 dx。
+    await openCalculusKey('积分');
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\int'));
+    });
+    await page.keyboard.type('x');
+    await waitCanonicalDraft('\\intx\\,dx');
+    assert.equal((await canonicalDraft()).includes('\\int_'), false);
+    assert.equal((await canonicalDraft()).includes('\\int^'), false);
+
+    // 定积分：默认双空界时从下界第一次 ↑ 就进上界，再 ↓ 回下界；
+    // 然后下界 → 上界 → 积分体，末尾 dx；实体方向键。
+    await openCalculusKey('定积分');
+    await waitCaretBranch('subscript');
+    await page.keyboard.press('ArrowUp');
+    await waitCaretBranch('superscript');
+    await page.keyboard.press('ArrowDown');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('1');
+    await page.keyboard.press('ArrowUp');
+    await waitCaretBranch('superscript');
+    await page.keyboard.type('3');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.type('x');
+    await waitCanonicalDraft('\\int_1^3x\\,dx');
+
+    // 求和：下标预填 i=，首填在等号后；屏幕方向上/右方向键。
+    await openCalculusKey('求和');
+    await waitCaretBranch('subscript');
+    await waitCanonicalDraft('\\sum_i=');
+    await page.keyboard.type('1');
+    await waitCanonicalDraft('\\sum_i=1');
+    await pressScreen('up');
+    await waitCaretBranch('superscript');
+    await page.keyboard.type('n');
+    await pressScreen('right');
+    await page.keyboard.type('x');
+    await waitCanonicalDraft('\\sum_i=1^nx');
+
+    // 连乘：与求和同构，不能再是裸 \prod。
+    await openCalculusKey('连乘');
+    await waitCaretBranch('subscript');
+    await waitCanonicalDraft('\\prod_i=');
+    await page.keyboard.type('1');
+    await page.keyboard.press('ArrowUp');
+    await waitCaretBranch('superscript');
+    await page.keyboard.type('n');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.type('x');
+    await waitCanonicalDraft('\\prod_i=1^nx');
+
+    // i= 是普通字符：三次以内 Backspace 删掉后可直接写 cyc，符号/上界/正文不丢。
+    await openCalculusKey('求和');
+    await waitCanonicalDraft('\\sum_i=');
+    for (let i = 0; i < 3; i += 1) {
+      await page.keyboard.press('Backspace');
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    }
+    await page.keyboard.type('cyc');
+    await waitCanonicalDraft('\\sum_cyc');
+    // 上界槽仍在：从下标按实体上键还能进入 superscript。
+    await page.keyboard.press('ArrowUp');
+    await waitCaretBranch('superscript');
+
+    // 空下界再退格：MathLive 原生会 removeBranch('subscript')，守卫必须保住槽位。
+    await openCalculusKey('定积分');
+    await waitCaretBranch('subscript');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('1');
+    await waitCanonicalDraft('\\int_1');
+
+    // 上界数字删空后再退格，仍能继续输入上界。
+    await openCalculusKey('定积分');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('1');
+    await page.keyboard.press('ArrowUp');
+    await waitCaretBranch('superscript');
+    await page.keyboard.type('3');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type('2');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.type('x');
+    await waitCanonicalDraft('\\int_1^2x\\,dx');
+
+    // 选中整条公式删除仍照常工作：守卫只拦空界，不拦整个选区。
+    await openCalculusKey('求和');
+    await page.keyboard.type('1');
+    await field.evaluate(node => node.executeCommand('selectAll'));
+    await page.keyboard.press('Backspace');
+    await waitFieldEmpty();
+    assert.equal(await value(), '');
+
+    // 对数：首填真实底数，再进入真数。
+    await openCalculusKey('对数');
+    await waitCaretBranch('subscript');
+    await page.keyboard.type('2');
+    await waitCanonicalDraft('\\log_2');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.type('x');
+    await page.waitForFunction(() => {
+      const text = document.querySelector('#draft').value
+        .replace(/\s+/g, '')
+        .replace(/_\{([^{}]*)\}/g, (match, inner) => '_' + inner)
+        .replace(/\^\{([^{}]*)\}/g, (match, inner) => '^' + inner);
+      const index = text.indexOf('\\log_2');
+      return index >= 0 && text.slice(index + 6).includes('x');
+    });
+
+    // 接在已有公式后：折叠光标不会把 z^2+ 捕获进积分体；原文往返不丢内容。
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft('$z^2+$');
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('z'));
+    });
+    await field.click();
+    await visibleKeyboard().waitFor();
+    await field.evaluate(node => node.executeCommand('moveToMathfieldEnd'));
+    await chooseCategory('calculus');
+    await clickKey('积分');
+    await page.keyboard.type('x');
+    await waitCanonicalDraft('z^2+\\intx\\,dx');
+    const calculusRaw = await value();
+    await toggle.click();
+    assert.equal(await value(), calculusRaw);
+    await toggle.click();
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\int'));
+    });
+
+    /* 17. 原文视图：raw 模板里的 $0 首填光标不能被隐藏 MathLive 的归一化回写覆盖。 */
+    await toggle.click();
+    const rawCases = [
+      ['积分', '$\\int \\,dx$', 6],
+      ['定积分', '$\\int_{}^{} \\,dx$', 7],
+      ['求和', '$\\sum_{i=}^{} $', 9],
+      ['连乘', '$\\prod_{i=}^{} $', 10],
+      ['对数', '$\\log_{}$', 7]
+    ];
+    for (const [aria, expected, caret] of rawCases) {
+      await setDraft('');
+      await draft.click();
+      await visibleKeyboard().waitFor();
+      await chooseCategory('calculus');
+      await clickKey(aria);
+      // 隐藏 MathLive 的归一再快也要经过至少一帧；两帧后原文和光标必须仍是插入结果。
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await value(), expected);
+      assert.deepEqual(await selection(), [caret, caret]);
+    }
+    await toggle.click();
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\log'));
+    });
+
     assert.deepEqual(errors, []);
-    console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、方向键实体/屏幕对齐。');
+    console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、方向键实体/屏幕对齐、微积分模板与空界删除保护。');
   } finally {
     await browser.close();
   }

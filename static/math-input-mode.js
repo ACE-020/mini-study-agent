@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-cursor-parity";
+  const VERSION = "20261120-calculus-templates";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -868,6 +868,7 @@
       /* 属性名随版本变化时忽略 */
     }
     hideToggles(mf);
+    bindBoundDeletionGuard(mf);
     mf.addEventListener("input", function () {
       handleFieldChange(mf, textarea);
     });
@@ -912,6 +913,10 @@
   // 公式编辑器 → textarea：#draft.value 始终是「普通文字 + $...$」
   function handleFieldChange(mf, textarea) {
     if (state.syncing || !mf || !textarea) return;
+    // 原文视图下 #draft 是权威来源。隐藏的 MathLive 仍可能因 setLatex 的异步
+    // input 走到这里，把归一化后的公式（以及末尾光标）回写覆盖 textarea，
+    // 所以主稿处于 source 时绝不从隐藏编辑器回写；切回渲染时 setView 会重新装载。
+    if (mf === state.field && state.view === VIEW_SOURCE) return;
     const mixed = mixedFromEditor(mf, textarea);
     if (mixed === null || textarea.value === mixed) return;
     state.docs.set(mf, parseDoc(mixed));
@@ -1038,6 +1043,9 @@
   // 原稿是普通文字优先：文字模式下只在外部值确实不同时才重设 MathLive，避免打断打字。
   function onExternalChange() {
     if (!state.field || state.syncing || state.suppressExternalSync) return;
+    // 原文视图直接以 textarea 为准；隐藏 MathLive 的装载/归一化只会造成
+    // 「异步 input → 覆盖原文和光标」的回路。切回渲染时 setView 会从 textarea 重新装载。
+    if (state.view === VIEW_SOURCE) return;
     const doc = parseDoc(draft.value);
     if (state.view === VIEW_RENDERED) {
       const currentLatex = getLatex(state.field);
@@ -1142,7 +1150,9 @@
     }
   }
 
-  // 兼容：{template} / 旧版 {type,...} 规格 → MathLive insert 模板
+  // 兼容：{template} / 旧版 {type,...} 规格 → MathLive insert 模板。
+  // 微积分可视化键走 chipTemplate → insertChip({template})，不经过这些旧 type；
+  // 这里保持既有 type 的原始语义（尤其 int 的上下界和 lim 的下标），不新增别名。
   const LEGACY_TEMPLATES = {
     frac: "\\frac{#@}{#?}",
     sqrt: "\\sqrt{#@}",
@@ -1186,6 +1196,84 @@
     }
   }
 
+  /* ---------- 既有积分 / 求和 / 连乘上下界的删除保护 ---------- */
+
+  // MathLive 0.111.4 的 To() 在上下界只剩 first/placeholder 时，会把整个
+  // 分支 removeBranch() 掉；光标随后移出公式，下一次键入就变成普通文字。
+  // MathLive 的 gp/bp 删除路径都会先走 contentWillChange → 宿主上派发
+  // cancelable beforeinput，因此在这里只拦「删除会清空一个既有上下界」的情况：
+  // 普通 i=、数字、有内容的选区仍然照常删除；不定积分原本没有界，也不会被新建。
+  const CALCULUS_BOUND_COMMANDS = {
+    "\\int": true,
+    "\\sum": true,
+    "\\prod": true
+  };
+
+  function calculusBoundOf(atom) {
+    if (!atom) return null;
+    const branch = atom.parentBranch;
+    if (branch !== "subscript" && branch !== "superscript") return null;
+    const parent = atom.parent;
+    if (!parent || !CALCULUS_BOUND_COMMANDS[parent.command]) return null;
+    return { parent: parent, branch: branch };
+  }
+
+  // 分支数组含 first atom；只剩 first/placeholder 时删除会丢槽。
+  function boundHasOnlyEmptySlots(info) {
+    if (!info) return false;
+    const atoms = info.parent.branch(info.branch);
+    if (!Array.isArray(atoms)) return false;
+    return atoms.every(function (atom) {
+      return atom.type === "first" || atom.type === "placeholder";
+    });
+  }
+
+  function deletionWouldDropBound(mf) {
+    const model = modelFor(mf);
+    if (!model) return false;
+    const ranges = model.selection && model.selection.ranges;
+    if (!Array.isArray(ranges) || ranges.length !== 1) return false;
+    const range = ranges[0];
+    if (!Array.isArray(range)) return false;
+    const start = Math.min(range[0], range[1]);
+    const end = Math.max(range[0], range[1]);
+
+    if (start !== end) {
+      // 只有「整个选区都落在同一个空界里，且只有 first/placeholder」才拦；
+      // 选中真实内容、跨界或整条公式都放行。
+      let atoms = [];
+      try {
+        atoms = model.getAtoms([start, end]);
+      } catch (error) {
+        return false;
+      }
+      if (!atoms.length) return false;
+      const firstInfo = calculusBoundOf(atoms[0]);
+      const lastInfo = calculusBoundOf(atoms[atoms.length - 1]);
+      if (!firstInfo || !lastInfo || firstInfo.parent !== lastInfo.parent || firstInfo.branch !== lastInfo.branch) {
+        return false;
+      }
+      if (!boundHasOnlyEmptySlots(firstInfo)) return false;
+      return atoms.every(function (atom) {
+        return atom.type === "first" || atom.type === "placeholder";
+      });
+    }
+
+    // 折叠光标只检查光标前的 atom（MathLive position 的语义）：它在空界里才拦。
+    // 不检查左/右邻居，避免正文 x 的 Backspace 被相邻空界误伤。
+    return boundHasOnlyEmptySlots(calculusBoundOf(model.at(start)));
+  }
+
+  function bindBoundDeletionGuard(mf) {
+    if (!mf) return;
+    mf.addEventListener("beforeinput", function (event) {
+      const type = event && event.inputType;
+      if (type !== "deleteContentBackward" && type !== "deleteContentForward") return;
+      if (!deletionWouldDropBound(mf)) return;
+      event.preventDefault();
+    });
+  }
+
   // MathLive 0.111.4 的 position 指向光标前的 atom；getBranchRange 返回
   // [首 atom, 末 atom] 的偏移，末 atom 的位置就是界尾。只在这里做一次 try/fallback。
   function branchRange(model, atom, name) {
@@ -1210,6 +1298,12 @@
     let atom = null;
     try {
       atom = model.at(position);
+      // 模板插入后默认选中的是下界 placeholder（选区 [p-1,p]）。此时 position
+      // 可能落在选区末端，先按选区里真正选中的 placeholder 找回所在分支，
+      // 才能一次 ↑ 从下界直接切到上界，而不是被原生 moveUp 收成折叠光标。
+      if (model.selectionIsPlaceholder) {
+        atom = model.at(Math.max(model.anchor, model.position));
+      }
     } catch (error) {
       return false;
     }
@@ -1244,15 +1338,24 @@
     // executeCommand 在「没有可移动目标」时也可能返回 true（例如 moveUp 在行首
     // 只广播 move-out），所以移动成功与否必须比较真实光标位置，不能只看返回值。
     const before = positionOf(target);
-    try {
-      target.executeCommand(MOVE_COMMANDS[dir]);
-    } catch (error) {
-      /* 命令不可用时仍尝试下面的上下界补齐 */
+    // 上下键先试同算符的既有另一界：选中下界 placeholder 时原生 moveUp 只会
+    // 把选区收成折叠光标，position 变了但并没有离开下界。只有 moveAcrossBounds
+    // 真的匹配到同一算符的另一界才直接处理；矩阵、分数和普通上下标仍走原生。
+    let crossed = false;
+    if (dir === "up" || dir === "down") {
+      const model = modelFor(target);
+      if (model && (model.selectionIsCollapsed || model.selectionIsPlaceholder)) {
+        crossed = moveAcrossBounds(target, dir);
+      }
+    }
+    if (!crossed) {
+      try {
+        target.executeCommand(MOVE_COMMANDS[dir]);
+      } catch (error) {
+        /* 命令不可用时保持原位 */
+      }
     }
     let after = positionOf(target);
-    if (after === before && (dir === "up" || dir === "down")) {
-      if (moveAcrossBounds(target, dir)) after = positionOf(target);
-    }
     // MathLive 在「不能再移动」时会按浏览器的焦点顺序把焦点移出编辑器（会跳到上一个按钮），
     // 这里把焦点拉回公式编辑器，避免点方向键后突然跳到别处。
     if (!target.contains(document.activeElement)) focusEditor(target);
@@ -1347,7 +1450,9 @@
     const mf = resolveEditor();
     const template = templateFromSpec(spec);
     if (!mf || !template) return false;
-    return insertMathLatex(mf, template, /#@|#\?/.test(template));
+    // #0 也是结构占位符（有选区取选区，否则是占位符）；不定积分模板只有 #0，
+    // 必须一起留在数学模式，否则插入后会切回 text，后续被积函数被打成普通文字。
+    return insertMathLatex(mf, template, /#@|#\?|#0/.test(template));
   }
 
   function insertGlyph(text) {
