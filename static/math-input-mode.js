@@ -9,7 +9,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-draft-undo-history";
+  const VERSION = "20261120-fraction-keyboard";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -1764,20 +1764,22 @@
     if (!atom || atom.parentBranch !== "below") return false;
     const parent = atom.parent;
     if (!parent || parent.type !== "genfrac") return false;
-    try {
-      mf.executeCommand("moveToNextGroup");
-    } catch (error) {
-      return false;
-    }
-    const after = model.selection && model.selection.ranges;
     let fractionStart = 0;
     let fractionEnd = 0;
     try {
       fractionStart = parent.leftSibling ? model.offsetOf(parent.leftSibling) : 0;
       fractionEnd = model.offsetOf(parent);
+      const denominator = branchRange(model, parent, "below");
+      // 分式在末尾且分母填完时，这次 Tab 把光标放在分式之后。
+      if (fractionEnd === model.lastOffset && denominator && range[0] === denominator[1]) {
+        mf.position = fractionEnd;
+        return true;
+      }
+      mf.executeCommand("moveToNextGroup");
     } catch (error) {
-      return true;
+      return false;
     }
+    const after = model.selection && model.selection.ranges;
     if (after && after.length === 1) {
       const selectedStart = Math.min(after[0][0], after[0][1]);
       const selectedEnd = Math.max(after[0][0], after[0][1]);
@@ -1852,8 +1854,15 @@
   }
 
   function templateForInsertion(mf, template) {
-    if (!template || !collapsedTextCursor(mf)) return template;
-    return template.replace(/#@/g, "#?");
+    if (!template) return template;
+    if (collapsedTextCursor(mf)) return template.replace(/#@/g, "#?");
+    if (!/^\\(?:frac|dfrac)\{#@\}\{#\?\}$/.test(template)) return template;
+    // 数学分支开头没有可捕获为分子的表达式，直接从分子占位符开始填。
+    const model = modelFor(mf);
+    if (model?.selectionIsCollapsed && model.at(mf.position)?.type === "first") {
+      return template.replace("#@", "#?");
+    }
+    return template;
   }
 
   // 原稿字段默认是 text 模式：符号键盘点击时先切到 math 再插入。
@@ -1862,6 +1871,9 @@
   function insertMathLatex(mf, latex, keepMath) {
     if (!mf || !latex) return false;
     const source = String(latex);
+    // 清空原文再切回渲染后，空字段可能保留 [-1, 0] 选区。
+    // 此处没有内容可选，模板应按正常空光标插入。
+    if (modelFor(mf)?.lastOffset === 0) mf.position = 0;
     const switched = isTextField(mf) && editorMode(mf) !== "math";
     // 必须在 forceMathMode 之前判断当前是否 text 折叠光标。
     const insertTemplate = templateForInsertion(mf, source);

@@ -380,6 +380,25 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.keyboard.press('Backspace');
     await waitFieldEmpty();
     await page.waitForFunction(() => document.querySelector('#draft').value === '');
+
+    // 从符号表插入也是入口。空编辑框可以仍处于 math 模式，分子也必须可填。
+    await field.click();
+    await field.evaluate(node => { node._mathfield.model.mode = 'math'; });
+    await chooseCategory('fraction');
+    await clickKey('分式');
+    await page.keyboard.type('1');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('2');
+    await page.waitForFunction(() => {
+      const draft = document.querySelector('#draft');
+      return /\$\\frac(?:12|\{1\}\{2\})\$/.test(draft.value);
+    });
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      const focused = document.activeElement === node || Boolean(node?.shadowRoot?.activeElement);
+      return focused && node.position === node._mathfield.model.lastOffset;
+    });
     await page.evaluate(() => window.mathInputMode.setView('source'));
 
     /* 8. 矩阵 / 行列式两个相邻入口、各自标题、手动预览与插入 */
