@@ -2,7 +2,8 @@
    把 <math-field>（static/vendor/mathlive/mathlive.min.js）挂到 #formula-editor-host。
    原稿默认直接显示「可编辑的渲染效果」，但 MathLive 字段以 text 为默认模式：
    普通英文、中文和换行按普通文字录入，只有符号键盘 / 矩阵面板明确插入的公式才进入数学模式。
-   标题行右侧唯一按钮在「查看原文」（可编辑 LaTeX 源）与「查看渲染后文字」之间切换。
+   标题行右侧「撤回」「重做」共用主原稿历史。「查看原文」在可编辑 LaTeX 源与
+   「查看渲染后文字」之间切换。
    #draft.value 契约不变：普通文字 + $...$ 公式段（发送/提交链路只认 #draft）。
    约束：CSP script-src 'self'，本文件不使用 eval / inline script / CDN。 */
 (function () {
@@ -1916,6 +1917,10 @@
       // 有的输入法在 compositionend 才提交最终文本，之后不再补 input；
       // 延迟补记一次，重复值仍由 pushHistoryEntry 去重。
       window.setTimeout(scheduleHistoryRecord, 0);
+    });
+    // 组合输入失焦时清除标志，后续编辑可以继续记录。
+    draft.addEventListener("blur", function () {
+      history.composing = false;
     });
     if (undoButton) {
       undoButton.addEventListener("click", function (event) {
