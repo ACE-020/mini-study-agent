@@ -3,9 +3,12 @@
 这里全部用替身模型，不产生真实 API 调用。
 """
 
+import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from formula_matrix import (
     ALLOWED_ENVIRONMENTS,
@@ -18,6 +21,7 @@ from formula_matrix import (
     validate_latex,
 )
 from web import create_app
+from llm import ModelClient
 
 PMATRIX = r"\begin{pmatrix}1&0\\0&1\end{pmatrix}"
 VMATRIX = r"\begin{vmatrix}a&b\\c&d\end{vmatrix}"
@@ -238,6 +242,33 @@ class RouteTests(unittest.TestCase):
         response = client.post("/api/formula/matrix", json={"description": "说不清的东西", "kind": "matrix"})
         self.assertEqual(response.status_code, 400)
         self.assertIn("没法转成矩阵", response.get_json()["error"])
+
+    def test_matrix_uses_short_request_budget_and_official_deepseek_non_thinking(self):
+        payload = {"description": "2 阶单位矩阵", "kind": "matrix"}
+        for base_url, model, expected_thinking in (
+            ("https://api.deepseek.com/v1", "deepseek-v4-pro", {"type": "disabled"}),
+            ("https://api.deepseek.com", "deepseek-flash", {"type": "disabled"}),
+            ("https://example.invalid/v1", "deepseek-v4-pro", None),
+        ):
+            with self.subTest(base_url=base_url, model=model), tempfile.TemporaryDirectory() as tmp:
+                config = {"base_url": base_url, "model": model, "api_key": "fixture-key"}
+                response_body = {"choices": [{"message": {"role": "assistant", "content": PMATRIX}}]}
+                with patch("web.SettingsStore.resolve", return_value=config), patch.object(
+                    ModelClient, "_open", autospec=True,
+                    return_value=BytesIO(json.dumps(response_body).encode("utf-8")),
+                ) as send:
+                    app = create_app(Path(tmp), local_ocr_runtime=False)
+                    try:
+                        response = app.test_client().post("/api/formula/matrix", json=payload)
+                        self.assertEqual(response.status_code, 200)
+                        send.assert_called_once()
+                        client, request = send.call_args.args
+                        self.assertEqual((client.timeout, client.retries), (20, 0))
+                        body = json.loads(request.data)
+                        self.assertEqual(body["model"], model)
+                        self.assertEqual(body.get("thinking"), expected_thinking)
+                    finally:
+                        app.extensions["stop_background"]()
 
 
 if __name__ == "__main__":

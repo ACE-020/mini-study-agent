@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import threading
 import time
+from urllib.parse import urlsplit
 import webbrowser
 import weakref
 
@@ -170,6 +171,23 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                            config[prefix + "model"], timeout=90 if ocr else 120)
 
     make_client = client_factory or (lambda: configured_client())
+
+    def make_matrix_client():
+        if client_factory:
+            return client_factory()
+        config = settings.resolve()
+        if not config["api_key"]:
+            raise ValueError("请先在「模型设置」保存 API Key，再使用自然语言生成。")
+        base_url, model = config["base_url"], config["model"]
+        endpoint = urlsplit(base_url)
+        disable_thinking = (
+            endpoint.scheme == "https" and endpoint.hostname == "api.deepseek.com"
+            and model in ("deepseek-v4-pro", "deepseek-flash")
+        )
+        # 浏览器等待 25 秒，给请求返回与页面更新留出时间。
+        return ModelClient(base_url, config["api_key"], model, timeout=20, retries=0,
+                           disable_thinking=disable_thinking)
+
     def make_reader(backend=None):
         if reader_factory:
             return reader_factory()
@@ -182,7 +200,6 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if client_factory:
             return MaterialParser(make_client())
         config = settings.resolve()
-        from urllib.parse import urlsplit
         if (urlsplit(config["ocr_base_url"]).hostname == "api.deepseek.com" and
                 config["ocr_model"] in ("deepseek-v4-pro", "deepseek-reasoner")):
             raise ModelError("当前图片模型不支持原图。请在模型设置中将图片模型改为 deepseek-flash，或配置其他支持图片的模型。")
@@ -533,10 +550,8 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if not isinstance(payload, dict):
             return error("请求格式有误。")
         try:
-            if not client_factory and not settings.public()["configured"]:
-                return error("请先在「模型设置」保存 API Key，再使用自然语言生成。")
             latex = generate_matrix_latex(
-                make_client(),
+                make_matrix_client(),
                 payload.get("description"),
                 payload.get("kind") or "matrix",
             )
