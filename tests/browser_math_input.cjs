@@ -320,6 +320,11 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       const node = document.querySelector('#formula-editor-host math-field');
       return Boolean(node && node.getValue('latex').includes('\\frac{1}{2}'));
     });
+    await field.click();
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return node && (node === document.activeElement || Boolean(node.shadowRoot?.activeElement));
+    });
     const fractionBranch = name => field.evaluate((node, branch) => {
       const model = node._mathfield.model;
       for (let i = 0; i <= model.lastOffset; i += 1) {
@@ -334,6 +339,19 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       node.focus();
       node.position = value;
     }, offset);
+
+    const filledDenominator = await fractionBranch('below');
+    assert.ok(filledDenominator, '已填写的分母应该可定位');
+    await putFieldCaret(filledDenominator[1]);
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      const ranges = node?.selection.ranges;
+      const line = node?.shadowRoot?.querySelector('.ML__frac-line');
+      return ranges?.length === 1 && ranges[0][0] === ranges[0][1]
+        && line && !line.classList.contains('ML__selected');
+    });
+    assert.equal(await value(), '$$\\frac{1}{2}$$');
 
     const numerator = await fractionBranch('above');
     assert.ok(numerator, '分式分子应该可定位');
@@ -357,6 +375,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.locator('#draft-redo').click();
     await page.waitForFunction(() => document.querySelector('#draft').value === '$$\\frac{}{3}$$');
     // 整段选中删除分式仍然有效（守卫只拦「删空单个分支」）。
+    await field.click();
     await field.evaluate(node => node.executeCommand('selectAll'));
     await page.keyboard.press('Backspace');
     await waitFieldEmpty();
