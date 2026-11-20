@@ -986,8 +986,14 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.keyboard.press('Control+y');
     await waitDraftExactly('x再源');
 
-    // 用新打开的原稿验证模板。重做以后应恢复初次插入时可填的选区。
+    // 刷新会恢复当前对话的草稿，先新建空白对话再验证模板的可填选区。
+    await page.evaluate(() => newConversation());
+    await waitFieldEmpty();
+    const freshConversationId = await page.evaluate(() => conversationStore.activeId);
     await page.reload();
+    await page.waitForFunction(id => {
+      return conversationStore.activeId === id && conversationStore.cache.has(id);
+    }, freshConversationId);
     await page.waitForFunction(() => window.mathInputMode?.field && window.mathInputMode.isRendered());
     await field.click();
     await visibleKeyboard().waitFor();
@@ -1024,6 +1030,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     /* 19. 原文视图的字面符号：%、{、} 插成有效 LaTeX，且只包一层 $（并入 #8 的原有回归） */
     await page.evaluate(() => window.mathInputMode.setView('source'));
     await setDraft('abc');
+    await draft.click();
     await setSelection(1, 1);
     await visibleKeyboard().waitFor();
     await chooseCategory('basic');
@@ -1106,9 +1113,10 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await page.waitForFunction(() => !document.querySelector('#draft-undo').disabled);
     await page.locator('#draft-undo').click();
     assert.equal(await value(), 'A 对话原稿 $x^2$');
-    // B 的草稿没有被 A 的后续编辑污染。
+    // 切回 B 后，先前已经撤空的草稿仍为空。
     await page.evaluate(id => openConversation(id), conversationB);
-    await page.waitForFunction(() => document.querySelector('#draft').value === 'B 对话原稿 $y^2$');
+    assert.equal(await value(), '');
+    await waitFieldEmpty();
 
     assert.deepEqual(errors, []);
     console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、方向键实体/屏幕对齐、微积分模板与空界删除保护、字面符号、隐藏编辑器不越权、历史对话切换后的撤回隔离。');
