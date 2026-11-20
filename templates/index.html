@@ -9,21 +9,22 @@
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/static/app.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/workflow.css?v=20261026-review-focus-v20">
-  <link rel="stylesheet" href="/static/math-keyboard.css?v=20261118-mathlive">
+  <link rel="stylesheet" href="/static/math-keyboard.css?v=20261120-home-math-keys">
   <script defer src="/static/vendor/marked.umd.js"></script>
   <script defer src="/static/vendor/purify.min.js"></script>
   <script defer src="/static/vendor/katex/katex.min.js"></script>
   <script defer src="/static/vendor/katex/auto-render.min.js"></script>
-  <script defer src="/static/app.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/app.js?v=20261120-history-merge"></script>
   <script defer src="/static/file-preview.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/settings.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/chat-composer.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/chat-queue.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/exercise-math.js?v=20261026-review-focus-v20"></script>
-  <script defer src="/static/math-keyboard.js?v=20261119-mathfix"></script>
+  <script defer src="/static/math-keyboard.js?v=20261120-home-math-keys"></script>
   <link rel="stylesheet" href="/static/vendor/mathlive/mathlive-fonts.css">
   <script defer src="/static/vendor/mathlive/mathlive.min.js"></script>
-  <script defer src="/static/math-input-mode.js?v=20261119-mathfix"></script>
+  <script defer src="/static/math-input-mode.js?v=20261120-home-math"></script>
+  <script defer src="/static/formula-matrix.js?v=20261119-draft-view"></script>
   <script defer src="/static/materials.js?v=20261026-review-focus-v20"></script>
   <link rel="stylesheet" href="/static/materials.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/notes.css?v=20261026-review-focus-v20">
@@ -34,7 +35,7 @@
   <script defer src="/static/material-submission.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/material-recovery.js?v=20261026-review-focus-v20"></script>
   <script defer src="/static/material-locations.js?v=20261026-review-focus-v20"></script>
-  <script defer src="/static/library.js?v=20261026-review-focus-v20"></script>
+  <script defer src="/static/library.js?v=20261119-draft-view"></script>
   <link rel="stylesheet" href="/static/workspace.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/material-workflow.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/material-correction.css?v=20261026-review-focus-v20">
@@ -46,8 +47,9 @@
   <link rel="stylesheet" href="/static/chat-composer.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/review-focus.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/conversations.css?v=20261118-conversations">
+  <link rel="stylesheet" href="/static/home-layout.css?v=20261120-home">
 </head>
-<body>
+<body class="home-shell">
   <svg class="icon-defs" aria-hidden="true"><defs>
     <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-3H4zM13 7a3 3 0 0 1 3-3h5v14h-4a4 4 0 0 0-4 3"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
@@ -55,74 +57,159 @@
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol>
     <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m4 11 8-7 8 7"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/></symbol>
+    <symbol id="i-books" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="3.6" rx="1"/><rect x="4.5" y="10.6" width="16.9" height="3.6" rx="1"/><rect x="3.5" y="15.2" width="17" height="3.6" rx="1"/><path d="M6.6 7.8h1.5M7.6 12.4h1.5M6.6 17h1.5"/></symbol>
+    <symbol id="i-panels-left" viewBox="0 0 24 24"><rect x="3" y="5" width="9" height="14" rx="1.5"/><rect x="14" y="7" width="7" height="10" rx="1.5"/></symbol>
+    <symbol id="i-panels-right" viewBox="0 0 24 24"><rect x="3" y="7" width="7" height="10" rx="1.5"/><rect x="12" y="5" width="9" height="14" rx="1.5"/></symbol>
   </defs></svg>
   <div class="app-shell">
-    <aside class="sidebar">
-      <a class="brand" href="#organize" aria-label="知错首页"><span class="brand-mark"><svg><use href="#i-book"/></svg></span><span>知错<small>学习整理助手</small></span></a>
-      <p class="nav-caption">我的学习空间</p>
-      <nav class="nav" aria-label="主要导航">
-        <button class="nav-item active" data-view="organize"><svg><use href="#i-plus"/></svg><span>添加学习内容</span></button>
-        <button class="nav-item" data-view="notebook"><svg><use href="#i-grid"/></svg><span>我的错题本</span><span id="sidebar-count" class="nav-count">0</span></button>
-        <button class="nav-item" data-view="notes"><svg><use href="#i-book"/></svg><span>我的笔记</span><span id="notes-count" class="nav-count">0</span></button>
-        <button class="nav-item" data-view="review"><svg><use href="#i-spark"/></svg><span>复习练习</span></button>
-        <button class="nav-item" data-view="materials"><svg><use href="#i-book"/></svg><span>练习资料</span></button>
+    <aside class="home-nav" id="home-nav" aria-label="全局导航">
+      <nav class="nav home-nav-items" aria-label="主要导航">
+        <button class="nav-item active" data-view="organize" type="button" aria-label="主页" aria-current="page">
+          <svg aria-hidden="true"><use href="#i-home"/></svg>
+          <span class="home-nav-label">主页</span>
+        </button>
+        <button class="nav-item" data-view="notebook" type="button" aria-label="错题本">
+          <svg aria-hidden="true"><use href="#i-grid"/></svg>
+          <span class="home-nav-label">错题本</span>
+          <span id="sidebar-count" class="nav-count">0</span>
+        </button>
+        <button class="nav-item" data-view="notes" type="button" aria-label="笔记">
+          <svg aria-hidden="true"><use href="#i-book"/></svg>
+          <span class="home-nav-label">笔记</span>
+          <span id="notes-count" class="nav-count">0</span>
+        </button>
+        <button class="nav-item" data-view="materials" type="button" aria-label="练习资料">
+          <svg aria-hidden="true"><use href="#i-books"/></svg>
+          <span class="home-nav-label">练习资料</span>
+        </button>
       </nav>
-      <div class="sidebar-note"><span class="note-line"></span><p>每一道错题，<br>都值得再学会一次。</p><small>从记录，到真正理解。</small></div>
-      <div class="local-label"><span class="status-dot"></span>本机学习空间</div>
     </aside>
-    <main class="main">
-      <header class="topbar"><div class="breadcrumb">学习空间 <span>/</span> <strong id="view-context">添加学习内容</strong></div><div class="topbar-actions"><button id="stop-request" class="button stop-button small" hidden>停止并编辑</button><button id="clear-intake" class="button quiet small" type="button" aria-describedby="intake-clear-help">清空本次上传</button><button id="show-prompt" class="button quiet small">助手规则</button><button id="open-settings" class="button quiet small">模型设置</button><button id="material-tasks-button" class="task-orb" type="button" aria-label="资料整理任务" aria-expanded="false" aria-controls="material-task-popover" title="资料整理任务"><svg><use href="#i-book"/></svg><span id="material-task-badge" hidden>0</span></button></div></header>
+    <main class="main home-main">
+      <header class="topbar home-topbar">
+        <div class="breadcrumb"><strong id="view-context">主页</strong></div>
+        <div class="topbar-actions">
+          <span id="model-status" class="connection home-model-status"><span class="status-dot"></span>读取配置中</span>
+          <button id="stop-request" class="button stop-button small" type="button" hidden>停止并编辑</button>
+          <button id="clear-intake" class="button quiet small" type="button" aria-describedby="intake-clear-help">清空本次上传</button>
+          <button id="show-prompt" class="button quiet small" type="button">助手规则</button>
+          <button id="open-settings" class="button quiet small" type="button">模型设置</button>
+          <button id="material-tasks-button" class="task-orb" type="button" aria-label="资料整理任务" aria-expanded="false" aria-controls="material-task-popover" title="资料整理任务"><svg><use href="#i-book"/></svg><span id="material-task-badge" hidden>0</span></button>
+        </div>
+      </header>
       <div class="page-content">
-        <div class="page-heading"><div><p class="eyebrow">YOUR STUDY SPACE</p><h1 id="page-title">添加学习内容</h1><p id="page-subtitle">上传或粘贴原稿，笔记与错题可以放在一起。</p></div><span id="model-status" class="connection"><span class="status-dot"></span>读取配置中</span></div>
+        <div class="page-heading" aria-hidden="true"><div><h1 id="page-title">添加学习内容</h1><p id="page-subtitle">上传或粘贴原稿，笔记与错题可以放在一起。</p></div></div>
         <div id="notice" class="notice" role="alert" hidden></div>
         <div id="config-banner" class="config-banner" hidden>尚未配置模型。点击右上角“模型设置”，填写 API Key 并保存即可使用，无需重启或重复输入命令。</div>
-        <section id="view-organize" class="view">
-          <p id="intake-clear-help" class="helper">对话会自动保存到「历史对话」；已收录的笔记和错题会保留。</p>
-          <div id="source-summary" class="source-summary" hidden><div><strong id="source-summary-title">本次内容已保存</strong><p>可以继续讨论，或录入下一份内容。</p></div><div class="source-summary-actions"><button id="toggle-source" class="button quiet small" type="button">查看原稿</button><button id="new-mistake" class="button secondary small" type="button">添加下一份</button></div></div>
-          <div id="organize-workspace" class="workspace-grid with-conversations">
-            <aside id="conversation-panel" class="panel conversation-panel" aria-label="历史对话">
-              <div class="conversation-head">
-                <h2>历史对话</h2>
-                <button id="new-conversation" class="button secondary small" type="button">＋ 新对话</button>
+        <section id="view-organize" class="view home-view">
+          <p id="intake-clear-help" class="visually-hidden">对话会自动保存到「历史对话」；已收录的笔记和错题会保留。</p>
+          <div id="source-summary" class="source-summary home-legacy-summary" hidden><div><strong id="source-summary-title">本次内容已保存</strong><p>可以继续讨论，或录入下一份内容。</p></div><div class="source-summary-actions"><button id="toggle-source" class="button quiet small" type="button">查看原稿</button><button id="new-mistake" class="button secondary small" type="button">添加下一份</button></div></div>
+          <div id="organize-workspace" class="home-panels">
+            <aside id="home-history-panel" class="home-side-panel home-history-panel" aria-label="历史对话">
+              <div class="home-panel-inner home-history-inner">
+                <div class="home-history-head">
+                  <a class="brand home-history-brand" href="#organize" aria-label="知错首页"><span class="brand-mark"><svg aria-hidden="true"><use href="#i-book"/></svg></span><span>知错<small>学习整理助手</small></span></a>
+                  <button id="home-history-close" class="home-icon-button home-drawer-close" type="button" aria-label="收起历史对话" title="收起历史对话">×</button>
+                </div>
+                <button id="new-conversation" class="home-new-chat" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg><span>新聊天</span></button>
+                <div class="home-history-scroll">
+                  <section id="home-collections" class="home-collections" data-home-collections aria-labelledby="home-collections-title">
+                    <div class="home-section-head"><h2 id="home-collections-title">集合</h2><span class="home-section-note" id="home-collections-count" data-home-collections-count hidden></span><button id="home-new-collection" class="home-collection-add" type="button" aria-label="新建集合" title="新建集合">＋</button></div>
+                    <div id="home-collections-list" class="home-collection-list" data-home-collections-list><p class="home-panel-empty">还没有集合</p></div>
+                  </section>
+                  <div class="home-section-head home-history-title"><h2>最近对话</h2></div>
+                  <ul id="conversation-list" class="conversation-list" role="list"></ul>
+                  <p class="conversation-hint">切换对话不会中断正在处理的任务；旧对话会保留。</p>
+                </div>
               </div>
-              <ul id="conversation-list" class="conversation-list" role="list"></ul>
-              <p class="conversation-hint">切换对话不会中断正在处理的任务；旧对话会保留。</p>
             </aside>
-            <section id="source-panel" class="panel input-panel">
-              <div class="panel-heading"><div><span class="step-label">原稿</span><h2>图片、笔记、错题，都放这里</h2></div></div>
-              <div class="source-tabs" role="group" aria-label="录入方式"><button class="source-tab active" data-source="image" type="button">上传文件</button><button class="source-tab" data-source="text" type="button">直接输入文字</button></div>
-              <div class="input-mode-switch" role="group" aria-label="输入方式">
-                <button class="input-mode-button active" type="button" data-input-mode="text" aria-pressed="true">文字</button>
-                <button class="input-mode-button" type="button" data-input-mode="formula" aria-pressed="false">公式（可视化）</button>
+            <div id="home-left-handle" class="home-resize-handle home-resize-left" role="separator" aria-orientation="vertical" aria-label="调整历史对话宽度" tabindex="-1" aria-hidden="true" inert></div>
+            <section class="home-conversation" aria-label="统一对话">
+              <header class="home-conversation-head">
+                <button id="home-left-toggle" class="home-panel-toggle" type="button" aria-controls="home-history-panel" aria-expanded="true" aria-label="切换历史对话" title="收起历史对话"><svg aria-hidden="true"><use href="#i-panels-left"/></svg></button>
+                <div class="home-conversation-title"><strong id="home-chat-title">新对话</strong><small id="home-chat-meta"></small></div>
+                <button id="home-right-toggle" class="home-panel-toggle" type="button" aria-controls="home-files-panel" aria-expanded="false" aria-label="切换本对话文件" title="展开本对话文件"><svg aria-hidden="true"><use href="#i-panels-right"/></svg></button>
+              </header>
+              <div class="home-chat-body">
+                <div class="home-empty-copy" id="home-empty-copy">
+                  <h1>错题、笔记整理</h1>
+                  <p class="home-empty-line">添加学习资料</p>
+                  <p class="home-empty-line">举一反三，巩固练习</p>
+                  <p class="home-empty-hint">都在这里输入 ↓</p>
+                </div>
+                <div id="organize-messages" class="messages" role="log" aria-live="polite" aria-label="学习对话"><div class="empty-chat"><h3>先把内容交给我</h3><p>笔记保留原有顺序，错题逐步引导。<br>信息不清楚时，在这里补充就好。</p></div></div>
+                <div id="home-chat-batches" class="home-chat-batches" aria-live="polite" hidden></div>
+                <div id="organize-suggestions" class="contextual-actions" aria-label="建议追问" hidden><span class="suggestion-caption">建议追问</span><button id="practice-current" class="suggestion-button" type="button">从资料中选一道同类题</button></div>
+                <div id="organize-results" class="home-results" aria-label="本次已保存内容"></div>
+                <details id="organize-trace" class="trace" hidden><summary>查看本次处理过程</summary><div class="trace-content"></div></details>
+                <div id="organize-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在分析与整理…</span><button class="button stop-button" type="button" data-stop-request>停止并编辑</button><small>Esc / Ctrl+C 停止</small></div>
+                <form id="organize-follow-form" class="follow-form" hidden><label for="organize-follow" class="visually-hidden">补充信息</label><textarea id="organize-follow" rows="2" maxlength="24000" placeholder="补充符号、答案或继续提问…（Ctrl+Enter 发送）"></textarea><button class="button primary icon-button" type="submit" aria-label="发送补充信息"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button></form>
+                <div class="home-composer-wrap">
+                  <section id="source-panel" class="input-panel draft-view-source home-composer-panel">
+                    <div id="image-pane" class="home-legacy-pane">
+                      <label class="drop-zone" id="drop-zone" for="image-input" tabindex="0" hidden>拖入文件，或点击多选</label>
+                      <button id="recognize-button" class="button secondary full" type="button" disabled hidden>提取为文字（可选）</button>
+                      <p class="helper" hidden></p>
+                      <p class="helper" data-local-ocr-info hidden></p>
+                      <div id="ocr-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在批量读取…</span><button class="button stop-button small" type="button" data-stop-request>停止并编辑</button></div>
+                    </div>
+                    <div class="home-composer-inner">
+                      <div class="home-compose-head">
+                        <label id="draft-label" for="draft">原稿与问题</label>
+                        <div class="home-compose-tools">
+                          <button id="draft-undo" class="text-button" type="button" disabled aria-keyshortcuts="Control+Z Meta+Z" title="撤回上一步（Ctrl+Z / ⌘Z）">撤回</button>
+                          <button id="draft-redo" class="text-button" type="button" disabled aria-keyshortcuts="Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y" title="重做（Ctrl+Shift+Z / Ctrl+Y）">重做</button>
+                          <button id="draft-view-toggle" class="text-button" type="button" aria-pressed="true" aria-controls="formula-pane draft" title="查看可编辑的 LaTeX 原文">查看渲染后文字</button>
+                        </div>
+                      </div>
+                      <div id="formula-pane" class="formula-pane" hidden>
+                        <div id="formula-editor-host" class="formula-editor-host"></div>
+                        <p class="formula-hint">点下方符号键插入；← → 在槽位间移动，↑ ↓ 在分子/分母、指数、积分上下限之间跳。直接输入中文也可以；原稿换行会保留。</p>
+                      </div>
+                      <textarea id="draft" maxlength="80000" rows="1" autocomplete="off" placeholder="直接提问，或粘贴要整理的错题、笔记…"></textarea>
+                      <div id="input-files" class="file-queue home-file-queue" aria-label="待处理文件"></div>
+                      <div class="home-intake-row">
+                        <input id="image-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp" class="visually-hidden">
+                        <div class="page-range-field" hidden><label for="input-page-range">PDF 页码</label><input id="input-page-range" class="material-input" placeholder="全部，或 1-8、1,3,5-8" aria-label="添加内容的 PDF 页码范围"></div>
+                        <p id="intake-restored-hint" class="helper home-restored-hint" role="status" hidden></p>
+                      </div>
+                      <div class="home-compose-actions">
+                        <button id="home-attach-button" class="home-attach" type="button" aria-label="添加图片或文档" title="添加图片或文档"><svg aria-hidden="true"><use href="#i-plus"/></svg></button>
+                        <div class="home-models">
+                          <label class="ocr-choice home-model-choice"><span>识图模型</span><select data-ocr-backend aria-label="识图模型"><option value="remote">云端识图 · DeepSeek / 已配置服务</option><option value="local">GLM 本机识别 · 无识图 API 费用</option></select><span class="ocr-choice-feedback" role="status"></span></label>
+                          <label class="home-model-choice"><span>对话模型</span><select data-chat-model="organize" aria-label="对话模型"></select></label>
+                        </div>
+                        <button id="organize-submit" class="button primary home-submit" type="button" aria-label="发送消息"><span>发送消息</span><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+                      </div>
+                    </div>
+                    <div class="home-compose-meta">
+                      <label class="home-collection" for="home-collection-select">所在集合
+                        <select id="home-collection-select" data-home-collection-select disabled aria-describedby="home-collection-note">
+                          <option value="">未归入集合</option>
+                        </select>
+                      </label>
+                      <span id="home-collection-note" class="visually-hidden">集合数据接入后在此显示</span>
+                      <span id="draft-count" class="home-draft-count">0 / 80000</span>
+                    </div>
+                  </section>
+                </div>
               </div>
-              <div id="image-pane">
-                <label class="drop-zone" id="drop-zone" for="image-input" tabindex="0"><input id="image-input" type="file" multiple accept=".pdf,.txt,.md,image/jpeg,image/png,image/webp" class="visually-hidden"><span id="upload-placeholder"><span class="upload-icon"><svg><use href="#i-image"/></svg></span><strong>拖入文件，或点击多选</strong><small>图片、PDF、TXT、Markdown</small></span></label>
-                <div id="input-files" class="file-queue" aria-label="待处理文件"></div>
-                <p id="intake-restored-hint" class="helper" role="status" hidden></p>
-                <div class="page-range-field"><label for="input-page-range">PDF 页码</label><input id="input-page-range" class="material-input" placeholder="全部，或 1-8、1,3,5-8" aria-label="添加内容的 PDF 页码范围"></div>
-                <button id="recognize-button" class="button secondary full" type="button" disabled>批量读取并填入文字</button><p class="helper">单个 PDF 最多 256 MB，每批 512 MB；每次读取最多 20 页。先预览找页码，再读取，笔记与错题无需提前分类。</p><div class="ocr-choice"><label>识别方式 <select data-ocr-backend aria-label="识别方式"><option value="remote">云端识图 · DeepSeek / 已配置服务</option><option value="local">GLM 本机识别 · 无识图 API 费用</option></select></label><span class="ocr-choice-feedback" role="status"></span></div><p class="helper" data-local-ocr-info></p>
-                <div id="ocr-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在批量读取…</span><button class="button stop-button small" type="button" data-stop-request>停止并编辑</button></div>
-              </div>
-              <div class="editor-heading"><label id="draft-label" for="draft">原稿文字与补充说明</label><button id="fill-example" class="text-button" type="button">填入示例</button></div>
-              <textarea id="draft" maxlength="80000" rows="7" autocomplete="off" placeholder="粘贴笔记、题目和解题过程，也可上传文件读取。&#10;&#10;如果要记错题，请提供你的答案 / 步骤；参考答案如有可一起提供。"></textarea>
-              <div id="formula-pane" class="formula-pane" hidden>
-                <div id="formula-editor-host" class="formula-editor-host"></div>
-                <p class="formula-hint">点下方符号键插入；← → 在槽位间移动，↑ ↓ 在分子/分母、指数、积分上下限之间跳。发送时会自动转成 LaTeX。</p>
-              </div>
-              <div class="editor-footer"><span>读取文字插入光标处，可继续修改。</span><span id="draft-count">0 / 80000</span></div>
-              <button id="organize-submit" class="button primary full" type="button"><span>交给 AI 整理</span><svg><use href="#i-arrow"/></svg></button>
             </section>
-            <section class="panel assistant-panel">
-              <div class="panel-heading"><div><span class="step-label">讨论与整理</span><h2>围绕这份内容</h2></div></div>
-              <div id="organize-messages" class="messages" role="log" aria-label="学习内容整理对话"><div class="empty-chat"><h3>先把内容交给我</h3><p>笔记保留原有顺序，错题逐步引导。<br>信息不清楚时，在这里补充就好。</p></div></div>
-              <div id="organize-suggestions" class="contextual-actions" aria-label="建议追问" hidden><span class="suggestion-caption">建议追问</span><button id="practice-current" class="suggestion-button" type="button">从资料中选一道同类题</button></div>
-              <div id="organize-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在分析与整理…</span><button class="button stop-button" type="button" data-stop-request>停止并编辑</button><small>Esc / Ctrl+C 停止</small></div>
-              <form id="organize-follow-form" class="follow-form" hidden><label for="organize-follow" class="visually-hidden">补充信息</label><textarea id="organize-follow" rows="2" maxlength="24000" placeholder="补充符号、答案或继续提问…（Ctrl+Enter 发送）"></textarea><button class="button primary icon-button" type="submit" aria-label="发送补充信息"><svg><use href="#i-arrow"/></svg></button></form>
-              <details id="organize-trace" class="trace" hidden><summary>查看本次处理过程</summary><div class="trace-content"></div></details>
-            </section>
+            <div id="home-right-handle" class="home-resize-handle home-resize-right" role="separator" aria-orientation="vertical" aria-label="调整本对话文件面板宽度" tabindex="-1" aria-hidden="true" inert></div>
+            <aside id="home-files-panel" class="home-side-panel home-files-panel" aria-label="本对话文件">
+              <div class="home-panel-inner home-files-inner">
+                <div class="home-files-head">
+                  <div><span class="home-kicker">本对话</span><h2>文件</h2></div>
+                  <button id="home-files-close" class="home-icon-button home-drawer-close" type="button" aria-label="收起文件面板" title="收起文件面板">×</button>
+                </div>
+                <p id="home-files-summary" class="home-files-summary" role="status" data-home-files-summary></p>
+                <div id="home-files-list" class="home-files-list" data-home-files-list></div>
+                <p id="home-files-empty" class="home-panel-empty">这个对话还没有上传文件。</p>
+              </div>
+            </aside>
           </div>
-          <div id="organize-results" class="inline-results" aria-label="本次已保存内容"></div>
         </section>
 
         <section id="view-notebook" class="view" hidden>
@@ -140,6 +227,7 @@
         </section>
 
         <section id="view-materials" class="view" hidden>
+          <p class="home-materials-note">资料的导入与读取现在在主页对话里进行；这里直接显示已入库题库，后台整理任务仍可从右上角圆形按钮打开核对。</p>
           <div id="material-import-summary" class="source-summary" hidden><div><strong>资料已确认入库</strong><p>可在下方选择原题练习。</p></div><button id="import-more-materials" class="button secondary small" type="button">继续导入</button></div>
           <p id="material-feedback" class="settings-feedback" role="status" hidden></p>
           <div id="materials-import-area" class="materials-workflow" data-stage="source">
@@ -248,5 +336,7 @@
 <script src="{{ url_for('static', filename='ocr-progress.js') }}?v=20261026-review-focus-v20"></script>
 <script src="{{ url_for('static', filename='ocr-choice.js') }}?v=20261026-review-focus-v20"></script>
 <script src="{{ url_for('static', filename='review.js') }}?v=20261026-review-focus-v20"></script>
+<script defer src="/static/home-panels.js?v=20261120-home"></script>
+<script defer src="/static/home-ui.js?v=20261120-home"></script>
 </body>
 </html>

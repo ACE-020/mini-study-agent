@@ -2,17 +2,19 @@
 
 import argparse
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from io import BytesIO
 from pathlib import Path
 import secrets
 import threading
 import time
+from urllib.parse import quote, urlsplit
 import webbrowser
 import weakref
 
-from flask import Flask, jsonify, render_template, request, session, send_file
+from flask import Flask, g, jsonify, render_template, request, session, send_file
+from werkzeug.datastructures import FileStorage
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from agent import StudyAgent
@@ -29,21 +31,36 @@ from note_skill import note_rules
 from note_exports import note_reply
 from document_input import DocumentReader, MAX_BATCH_BYTES, MAX_TEXT
 from library import validate_refs, fingerprint
+from formula_matrix import generate as generate_matrix_latex
 from file_preview import PdfPreviews
+from web_history import (HistoryStore, UploadRecorder, cookie_names, decode_data_url,
+                         describe_upload, image_data_url, new_attachment_id, safe_name,
+                         valid_user_token, USER_COOKIE_MAX_AGE)
 from library_export import export_collection
 from math_text import normalize_math_markdown
 from runtime_paths import default_data_directory
 from local_ocr import LocalOcrRuntime, LocalImageReader
 from local_materials import LocalMaterialParser
+from unified_chat import run_turn
 
 
 ROOT = Path(__file__).resolve().parent
-MAX_CONVERSATIONS = 20
-MAX_CONVERSATION_MESSAGES = 200
+MAX_COLLECTION_NAME = 40
 
 
 class OwnerGone(ValueError):
     """请求开始前，目标对话/临时会话已被删除或重置。"""
+
+
+class AttachmentMissing(LookupError):
+    """附件的原文件不属于这条对话，或已经被删除。"""
+
+
+# 本对话文件里保存的是原文件名；复用为资料批次时需要让临时原文件缓存认得类型。
+_ATTACHMENT_SUFFIX = {".pdf": ".pdf", ".txt": ".txt", ".md": ".md",
+                      ".jpg": ".jpg", ".jpeg": ".jpeg", ".png": ".png", ".webp": ".webp"}
+_ATTACHMENT_MIME_SUFFIX = {"application/pdf": ".pdf", "text/plain": ".txt", "text/markdown": ".md",
+                           "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 
 
 def iso_now():
@@ -108,13 +125,22 @@ class LockedTools:
 
 def create_app(data_dir=None, client_factory=None, reader_factory=None, settings_path=None, material_parser_factory=None, local_ocr_runtime=None):
     load_user_environment()
+    directory = Path(data_dir or default_data_directory())
+    history = HistoryStore(directory)
+    cookie_name = cookie_names(directory)["user"]
     app = Flask(__name__, template_folder=str(ROOT / "templates"), static_folder=str(ROOT / "static"))
     # Werkzeug 默认将较大的 multipart 文件暂存磁盘，请求结束后自动清理。
+    # Flask 的签名密钥仍然每次启动随机；历史身份用独立的数据目录级 Cookie，
+    # 因此网页/桌面重启后不依赖这个密钥也不依赖动态端口。
     app.secret_key = secrets.token_hex(32)
     app.config.update(MAX_CONTENT_LENGTH=MAX_BATCH_BYTES + 1024 * 1024,
                       SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Strict",
+                      SESSION_COOKIE_NAME="session",
+                      PERMANENT_SESSION_LIFETIME=timedelta(days=365),
+                      HISTORY_COOKIE_NAME=cookie_name,
                       TRUSTED_HOSTS=["localhost", "127.0.0.1"], TEMPLATES_AUTO_RELOAD=True)
-    tools = LockedTools(LocalTools(data_dir or default_data_directory()))
+    app.extensions["web_history"] = history
+    tools = LockedTools(LocalTools(directory))
     states = {}
     # 生命周期的读改写都在这把短锁里完成；RLock 允许 get_state() 等内部再进入。
     # 耗时的模型工作仍然只持有对话自己的锁，因此不同对话可以并行。
@@ -169,6 +195,23 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                            config[prefix + "model"], timeout=90 if ocr else 120)
 
     make_client = client_factory or (lambda: configured_client())
+
+    def make_matrix_client():
+        if client_factory:
+            return client_factory()
+        config = settings.resolve()
+        if not config["api_key"]:
+            raise ValueError("请先在「模型设置」保存 API Key，再使用自然语言生成。")
+        base_url, model = config["base_url"], config["model"]
+        endpoint = urlsplit(base_url)
+        disable_thinking = (
+            endpoint.scheme == "https" and endpoint.hostname == "api.deepseek.com"
+            and model in ("deepseek-v4-pro", "deepseek-flash")
+        )
+        # 浏览器等待 25 秒，给请求返回与页面更新留出时间。
+        return ModelClient(base_url, config["api_key"], model, timeout=20, retries=0,
+                           disable_thinking=disable_thinking)
+
     def make_reader(backend=None):
         if reader_factory:
             return reader_factory()
@@ -181,7 +224,6 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         if client_factory:
             return MaterialParser(make_client())
         config = settings.resolve()
-        from urllib.parse import urlsplit
         if (urlsplit(config["ocr_base_url"]).hostname == "api.deepseek.com" and
                 config["ocr_model"] in ("deepseek-v4-pro", "deepseek-reasoner")):
             raise ModelError("当前图片模型不支持原图。请在模型设置中将图片模型改为 deepseek-flash，或配置其他支持图片的模型。")
@@ -190,10 +232,12 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
     jobs = MaterialJobs(make_parser, make_visual_parser=make_visual_parser)
     app.extensions["material_jobs"] = jobs
 
-    def submit_material_job(owner, text, source, documents=None, metadata=None, source_files=None):
+    def submit_material_job(owner, text, source, documents=None, metadata=None, source_files=None,
+                            conversation_id=None, attachment_ids=None):
         # Snapshot the choice so queued tasks/retries do not silently change provider.
         metadata = {**(metadata or {}), "ocr_backend": selected_backend()}
-        return jobs.submit(owner, text, source, documents, metadata, source_files)
+        return jobs.submit(owner, text, source, documents, metadata, source_files,
+                           conversation_id=conversation_id, attachment_ids=attachment_ids)
 
     def error(message, status=400, events=None, cancelled=False, context_retained=False):
         payload = {"ok": False, "error": message}
@@ -204,21 +248,76 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             payload["events"] = events
         return jsonify(payload), status
 
-    def new_conversation(state, title=None):
-        conversation = {"id": secrets.token_urlsafe(12), "title": title or "新对话",
-                        "created_at": iso_now(), "updated_at": iso_now(),
+    def local_identity():
+        token = getattr(g, "history_token", None)
+        if token is None:
+            token = secrets.token_urlsafe(32)
+            g.history_token = token
+            g.history_token_new = True
+        return token
+
+    def new_conversation(state, title=None, *, identity=None, created_at=None, updated_at=None,
+                         collection_id=None, messages=None, intake_text="", note_images=None,
+                         page_ids=None, attachments=None, persisted=False, restored=False,
+                         draft=False):
+        conversation = {"id": identity or secrets.token_urlsafe(12), "title": title or "新对话",
+                        "created_at": created_at or iso_now(), "updated_at": updated_at or iso_now(),
                         "lock": threading.Lock(), "token": None, "request_id": None,
-                        "cancelled_ids": set(), "agents": {}, "note_images": {},
-                        "note_transcriptions": {}, "messages": [], "intake_text": ""}
+                        "cancelled_ids": set(), "agents": {},
+                        "note_images": dict(note_images or {}),
+                        "page_ids": list(page_ids if page_ids is not None else (note_images or {})),
+                        "note_transcriptions": {},
+                        "attachments": list(attachments or []),
+                        "messages": list(messages or []), "intake_text": intake_text or "",
+                        "collection_id": collection_id,
+                        # 原页 id → 本对话附件 id（进程内映射）：复用原文件发起资料批次时用。
+                        "page_attachments": {},
+                        "stored_pages": set(page_ids if page_ids is not None else (note_images or {})),
+                        "persisted": bool(persisted), "restored": bool(restored),
+                        # 草稿对话：可保存文字/原稿/集合，但在首次真正发送前不进入历史列表。
+                        "draft": bool(draft)}
         state["conversations"][conversation["id"]] = conversation
         state["active_conversation"] = conversation["id"]
         return conversation
+
+    def conversation_from_payload(state, payload, token):
+        identity = payload["id"]
+        # 启动时只校验页面文件是否存在，不把全部历史原稿读进内存；真正进入该
+        # 对话时再由 ensure_pages() 按需还原。
+        page_ids = [page for page in (payload.get("page_ids") or [])
+                    if history.has_page(token, identity, page)]
+        return new_conversation(
+            state, payload.get("title"), identity=identity,
+            created_at=payload.get("created_at"), updated_at=payload.get("updated_at"),
+            collection_id=payload.get("collection_id"),
+            messages=payload.get("messages") or [], intake_text=payload.get("intake_text") or "",
+            page_ids=page_ids, attachments=payload.get("attachments") or [], persisted=True,
+            restored=True, draft=bool(payload.get("draft")))
+
+    def ensure_pages(state, conversation, token=None):
+        """按需把已保存的原稿页读回内存；只影响这一个对话。"""
+        missing = [page for page in conversation["page_ids"] if page not in conversation["note_images"]]
+        if not missing:
+            return
+        with states_lock:
+            available = []
+            for page in conversation["page_ids"]:
+                if page not in conversation["note_images"]:
+                    if token is not None:
+                        token.check()
+                    raw = history.read_page(state["sid"], conversation["id"], page)
+                    if raw is None:
+                        continue
+                    conversation["note_images"][page] = image_data_url(raw)
+                available.append(page)
+            conversation["page_ids"] = available
+            conversation["stored_pages"] = set(available)
 
     def active_conversation(state):
         conversation = state["conversations"].get(state["active_conversation"])
         if conversation is None:
             conversations = list(state["conversations"].values())
-            conversation = conversations[-1] if conversations else new_conversation(state)
+            conversation = conversations[-1] if conversations else new_conversation(state, draft=True)
             state["active_conversation"] = conversation["id"]
         return conversation
 
@@ -240,24 +339,172 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         return {"id": conversation["id"], "title": conversation["title"],
                 "created_at": conversation["created_at"], "updated_at": conversation["updated_at"],
                 "busy": conversation["lock"].locked(),
-                "message_count": len(conversation["messages"])}
+                "message_count": len(conversation["messages"]),
+                "collection_id": conversation.get("collection_id")}
+
+    def conversation_empty(conversation):
+        """没有任何消息、草稿文字或原稿/附件：旧版遗留的空历史行。"""
+        return (not conversation["messages"] and not conversation["intake_text"]
+                and not conversation.get("attachments")
+                and not (conversation.get("page_ids") or conversation["note_images"]))
+
+    def history_summary(conversation):
+        """新首页用的摘要：额外标记草稿与空行，旧接口的字段保持不变。"""
+        return {**conversation_summary(conversation),
+                "draft": bool(conversation.get("draft")),
+                "empty": conversation_empty(conversation)}
+
+    def ensure_draft(state):
+        """复用唯一草稿；没有草稿时才在内存里新建，不落历史、不写 meta。"""
+        for conversation in state["conversations"].values():
+            if conversation.get("draft") and not conversation["messages"]:
+                return conversation
+        previous = state["active_conversation"]
+        conversation = new_conversation(state, draft=True)
+        if previous in state["conversations"]:
+            state["active_conversation"] = previous
+        return conversation
+
+    def attachment_view(identity, item):
+        base = (f"/api/conversations/{quote(identity, safe='')}/attachments/"
+                f"{quote(item['id'], safe='')}")
+        payload = {key: item.get(key) for key in
+                   ("id", "kind", "name", "mime", "size", "page_count", "width", "height",
+                    "created_at", "available", "placeholder", "legacy", "reason")}
+        payload["thumbnail_url"] = base + "/thumbnail"
+        payload["preview_url"] = base + "/preview"
+        if item.get("kind") == "pdf":
+            payload["pages_url"] = base + "/pages/{page}"
+        return payload
 
     def conversation_detail(conversation):
+        pages = conversation.get("page_ids")
+        if pages is None:
+            pages = list(conversation["note_images"])
         return {**conversation_summary(conversation),
                 "messages": [dict(item) for item in conversation["messages"]],
                 "intake": {"text": conversation["intake_text"],
-                           "image_ids": list(conversation["note_images"]),
-                           "image_count": len(conversation["note_images"])}}
+                           "image_ids": list(pages),
+                           "image_count": len(pages)},
+                "attachments": [attachment_view(conversation["id"], item)
+                                for item in conversation["attachments"]]}
 
-    def append_message(conversation, role, text):
-        now = iso_now()
-        conversation["messages"].append({"role": role, "text": text, "at": now})
-        if len(conversation["messages"]) > MAX_CONVERSATION_MESSAGES:
-            del conversation["messages"][:len(conversation["messages"]) - MAX_CONVERSATION_MESSAGES]
-        conversation["updated_at"] = now
+    def collection_payload(item, conversations=None, include_empty=True):
+        count = 0 if conversations is None else sum(
+            1 for conversation in conversations
+            if not conversation.get("draft")
+            and (include_empty or not conversation_empty(conversation))
+            and conversation.get("collection_id") == item["id"])
+        return {**item, "conversation_count": count}
+
+    def conversation_payload(conversation):
+        return {"id": conversation["id"], "title": conversation["title"],
+                "created_at": conversation["created_at"], "updated_at": conversation["updated_at"],
+                "collection_id": conversation.get("collection_id"),
+                "draft": bool(conversation.get("draft")),
+                "intake_text": conversation["intake_text"],
+                "messages": [dict(item) for item in conversation["messages"]],
+                "page_ids": list(conversation.get("page_ids") or conversation["note_images"]),
+                "attachments": [dict(item) for item in conversation["attachments"]]}
+
+    def meta_payload(state):
+        return {"active": state["active_conversation"],
+                "order": list(state["conversations"]),
+                "collections": [dict(item) for item in state["collections"]]}
+
+    def persist_meta(state):
+        history.save_meta(state["sid"], meta_payload(state))
+
+    def persist_conversation(state, conversation):
+        """原子写入对话与新的原稿页；失败时清理本次新写的页面文件后抛出。"""
+        token = state["sid"]
+        identity = conversation["id"]
+        stored = conversation.setdefault("stored_pages", set())
+        pages = list(conversation.get("page_ids") or conversation["note_images"])
+        new_pages = [page for page in pages if page not in stored]
+        written = []
+        try:
+            for page in new_pages:
+                raw = decode_data_url(conversation["note_images"][page])
+                history.write_page(token, identity, page, raw)
+                written.append(page)
+            history.save_conversation(token, conversation_payload(conversation))
+        except BaseException:
+            for page in written:
+                history.delete_page(token, identity, page)
+            raise
+        stored.update(written)
+        conversation["persisted"] = True
+        removed = stored - set(pages)
+        for page in removed:
+            history.delete_page(token, identity, page)
+        stored.difference_update(removed)
+        try:
+            persist_meta(state)
+        except OSError:
+            # meta 缺失时仍能靠对话文件发现历史，只影响 active 的精确恢复。
+            pass
+
+    def record_message(state, conversation, role, text, strict=False):
+        with states_lock:
+            snapshot = list(conversation["messages"])
+            updated = conversation["updated_at"]
+            now = iso_now()
+            conversation["messages"].append({"role": role, "text": text, "at": now})
+            conversation["updated_at"] = now
+            try:
+                persist_conversation(state, conversation)
+                return True
+            except (OSError, ValueError):
+                if strict:
+                    conversation["messages"] = snapshot
+                    conversation["updated_at"] = updated
+                    raise
+                return False
+
+    def seed_agent_context(agent, conversation):
+        """重启后把已保存的可见消息还原成模型上下文（只还原文字）。
+
+        原图、工具中间态与给模型的隐藏指令不重放：原图仍在对话附件里，需要时
+        下一轮重新附上；重放纯文本可以避免“模型把上一轮忘了”。
+        """
+        if not conversation["messages"]:
+            return
+        replay = [{"role": item["role"], "content": item["text"]}
+                  for item in conversation["messages"] if item["role"] in ("user", "assistant")]
+        if not replay:
+            return
+        try:
+            from conversation_store import sanitize, trim
+            seeded = trim(sanitize([agent.messages[0], *replay]))
+            if len(seeded) > 1:
+                agent.messages = [dict(item) for item in seeded]
+        except Exception:
+            pass
 
     def title_from(message):
         return " ".join(str(message).split())[:18]
+
+    def load_state(token, now):
+        state = {"sid": token, "agents": {}, "lock": threading.Lock(), "seen": now,
+                 "token": None, "request_id": None, "cancelled_ids": set(),
+                 "note_images": {}, "note_transcriptions": {}, "review_images": {},
+                 "review_transcriptions": {}, "proposals": {},
+                 "conversations": {}, "active_conversation": None, "collections": []}
+        try:
+            loaded = history.load_user(token)
+        except (OSError, ValueError):
+            loaded = {"active": None, "order": [], "collections": [], "conversations": []}
+        state["collections"] = list(loaded.get("collections") or [])
+        for payload in loaded.get("conversations") or []:
+            conversation_from_payload(state, payload, token)
+        if state["conversations"]:
+            active = loaded.get("active")
+            state["active_conversation"] = active if active in state["conversations"] else None
+            active_conversation(state)
+        else:
+            new_conversation(state, draft=True)
+        return state
 
     def get_state():
         with states_lock:
@@ -265,14 +512,11 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             for sid, item in list(states.items()):
                 if now - item["seen"] > 3600 and not state_busy(item):
                     del states[sid]
-            sid = session.setdefault("sid", secrets.token_urlsafe(24))
+            sid = local_identity()
             if sid not in states:
                 if len(states) >= 32:
                     raise ModelError("当前对话过多，请稍后重试或重新启动本机网页。")
-                states[sid] = {"agents": {}, "lock": threading.Lock(), "seen": now,
-                               "token": None, "request_id": None, "cancelled_ids": set(), "note_images": {}, "note_transcriptions": {}, "review_images": {}, "review_transcriptions": {}, "proposals": {},
-                               "conversations": {}, "active_conversation": None}
-                new_conversation(states[sid])
+                states[sid] = load_state(sid, now)
             state = states[sid]
             state["seen"] = now
             if not state["conversations"] or state["active_conversation"] not in state["conversations"]:
@@ -325,6 +569,20 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         target["lock"].release()
 
     @app.before_request
+    def identify_history_user():
+        # 历史命名空间用数据目录级、长期有效的随机 Cookie，而不是 Flask 的临时
+        # session：桌面版端口每次启动都会变，签名密钥也每次重启都会变。
+        candidate = request.cookies.get(app.config["HISTORY_COOKIE_NAME"])
+        if valid_user_token(candidate):
+            g.history_token = candidate
+        elif request.path == "/" or request.path.startswith("/api/"):
+            g.history_token = secrets.token_urlsafe(32)
+            g.history_token_new = True
+        if request.path.startswith("/api/"):
+            # 临时预览、后台资料任务仍按进程内会话归属；与历史身份分开。
+            session.setdefault("sid", secrets.token_urlsafe(24))
+
+    @app.before_request
     def same_origin():
         if request.method == "POST":
             origin = request.headers.get("Origin")
@@ -341,10 +599,16 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
         if request.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        if getattr(g, "history_token_new", False) and getattr(g, "history_token", None):
+            response.set_cookie(app.config["HISTORY_COOKIE_NAME"], g.history_token,
+                                max_age=USER_COOKIE_MAX_AGE, httponly=True, samesite="Strict",
+                                path="/")
         return response
 
     @app.get("/")
     def index():
+        # 先建立历史身份再返回页面，避免首屏并行 API 请求各自生成不同身份。
+        local_identity()
         return render_template("index.html", material_page_limit=MAX_MATERIAL_PAGES)
 
     @app.get("/api/status")
@@ -521,6 +785,28 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             except (ValueError, OSError) as exc:
                 return error(str(exc))
 
+    @app.post("/api/formula/matrix")
+    def formula_matrix():
+        """把一句自然语言描述转成矩阵 / 行列式的 LaTeX。
+
+        只做转写，不碰题库与笔记；返回的 LaTeX 由 formula_matrix 模块校验，
+        前端插入前还会再预览一次。
+        """
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return error("请求格式有误。")
+        try:
+            latex = generate_matrix_latex(
+                make_matrix_client(),
+                payload.get("description"),
+                payload.get("kind") or "matrix",
+            )
+            return jsonify(ok=True, latex=latex)
+        except ValueError as exc:
+            return error(str(exc))
+        except ModelError as exc:
+            return error(str(exc), 502)
+
     @app.post("/api/settings/test")
     def test_settings():
         try:
@@ -568,11 +854,32 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.get("/api/conversations")
     def list_conversations():
+        # 新首页带 draft=1：草稿单独返回、不进入历史；不带的旧客户端仍按原样拿到全部对话。
+        draft_mode = request.args.get("draft") in ("1", "true", "yes")
+        # ensure=0 只读回已有草稿；刷新列表不应在后台凭空创建新草稿。
+        ensure = request.args.get("ensure", "1") not in ("0", "false", "no")
         with states_lock:
             state = get_state()
-            conversations = [conversation_summary(item) for item in reversed(list(state["conversations"].values()))]
-            active = state["active_conversation"]
-        return jsonify(ok=True, active=active, conversations=conversations)
+            if draft_mode:
+                draft = ensure_draft(state) if ensure else next(
+                    (item for item in state["conversations"].values()
+                     if item.get("draft") and not item["messages"]), None)
+                persisted = [item for item in state["conversations"].values()
+                             if not item.get("draft")]
+                conversations = [history_summary(item) for item in reversed(persisted)]
+                collections = [collection_payload(item, persisted, include_empty=False)
+                               for item in state["collections"]]
+                active = state["active_conversation"]
+                draft_payload = history_summary(draft) if draft is not None else None
+            else:
+                conversations = [conversation_summary(item) for item in reversed(list(state["conversations"].values()))]
+                collections = [collection_payload(item, state["conversations"].values())
+                               for item in state["collections"]]
+                active = state["active_conversation"]
+        if draft_mode:
+            return jsonify(ok=True, active=active, conversations=conversations,
+                           collections=collections, draft=draft_payload)
+        return jsonify(ok=True, active=active, conversations=conversations, collections=collections)
 
     @app.post("/api/conversations")
     def create_conversation():
@@ -586,12 +893,22 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             if not isinstance(title, str) or len(title.strip()) > 60:
                 return error("对话标题最多 60 字。")
             title = title.strip() or None
-        # 「检查上限 + 创建」必须在同一把短锁里，否则并发新建会一起通过检查而超限。
+        # 历史不设条数上限：创建新对话不再要求用户先删除旧对话。
         with states_lock:
             state = get_state()
-            if len(state["conversations"]) >= MAX_CONVERSATIONS:
-                return error(f"最多保留 {MAX_CONVERSATIONS} 个对话，请先删除旧对话。")
+            previous_active = state["active_conversation"]
             conversation = new_conversation(state, title)
+            try:
+                persist_conversation(state, conversation)
+                persist_meta(state)
+            except (OSError, ValueError):
+                state["conversations"].pop(conversation["id"], None)
+                state["active_conversation"] = previous_active
+                try:
+                    history.delete_conversation(state["sid"], conversation["id"])
+                except OSError:
+                    pass
+                return error("历史对话暂时无法写入磁盘，请检查磁盘空间后重试。", 500)
             summary = conversation_summary(conversation)
         return jsonify(ok=True, active=conversation["id"], conversation=summary)
 
@@ -602,7 +919,20 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             conversation = state["conversations"].get(identity)
             if conversation is None:
                 return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            previous_active = state["active_conversation"]
+            # 空白草稿只是编辑状态：切换过去不写盘、不生成历史行。
+            if not conversation["persisted"] and not conversation.get("draft"):
+                try:
+                    persist_conversation(state, conversation)
+                except (OSError, ValueError):
+                    return error("历史对话暂时无法写入磁盘，请检查磁盘空间后重试。", 500)
             state["active_conversation"] = identity
+            if conversation["persisted"]:
+                try:
+                    persist_meta(state)
+                except OSError:
+                    state["active_conversation"] = previous_active
+                    return error("当前对话暂时无法保存，请检查磁盘空间后重试。", 500)
             summary = conversation_summary(conversation)
         return jsonify(ok=True, active=identity, conversation=summary)
 
@@ -616,10 +946,36 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             detail = conversation_detail(conversation)
         return jsonify(ok=True, conversation=detail)
 
+    def normalized_collection(state, value):
+        """校验移动目标：None/空串表示移回未归类。返回 (id, error_response)。"""
+        if value in (None, ""):
+            return None, None
+        if not isinstance(value, str) or len(value) > 100:
+            return None, error("集合编号格式有误。")
+        if not any(item["id"] == value for item in state["collections"]):
+            return None, error("集合不存在或已删除，请刷新网页后重试。", 404)
+        return value, None
+
+    def move_conversation_to(state, conversation, value):
+        target, failure = normalized_collection(state, value)
+        if failure is not None:
+            return failure
+        previous = conversation.get("collection_id")
+        previous_updated = conversation["updated_at"]
+        conversation["collection_id"] = target
+        conversation["updated_at"] = iso_now()
+        try:
+            persist_conversation(state, conversation)
+        except (OSError, ValueError):
+            conversation["collection_id"] = previous
+            conversation["updated_at"] = previous_updated
+            return error("对话归属暂时无法保存，请检查磁盘空间后重试。", 500)
+        return None
+
     @app.patch("/api/conversations/<identity>")
     def update_conversation(identity):
         payload = request.get_json(silent=True)
-        if not isinstance(payload, dict) or set(payload) - {"title", "intake_text"}:
+        if not isinstance(payload, dict) or set(payload) - {"title", "intake_text", "collection_id"}:
             return error("请检查要保存的对话内容。")
         title = payload.get("title")
         if title is not None:
@@ -633,11 +989,46 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             conversation = state["conversations"].get(identity)
             if conversation is None:
                 return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            target = conversation.get("collection_id")
+            if "collection_id" in payload:
+                target, failure = normalized_collection(state, payload.get("collection_id"))
+                if failure is not None:
+                    return failure
+            previous_title = conversation["title"]
+            previous_intake = conversation["intake_text"]
+            previous_collection = conversation.get("collection_id")
+            previous_updated = conversation["updated_at"]
             if title is not None:
                 conversation["title"] = title.strip()
             if intake_text is not None:
                 conversation["intake_text"] = intake_text
+            if "collection_id" in payload:
+                conversation["collection_id"] = target
             conversation["updated_at"] = iso_now()
+            try:
+                persist_conversation(state, conversation)
+            except (OSError, ValueError):
+                conversation["title"] = previous_title
+                conversation["intake_text"] = previous_intake
+                conversation["collection_id"] = previous_collection
+                conversation["updated_at"] = previous_updated
+                return error("对话内容暂时无法保存，请检查磁盘空间后重试。", 500)
+            summary = conversation_summary(conversation)
+        return jsonify(ok=True, conversation=summary)
+
+    @app.post("/api/conversations/<identity>/move")
+    def move_conversation(identity):
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or set(payload) != {"collection_id"}:
+            return error("请选择要移入的集合。")
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            failure = move_conversation_to(state, conversation, payload.get("collection_id"))
+            if failure is not None:
+                return failure
             summary = conversation_summary(conversation)
         return jsonify(ok=True, conversation=summary)
 
@@ -652,17 +1043,157 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 return error("对话不存在或已删除，请刷新网页后重试。", 404)
             if not conversation["lock"].acquire(blocking=False):
                 return error("该对话正在处理中，请先停止或等待完成后再删除。", 409)
+            order = list(state["conversations"])
+            position = order.index(identity)
+            previous_active = state["active_conversation"]
+            created = None
             try:
                 state["conversations"].pop(identity, None)
                 if state["active_conversation"] == identity:
                     remaining = list(state["conversations"].values())
                     state["active_conversation"] = remaining[-1]["id"] if remaining else None
                 if not state["conversations"]:
-                    new_conversation(state)
+                    created = new_conversation(state, draft=True)
                 active = state["active_conversation"]
+                try:
+                    persist_meta(state)
+                except OSError:
+                    # 恢复内存顺序与 active，磁盘上的 meta 仍指向删除前的状态。
+                    restored = {}
+                    for cid, item in state["conversations"].items():
+                        if created is not None and cid == created["id"]:
+                            continue
+                        restored[cid] = item
+                    items = list(restored.items())
+                    items.insert(min(position, len(items)), (identity, conversation))
+                    state["conversations"] = dict(items)
+                    state["active_conversation"] = previous_active
+                    return error("对话暂时无法从历史中删除，请检查磁盘空间后重试。", 500)
             finally:
                 conversation["lock"].release()
+        try:
+            history.delete_conversation(state["sid"], identity)
+        except OSError:
+            pass
         return jsonify(ok=True, active=active)
+
+    @app.get("/api/collections")
+    def list_collections():
+        with states_lock:
+            state = get_state()
+            collections = [collection_payload(item, state["conversations"].values())
+                           for item in state["collections"]]
+        return jsonify(ok=True, collections=collections)
+
+    @app.post("/api/collections")
+    def create_collection():
+        payload = request.get_json(silent=True)
+        name = payload.get("name") if isinstance(payload, dict) else None
+        if not isinstance(name, str):
+            return error("请填写集合名称。")
+        name = " ".join(name.split())
+        if not name or len(name) > MAX_COLLECTION_NAME:
+            return error(f"集合名称需为 1 到 {MAX_COLLECTION_NAME} 字。")
+        with states_lock:
+            state = get_state()
+            if any(item["name"] == name for item in state["collections"]):
+                return error("已经有同名集合，请换一个名称。")
+            now = iso_now()
+            collection = {"id": secrets.token_urlsafe(10), "name": name,
+                          "created_at": now, "updated_at": now}
+            state["collections"].append(collection)
+            try:
+                persist_meta(state)
+            except OSError:
+                state["collections"].pop()
+                return error("集合暂时无法保存，请检查磁盘空间后重试。", 500)
+            view = collection_payload(collection, [])
+        return jsonify(ok=True, collection=view)
+
+    def attachment_of(conversation, attachment_id):
+        if not isinstance(attachment_id, str) or not attachment_id:
+            return None
+        return next((item for item in conversation["attachments"]
+                     if item["id"] == attachment_id), None)
+
+    @app.get("/api/conversations/<identity>/attachments")
+    def list_attachments(identity):
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            attachments = [attachment_view(identity, item) for item in conversation["attachments"]]
+        counts = {"total": len(attachments),
+                  "image": sum(1 for item in attachments if item["kind"] == "image"),
+                  "document": sum(1 for item in attachments if item["kind"] in ("pdf", "text")),
+                  "unavailable": sum(1 for item in attachments if not item["available"])}
+        return jsonify(ok=True, conversation_id=identity, attachments=attachments, counts=counts)
+
+    @app.get("/api/conversations/<identity>/attachments/<attachment_id>/thumbnail")
+    def attachment_thumbnail(identity, attachment_id):
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            item = attachment_of(conversation, attachment_id)
+            if item is None:
+                return error("附件不存在或不属于这条对话。", 404)
+            if item.get("placeholder") or not item.get("available"):
+                return error("这条旧记录只保留了占位信息，无法显示缩略图。", 404)
+            kind = item["kind"]
+        if kind == "text":
+            return error("文字文件没有图片缩略图。", 404)
+        try:
+            content = history.thumbnail(state["sid"], identity, attachment_id, kind)
+        except ValueError as exc:
+            return error(str(exc), 404)
+        return send_file(BytesIO(content), mimetype="image/jpeg")
+
+    @app.get("/api/conversations/<identity>/attachments/<attachment_id>/preview")
+    def attachment_preview(identity, attachment_id):
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            item = attachment_of(conversation, attachment_id)
+            if item is None:
+                return error("附件不存在或不属于这条对话。", 404)
+            if item.get("placeholder") or not item.get("available"):
+                return error("这条旧记录只保留了占位信息，无法预览原文件。", 404)
+            name, kind, mime = item["name"], item["kind"], item["mime"]
+        raw = history.read_attachment(state["sid"], identity, attachment_id)
+        if raw is None:
+            return error("附件的原文件未保留，无法预览。", 404)
+        if kind == "text":
+            text = raw.decode("utf-8-sig", errors="replace")
+            response = app.response_class(text, mimetype=mime)
+            response.headers["Content-Type"] = f"{mime}; charset=utf-8"
+            return response
+        return send_file(BytesIO(raw), mimetype=mime, download_name=safe_name(name),
+                         as_attachment=False)
+
+    @app.get("/api/conversations/<identity>/attachments/<attachment_id>/pages/<int:page>")
+    def attachment_page(identity, attachment_id, page):
+        with states_lock:
+            state = get_state()
+            conversation = state["conversations"].get(identity)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+            item = attachment_of(conversation, attachment_id)
+            if item is None:
+                return error("附件不存在或不属于这条对话。", 404)
+            if item["kind"] != "pdf":
+                return error("这个附件不是 PDF。", 404)
+            if item.get("placeholder") or not item.get("available"):
+                return error("这条旧记录只保留了占位信息，无法预览原文件。", 404)
+        try:
+            content = history.pdf_page(state["sid"], identity, attachment_id, page)
+        except ValueError as exc:
+            return error(str(exc), 404)
+        return send_file(BytesIO(content), mimetype="image/jpeg")
 
     @app.get("/api/mistakes")
     def mistakes():
@@ -797,6 +1328,202 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         finally:
             end(state)
 
+    def build_upload_attachments(recorder):
+        attachments = []
+        for entry in recorder.entries:
+            try:
+                info = describe_upload(entry["path"], entry["upload"].filename)
+            except OSError:
+                raise ValueError("无法读取上传的附件，请重新选择文件。") from None
+            attachments.append({"id": new_attachment_id(), **info,
+                                "created_at": iso_now(), "available": True,
+                                "placeholder": False, "legacy": False, "reason": ""})
+        return attachments
+
+    def upload_name(entry):
+        return (entry["upload"].filename or "资料").replace("\\", "/").rsplit("/", 1)[-1][:180]
+
+    def prepared_page_counts(recorder, captured):
+        """本次上传每个文件产生的原页数（顺序与上传顺序一致）；对不上时不猜。"""
+        counts = []
+        for entry, info in zip(recorder.entries, captured["metadata"]["files"]):
+            suffix = Path(upload_name(entry)).suffix.lower()
+            if suffix in (".txt", ".md"):
+                counts.append(0)
+            elif suffix == ".pdf":
+                counts.append(len(info.get("pages") or []))
+            else:
+                counts.append(1)
+        if len(counts) != len(recorder.entries) or sum(counts) != len(captured["documents"]):
+            return None
+        return counts
+
+    def read_page_counts(recorder, pages):
+        """DocumentReader 每页一条记录：PDF 一页一张图，图片一份一张图，文字文件没有图。"""
+        counts, cursor = [], 0
+        for entry in recorder.entries:
+            name = upload_name(entry)
+            suffix = Path(name).suffix.lower()
+            start = cursor
+            if suffix in (".txt", ".md"):
+                if cursor < len(pages) and pages[cursor].get("source") == name:
+                    cursor += 1
+                counts.append(0)
+            elif suffix == ".pdf":
+                while cursor < len(pages) and pages[cursor].get("source") == name:
+                    cursor += 1
+                counts.append(cursor - start)
+            else:
+                if cursor < len(pages) and pages[cursor].get("source") == name:
+                    cursor += 1
+                counts.append(1)
+        if cursor != len(pages):
+            return None
+        return counts
+
+    def commit_uploads(state, conversation, recorder, images, transcriptions=None, page_counts=None):
+        """整批成功后一次性提交：原文件、页面图、转写与元数据要么全有要么全无。
+
+        ``page_counts`` 给出本次每个上传文件生成的原页数；成功后把原页 id 映射到对应附件，
+        这样统一入口可以直接按当前对话复用原文件发起资料批次，不必让用户重新上传。
+        """
+        old_images = conversation["note_images"]
+        old_page_ids = list(conversation.get("page_ids") or old_images)
+        old_attachments = list(conversation["attachments"])
+        old_transcriptions = dict(conversation["note_transcriptions"])
+        old_page_map = dict(conversation.get("page_attachments") or {})
+        old_updated = conversation["updated_at"]
+        recorder.finish()
+        attachments = build_upload_attachments(recorder)
+        new_pages = [key for key in images if key not in old_images]
+        groups = [[] for _ in attachments]
+        if (page_counts is not None and len(page_counts) == len(attachments)
+                and sum(page_counts) == len(new_pages)):
+            cursor = 0
+            for index, count in enumerate(page_counts):
+                groups[index] = new_pages[cursor:cursor + count]
+                cursor += count
+        page_map = {key: value for key, value in old_page_map.items() if key in images}
+        for item, group in zip(attachments, groups):
+            for page in group:
+                page_map[page] = item["id"]
+        copied = []
+        try:
+            for entry, item in zip(recorder.entries, attachments):
+                history.copy_attachment(state["sid"], conversation["id"], item["id"], entry["path"])
+                copied.append(item["id"])
+            with states_lock:
+                conversation["note_images"] = images
+                conversation["page_ids"] = list(images)
+                conversation["attachments"] = [*old_attachments, *attachments]
+                conversation["page_attachments"] = page_map
+                if transcriptions:
+                    conversation["note_transcriptions"].update(transcriptions)
+                conversation["updated_at"] = iso_now()
+                persist_conversation(state, conversation)
+        except BaseException:
+            with states_lock:
+                conversation["note_images"] = old_images
+                conversation["page_ids"] = old_page_ids
+                conversation["attachments"] = old_attachments
+                conversation["page_attachments"] = old_page_map
+                conversation["note_transcriptions"] = old_transcriptions
+                conversation["updated_at"] = old_updated
+            for identity in copied:
+                history.delete_attachment(state["sid"], conversation["id"], identity)
+            raise
+        return attachments, groups
+
+    def attachment_ids_from(payload):
+        """attachment_ids 既可出现在 JSON 里，也可出现在 multipart 表单里（JSON 字符串）。"""
+        value = payload.get("attachment_ids")
+        if value in (None, "", []):
+            return []
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                raise ValueError("附件引用格式有误。") from None
+        if (not isinstance(value, list) or not value or len(value) > 20
+                or any(not isinstance(item, str) or not item or len(item) > 100 for item in value)):
+            raise ValueError("附件引用格式有误：请提供 1 到 20 个本对话附件 id。")
+        if len(set(value)) != len(value):
+            raise ValueError("附件引用有重复，请刷新本对话文件后重试。")
+        return value
+
+    def conversation_attachments(conversation, identities):
+        """按当前对话校验附件归属；不属于这条对话的一律当作不存在。"""
+        known = {item["id"]: item for item in conversation["attachments"]}
+        items = []
+        for identity in identities:
+            item = known.get(identity)
+            if item is None:
+                raise AttachmentMissing("附件不存在或不属于这条对话，请刷新本对话文件后重试。")
+            if item.get("placeholder") or not item.get("available", True):
+                raise ValueError(f"「{item.get('name') or '附件'}」的原文件未保留，只能显示占位信息，请重新上传。")
+            items.append(dict(item))
+        return items
+
+    def attachment_upload_name(item):
+        """本对话文件可能是没有扩展名的旧记录；按真实类型补一个给临时原文件缓存。"""
+        name = safe_name(item.get("name"), "资料")
+        if Path(name).suffix.lower() in _ATTACHMENT_SUFFIX:
+            return name
+        suffix = _ATTACHMENT_MIME_SUFFIX.get(item.get("mime") or "")
+        if suffix is None:
+            suffix = ".pdf" if item.get("kind") == "pdf" else ".txt" if item.get("kind") == "text" else ".jpg"
+        return (name + suffix)[:180]
+
+    def attachment_uploads(state, conversation, identities):
+        """把本对话已接受的原文件读成可再次提交的上传，避免让用户重复选择/上传。"""
+        uploads = []
+        for item in conversation_attachments(conversation, identities):
+            raw = history.read_attachment(state["sid"], conversation["id"], item["id"])
+            if not raw:
+                raise AttachmentMissing("附件原文件已无法读取，请在这条对话中重新上传。")
+            if item.get("kind") == "pdf" and not raw.startswith(b"%PDF"):
+                raise ValueError(f"「{item.get('name') or '附件'}」的原文件未保留，请在这条对话中重新上传 PDF。")
+            uploads.append(FileStorage(BytesIO(raw), filename=attachment_upload_name(item),
+                                       content_type=item.get("mime") or "application/octet-stream"))
+        return uploads
+
+    def default_material_source(conversation=None, items=None):
+        if items:
+            names = [safe_name(item.get("name"), "资料") for item in items]
+            return ("、".join(names[:2]) + ("…" if len(names) > 2 else ""))[:180] or "本对话资料"
+        title = (conversation or {}).get("title") or ""
+        return (f"对话资料 · {title}" if title and title != "新对话" else "对话资料")[:180]
+
+    def unified_payload(conversation, result, image_ids):
+        """统一入口的附加字段：动作计划、路由与资料预览的稳定接入约定。
+
+        聊天结果始终只追加一条 assistant 消息（``one_user_message``）；资料入库返回的是
+        既有“预览 → 核对 → 确认”流程的入口和可直接复用的本对话附件 id，聊天不会写题库。
+        """
+        payload = {"route": result.get("route") or "chat",
+                   "unified": result.get("plan") or {},
+                   "one_user_message": bool(result.get("one_user_message", True))}
+        intake = result.get("intake")
+        if not intake:
+            payload["intake"] = None
+            return payload
+        page_map = conversation.get("page_attachments") or {}
+        used = [page_map.get(identity) for identity in image_ids]
+        used = list(dict.fromkeys(item for item in used if item))
+        payload["intake"] = {
+            **intake,
+            "conversation_id": conversation["id"],
+            "prepare": {
+                "endpoint": "/api/materials/jobs", "method": "POST",
+                "json": {"conversation_id": conversation["id"], "attachment_ids": used,
+                         "source": "", "text": ""},
+                "note": ("attachment_ids 填本对话已接受的附件 id（POST /api/intake/prepare 的 "
+                         "attachments[*].id，或 GET /api/conversations/<id>/attachments）；"
+                         "只有文字资料时省略 attachment_ids、只传 text；省略 source 时按附件名或对话生成。"),
+            },
+        }
+        return payload
+
     @app.post("/api/intake/prepare")
     def intake_prepare():
         state=get_state()
@@ -812,23 +1539,39 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error(str(exc))
         if token is None:
             return error("请先等待或停止当前请求。",409)
+        recorder = None
         try:
+            recorder = UploadRecorder(request.files.getlist("files"))
+            ensure_pages(state, conversation, token)
             kept=json.loads(request.form.get("keep_image_ids","[]"))
             if not isinstance(kept,list) or len(kept)>20 or any(not isinstance(i,str) or i not in conversation["note_images"] for i in kept):
                 raise ValueError("原图已过期，请重新选择文件。")
-            captured=capture_materials(request.files.getlist("files"), request.form.get("page_range",""), max_pages=20, token=token)
+            captured=capture_materials(recorder.files, request.form.get("page_range",""), max_pages=20, token=token)
             if len(captured["documents"])+len(kept)>20:
                 raise ValueError("本次混合整理最多20页；原有输入保留。")
             images={i:conversation["note_images"][i] for i in kept};ids=list(kept)
             for doc in captured["documents"]:
                 identity=secrets.token_hex(12);images[identity]=doc["image"];ids.append(identity)
-            token.check();conversation["note_images"]=images;conversation["updated_at"]=iso_now()
-            return jsonify(ok=True,text=captured["text"],image_ids=ids,pages=[{k:v for k,v in d.items() if k!="image"} for d in captured["documents"]],metadata=captured["metadata"])
+            token.check()
+            counts = prepared_page_counts(recorder, captured)
+            attachments, groups = commit_uploads(state, conversation, recorder, images, page_counts=counts)
+            owners = [item["id"] for item, group in zip(attachments, groups) for _ in group]
+            pages = []
+            for index, doc in enumerate(captured["documents"]):
+                page = {k: v for k, v in doc.items() if k != "image"}
+                if index < len(owners):
+                    page["attachment_id"] = owners[index]
+                pages.append(page)
+            return jsonify(ok=True, text=captured["text"], image_ids=ids, pages=pages, metadata=captured["metadata"],
+                           attachments=[{**attachment_view(conversation["id"], item), "page_ids": list(group)}
+                                        for item, group in zip(attachments, groups)])
         except OperationCancelled as exc:
             return error(str(exc),499,cancelled=True)
         except (ValueError,OSError) as exc:
             return error(str(exc))
         finally:
+            if recorder is not None:
+                recorder.close()
             end(conversation)
 
     @app.post("/api/intake/read")
@@ -849,25 +1592,30 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error(str(exc))
         if token is None:
             return error("上一条请求还在处理中，请先停止或等待。", 409)
+        recorder = None
         try:
+            recorder = UploadRecorder(files)
+            ensure_pages(state, conversation, token)
             kept_ids = json.loads(request.form.get("keep_image_ids", "[]"))
             if not isinstance(kept_ids, list) or len(kept_ids) > 20 or any(not isinstance(item, str) or item not in conversation["note_images"] for item in kept_ids):
                 raise ValueError("部分原图已过期，请重新读取资料；原有文字保留。")
-            result = DocumentReader(make_reader, prefer_visual=use_local()).read(files, request.form.get("page_range", ""), token, include_images=True)
+            result = DocumentReader(make_reader, prefer_visual=use_local()).read(recorder.files, request.form.get("page_range", ""), token, include_images=True)
             images = {key: conversation["note_images"][key] for key in kept_ids}
             ids = list(kept_ids)
             if len(kept_ids)+len(result["images"]) > 20:
                 raise ValueError("每份原稿最多保留 20 张图片 / PDF 页，请分批整理；原有输入保留。")
+            transcriptions = {}
             for image_index, image in enumerate(result["images"]):
                 identity = secrets.token_hex(12)
                 images[identity] = image
                 if use_local():
-                    conversation["note_transcriptions"][identity] = result["image_texts"][image_index]
+                    transcriptions[identity] = result["image_texts"][image_index]
                 ids.append(identity)
             token.check()
-            conversation["note_images"] = images
-            conversation["updated_at"] = iso_now()
-            return jsonify(ok=True, text=result["text"], image_ids=ids, pages=result["pages"])
+            counts = read_page_counts(recorder, result["pages"])
+            attachments, _ = commit_uploads(state, conversation, recorder, images, transcriptions, page_counts=counts)
+            return jsonify(ok=True, text=result["text"], image_ids=ids, pages=result["pages"],
+                           attachments=[attachment_view(conversation["id"], item) for item in attachments])
         except OperationCancelled as exc:
             return error(str(exc), 499, cancelled=True)
         except (ValueError, OSError) as exc:
@@ -875,6 +1623,8 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
         except ModelError as exc:
             return error(f"读取尚未完成：{exc} 原有文字已保留。", 502)
         finally:
+            if recorder is not None:
+                recorder.close()
             end(conversation)
 
     @app.get("/api/notes")
@@ -1038,15 +1788,38 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.route("/api/materials/jobs", methods=["GET", "POST"])
     def material_jobs():
-        get_state()
+        state = get_state()
         owner = session["sid"]
         if request.method == "GET":
-            return jsonify(ok=True, jobs=jobs.list(owner))
+            # 主页按对话列出批次：省略 conversation_id 时保持原行为（列出本会话全部批次）。
+            identity = request.args.get("conversation_id") or None
+            if identity is not None:
+                with states_lock:
+                    conversation = find_conversation(state, identity)
+                if conversation is None:
+                    return error("对话不存在或已删除，请刷新网页后重试。", 404)
+                identity = conversation["id"]
+            return jsonify(ok=True, jobs=jobs.list(owner, identity))
         files = request.files.getlist("files")
         payload = request.get_json(silent=True) if not files else request.form
         if payload is None:
             return error("请提供待整理的资料。")
+        conversation = None
+        requested = payload.get("conversation_id")
+        if requested not in (None, ""):
+            if not isinstance(requested, str) or len(requested) > 100:
+                return error("对话 id 格式有误。")
+            with states_lock:
+                conversation = find_conversation(state, requested)
+            if conversation is None:
+                return error("对话不存在或已删除，请刷新网页后重试。", 404)
+        conversation_id = conversation["id"] if conversation is not None else None
         try:
+            attachment_ids = attachment_ids_from(payload)
+            if files and attachment_ids:
+                return error("一次只能选择一种来源：上传新文件，或复用本对话已接受的附件。")
+            if attachment_ids and conversation is None:
+                return error("复用本对话附件需要同时提供 conversation_id。")
             if files:
                 retained=previews.materials.add(files,owner)
                 keys=[f["id"] for f in retained]
@@ -1054,21 +1827,42 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                     with previews.materials.open(keys,owner) as (streams,source_files):
                         captured=capture_materials(streams,payload.get("page_range",""))
                     text=(captured["text"]+"\n"+payload.get("text","")).strip()
-                    return jsonify(ok=True,job=submit_material_job(owner,text,payload.get("source"),captured["documents"],captured["metadata"],source_files)),202
+                    return jsonify(ok=True,job=submit_material_job(owner,text,payload.get("source"),captured["documents"],captured["metadata"],source_files,conversation_id)),202
                 except Exception:
                     previews.materials.discard(keys,owner)
                     raise
             if not isinstance(payload, dict):
                 return error("请求格式有误。")
+            if attachment_ids:
+                # 用户已经在同一条对话里上传过这些文件：直接读回原件发起批次，不再要求重新选择。
+                items = conversation_attachments(conversation, attachment_ids)
+                uploads = attachment_uploads(state, conversation, attachment_ids)
+                retained=previews.materials.add(uploads,owner)
+                keys=[f["id"] for f in retained]
+                try:
+                    with previews.materials.open(keys,owner) as (streams,source_files):
+                        captured=capture_materials(streams,payload.get("page_range",""))
+                    text=(captured["text"]+"\n"+payload.get("text","")).strip()
+                    source=payload.get("source") or default_material_source(conversation,items)
+                    return jsonify(ok=True,job=submit_material_job(owner,text,source,captured["documents"],captured["metadata"],source_files,conversation_id,attachment_ids)),202
+                except Exception:
+                    previews.materials.discard(keys,owner)
+                    raise
             if payload.get("source_file_ids"):
                 with previews.materials.open(payload["source_file_ids"],owner) as (streams,source_files):
                     captured=capture_materials(streams,payload.get("page_range",""))
                 text=(captured["text"]+"\n"+payload.get("text","")).strip()
-                return jsonify(ok=True,job=submit_material_job(owner,text,payload.get("source"),captured["documents"],captured["metadata"],source_files)),202
+                return jsonify(ok=True,job=submit_material_job(owner,text,payload.get("source"),captured["documents"],captured["metadata"],source_files,conversation_id)),202
             metadata = payload.get("metadata", {})
             if not isinstance(metadata, dict) or set(metadata)-{"page_range", "files", "mode"}:
                 return error("来源说明格式有误。")
-            return jsonify(ok=True, job=submit_material_job(owner, payload.get("text"), payload.get("source"), metadata=metadata)), 202
+            # 纯文字资料同样可以先预览：不传附件、只传 text 即可。
+            source = payload.get("source") or default_material_source(conversation)
+            return jsonify(ok=True, job=submit_material_job(owner, payload.get("text"), source,
+                                                           metadata=metadata, conversation_id=conversation_id,
+                                                           attachment_ids=[])), 202
+        except AttachmentMissing as exc:
+            return error(str(exc), 404)
         except ValueError as exc:
             return error(str(exc))
 
@@ -1343,6 +2137,18 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             return error("所选内容请在分析窗口处理。")
         if not isinstance(selection_refs, list):
             return error("所选记录格式无效。")
+        # 主页统一入口按需开启：旧客户端不传这两个字段时行为完全不变。
+        unified = payload.get("unified", False)
+        if not isinstance(unified, bool):
+            return error("统一发送标记格式有误。")
+        instruction = payload.get("instruction")
+        if instruction is not None and (not isinstance(instruction, str) or not instruction.strip()
+                                        or len(instruction) > MAX_TEXT):
+            return error("原始指令需为 1 到 80000 字。")
+        if instruction is not None and not unified:
+            return error("原始指令只用于统一发送。")
+        if unified and view != "organize":
+            return error("统一发送只用于主页讨论错题、笔记与资料的对话。")
         try:
             state = get_state()
         except ModelError as exc:
@@ -1373,6 +2179,7 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             token.check()
             # 必须在拿到操作权之后再取引用：上一请求可能已经替换了 note_images / 转写表。
             if conversation is not None:
+                ensure_pages(state, conversation, token)
                 agents = conversation["agents"]
                 note_images = conversation["note_images"]
                 note_transcriptions = conversation["note_transcriptions"]
@@ -1396,6 +2203,12 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 agents.pop(view, None)
             if view not in agents:
                 agents[view] = StudyAgent(make_client(), tools)
+                if conversation is not None and conversation.get("restored"):
+                    # 只在进程重启后的第一轮还原上下文；用户点“清空/新题”后再创建的
+                    # agent 不应又被旧消息填满。
+                    if not new_problem:
+                        seed_agent_context(agents[view], conversation)
+                    conversation["restored"] = False
             else:
                 agents[view].client = make_client()
             agent = agents[view]
@@ -1451,13 +2264,34 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 intent = "practice"
                 scope = "current"
             if conversation is not None:
-                if conversation["title"] == "新对话":
+                old_title = conversation["title"]
+                if old_title == "新对话":
                     conversation["title"] = title_from(visible_text) or "新对话"
-                append_message(conversation, "user", visible_text)
+                # 首次实际发送才把草稿提升成正式历史；草稿里的原稿/集合随同一快照进入。
+                was_draft = bool(conversation.get("draft"))
+                if was_draft:
+                    conversation["draft"] = False
+                try:
+                    record_message(state, conversation, "user", visible_text, strict=True)
+                except (OSError, ValueError):
+                    conversation["title"] = old_title
+                    conversation["draft"] = was_draft
+                    return error("对话历史暂时无法写入磁盘，请检查磁盘空间后重试；输入内容仍然保留。", 500)
             agent.trace = lambda event, value: events.append({"event": event, "value": value})
-            answer = agent.run(message.strip(), cancel_token=token, scope=scope, intent=intent, topic=topic, exercise_id=exercise_id,
-                               new_problem=new_problem, task="library" if view == "analysis" else "mixed" if view == "organize" else "notes" if view == "notes" else "review" if view == "review" else None,
-                               images=outgoing_images, selection=selection, attachment_text=attachment_text)
+            task = "library" if view == "analysis" else "mixed" if view == "organize" else "notes" if view == "notes" else "review" if view == "review" else None
+            unified_result = None
+            if unified:
+                # 分派只读用户本轮自己输入的指令；OCR 转写、原稿拼接等只作为资料送给模型。
+                unified_result = run_turn(agent, message.strip(), instruction=(instruction or user_text).strip(),
+                                          cancel_token=token, scope=scope, intent=intent, topic=topic,
+                                          exercise_id=exercise_id, new_problem=new_problem, task=task,
+                                          images=outgoing_images, selection=selection,
+                                          attachment_text=attachment_text, image_ids=image_ids)
+                answer = unified_result["answer"]
+            else:
+                answer = agent.run(message.strip(), cancel_token=token, scope=scope, intent=intent, topic=topic, exercise_id=exercise_id,
+                                   new_problem=new_problem, task=task,
+                                   images=outgoing_images, selection=selection, attachment_text=attachment_text)
             proposals = []
             for event in events:
                 value = event.get("value", {})
@@ -1466,11 +2300,16 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             if view == "review":
                 for identity in image_ids:
                     state["review_images"].pop(identity, None);state["review_transcriptions"].pop(identity, None)
+            stored = True
             if conversation is not None:
-                append_message(conversation, "assistant", answer)
+                stored = record_message(state, conversation, "assistant", answer)
             response = {"ok": True, "answer": answer, "events": events, "proposals": proposals, "current_question": agent.current_question}
             if conversation is not None:
                 response["conversation_id"] = conversation["id"]
+            if unified_result is not None:
+                response.update(unified_payload(conversation, unified_result, image_ids))
+            if not stored:
+                response["warning"] = "回答已生成，但历史记录未能写入磁盘。"
             if view == "review":
                 response["review"] = agent.review_snapshot()
             return jsonify(response)
@@ -1479,18 +2318,19 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
                 # The retained conversation already contains these transcriptions.
                 for identity in image_ids:
                     state["review_images"].pop(identity, None);state["review_transcriptions"].pop(identity, None)
-            if conversation is not None:
-                append_message(conversation, "notice", "已停止本轮处理，可以修改原内容后重新提交。")
+            if conversation is not None and not (conversation.get("draft") and not conversation["messages"]):
+                record_message(state, conversation, "notice", "已停止本轮处理，可以修改原内容后重新提交。")
             return error(str(exc), 499, events, cancelled=True, context_retained=token.context_retained)
         except ModelError as exc:
             text = f"本次回答未完成：{exc} 已保存的内容仍然保留，输入内容也可以继续修改。"
-            if conversation is not None:
-                append_message(conversation, "error", text)
+            # 草稿在记录用户消息之前就失败时保持草稿身份，避免把带错误记录的空对话带进历史。
+            if conversation is not None and not (conversation.get("draft") and not conversation["messages"]):
+                record_message(state, conversation, "error", text)
             return error(text, 502, events)
         except (ValueError, OSError):
             text = "本次处理未完成，请检查所选记录或数据文件；已保存的内容保留。"
-            if conversation is not None:
-                append_message(conversation, "error", text)
+            if conversation is not None and not (conversation.get("draft") and not conversation["messages"]):
+                record_message(state, conversation, "error", text)
             return error(text, 500, events)
         finally:
             end(target)
@@ -1512,12 +2352,34 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
             if not conversation["lock"].acquire(blocking=False):
                 return error("请求正在处理中，请先停止或等待，再清除本页资料。", 409)
         try:
-            conversation["agents"].pop("organize", None)
-            conversation["note_images"].clear()
-            conversation["note_transcriptions"].clear()
-            # 清空语义包含尚未提交的草稿文字；旧前端随后再 PATCH 空草稿也仍然兼容。
-            conversation["intake_text"] = ""
-            conversation["updated_at"] = iso_now()
+            with states_lock:
+                old_images = conversation["note_images"]
+                old_page_ids = list(conversation.get("page_ids") or old_images)
+                old_transcriptions = dict(conversation["note_transcriptions"])
+                old_page_map = dict(conversation.get("page_attachments") or {})
+                old_text = conversation["intake_text"]
+                old_updated = conversation["updated_at"]
+                conversation["agents"].pop("organize", None)
+                conversation["restored"] = False
+                # 只清空“正在编辑的原稿”与草稿；消息历史、集合归属和已接受的
+                # 附件目录（attachments）保留，单条对话仍由 DELETE 显式删除。
+                conversation["note_images"] = {}
+                conversation["page_ids"] = []
+                conversation["page_attachments"] = {}
+                conversation["note_transcriptions"] = {}
+                conversation["intake_text"] = ""
+                conversation["updated_at"] = iso_now()
+                if conversation["persisted"] or old_images or old_page_ids or old_text:
+                    try:
+                        persist_conversation(state, conversation)
+                    except (OSError, ValueError):
+                        conversation["note_images"] = old_images
+                        conversation["page_ids"] = old_page_ids
+                        conversation["page_attachments"] = old_page_map
+                        conversation["note_transcriptions"] = old_transcriptions
+                        conversation["intake_text"] = old_text
+                        conversation["updated_at"] = old_updated
+                        return error("本对话的上传区暂时无法保存，请检查磁盘空间后重试。", 500)
             previews.discard(ids, session["sid"])
             return jsonify(ok=True)
         finally:
@@ -1525,12 +2387,14 @@ def create_app(data_dir=None, client_factory=None, reader_factory=None, settings
 
     @app.post("/api/reset")
     def reset():
+        identity = local_identity()
         with states_lock:
-            sid = session.get("sid")
-            state = states.get(sid)
+            state = states.get(identity)
             if state and state_busy(state):
                 return error("请求正在处理中，暂时不能清除临时会话。", 409)
-            states.pop(sid, None)
+            # 临时会话重置只丢弃进程内状态（预览、待确认方案、临时问答上下文）；
+            # 历史对话、集合、草稿与附件在磁盘上保留，重启后仍可读回。
+            states.pop(identity, None)
             session.clear()
         return jsonify(ok=True)
 

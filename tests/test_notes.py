@@ -188,12 +188,23 @@ class NotesWebTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/notes/missing/download/exe").status_code, 404)
 
     def test_default_rules_are_visible_without_enable_switch(self):
+        # 默认笔记规则始终可读：接口直接返回，不依赖任何“启用技能”开关。
         prompts = self.client.get("/api/prompts").get_json()["prompts"]
         self.assertEqual(prompts["笔记整理（默认）"], note_rules())
         html = self.client.get("/").get_data(as_text=True)
-        self.assertIn("添加学习内容", html)
-        self.assertIn("我的笔记", html)
+        # 新主页：统一的对话右侧保留笔记入口与笔记列表视图，导航名称按用户要求改为「笔记」。
+        self.assertIn("错题、笔记整理", html)
+        self.assertIn('data-view="notes"', html)
+        self.assertIn('<span class="home-nav-label">笔记</span>', html)
+        self.assertIn('id="view-notes"', html)
+        self.assertIn("笔记保留原有顺序", html)
+        self.assertNotIn("我的笔记", html)
         self.assertNotIn('id="enable-skill"', html)
+        # 行为覆盖保留：笔记路由仍返回列表信封（规则可读、记录不被改写）。
+        listing = self.client.get("/api/notes").get_json()
+        self.assertTrue(listing["ok"])
+        self.assertIsInstance(listing["notes"], list)
+        self.assertEqual(listing["total"], len(listing["notes"]))
 
 
 if __name__ == "__main__":

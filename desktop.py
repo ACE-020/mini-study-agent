@@ -153,6 +153,12 @@ def run_window(base, folder, stop, test_mode=False):
         stop()
 
 
+def configure_session_cookie(app, data_dir):
+    """桌面版 Flask 会话 Cookie 名绑定数据目录，而不是每次变化的端口。"""
+    from web_history import cookie_names
+    app.config["SESSION_COOKIE_NAME"] = cookie_names(data_dir)["session"]
+
+
 def main(arguments=None):
     arguments = list(sys.argv[1:] if arguments is None else arguments)
     if arguments and arguments[0] == "--render-pdf":
@@ -189,13 +195,15 @@ def main(arguments=None):
         from werkzeug.serving import make_server
         from flask import jsonify
         app = create_app(data_dir=folder/"data", settings_path=folder/".local-settings.json")
+        # 系统分配的端口每次启动都可能变化，浏览器 Cookie 也不按端口隔离。桌面会话
+        # Cookie 名因此绑定数据目录（同一目录稳定、不同目录/实例互不串用），而不是端口。
+        configure_session_cookie(app, folder/"data")
         identity = uuid.uuid4().hex
         @app.get("/api/desktop/status")
         def desktop_status():
             return jsonify(ok=True, app=APP_ID, instance=identity)
         # 由系统选空闲端口，不会误连接到旧版源码服务或其他软件。
         server = make_server("127.0.0.1", 0, app, threaded=True)
-        app.config["SESSION_COOKIE_NAME"] = f"zhicuo_desktop_{server.server_port}"
         base = f"http://127.0.0.1:{server.server_port}"
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

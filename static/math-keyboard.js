@@ -8,6 +8,23 @@
   const AUTO_STORAGE_KEY = "math-keyboard:auto";
   const PRESSED_MS = 140;
   const HINT_MS = 1600;
+  // 主页输入框的符号表：窄的悬浮层，锚在输入框下方，不参与布局。
+  // 水平范围取「加号按钮右边界 … 发送按钮左边界」，所以两个按钮永远露在外面可点；
+  // 桌面最多 480px，窄屏直接收在两按钮之间。纵向按输入框下方到视口底部的可用高度
+  // 限量，近底部时保证至少能看到一行符号键，更多键由面板自己纵向滚动。
+  const FLOATING = {
+    maxWidth: 480,
+    minWidth: 120,
+    gap: 6,
+    edge: 8,
+    bottomGap: 8,
+    preferredHeight: 240,
+    minHeight: 96,
+    compactBelow: 180,
+    attachSelector: "#home-attach-button",
+    submitSelector: "#organize-submit",
+    composerSelector: ".home-composer-panel"
+  };
 
   /* ---------- 符号目录 ---------- */
 
@@ -54,7 +71,6 @@
       full: "分式与根式",
       keys: [
         k("a/b", "\\frac{$0}{}", "分式", "\\frac{a}{b}"),
-        k("a/b", "\\dfrac{$0}{}", "行内大分式", "\\dfrac{a}{b}"),
         k("√", "\\sqrt{$0}", "平方根", "\\sqrt{a}"),
         k("∛", "\\sqrt[3]{$0}", "三次根号", "\\sqrt[3]{a}"),
         k("( )", "\\left($0\\right)", "自适应圆括号", "\\left(a\\right)"),
@@ -158,10 +174,14 @@
         k("exp", "\\exp", "指数函数", "\\exp"),
         k("lim", "\\lim_{x\\to $0}", "极限", "\\lim_{x\\to a}"),
         k("d/dx", "\\frac{d}{dx}$0", "导数", "\\frac{d}{dx}"),
+        // 不定积分没有上下界，首填被积函数，积分体后保留 \,dx。
         k("∫", "\\int $0\\,dx", "积分", "\\int\\,dx"),
+        // 定积分从下界开始填；上界和被积函数随后通过方向键 / 点击进入，末尾保留 \,dx。
         k("∫ₐᵇ", "\\int_{$0}^{} $0\\,dx", "定积分", "\\int_{a}^{b}f(x)\\,dx"),
-        k("Σ", "\\sum_{$0}^{} $0", "求和", "\\sum_{i=1}^{n}"),
-        k("∏", "\\prod", "连乘", "\\prod"),
+        // 下标预填 i=，$0 在等号后；上界与被求和项仍是独立的可编辑槽位。
+        k("Σ", "\\sum_{i=$0}^{} $0", "求和", "\\sum_{i=1}^{n}"),
+        // 连乘与求和同构：raw 也带上下界和 i=，不再是裸 \prod。
+        k("∏", "\\prod_{i=$0}^{} $0", "连乘", "\\prod_{i=1}^{n}"),
         k("∂", "\\partial", "偏导", "\\partial"),
         k("∇", "\\nabla", "梯度", "\\nabla"),
         k("′", "'", "导数撇", "'"),
@@ -173,8 +193,29 @@
       label: "矩阵",
       full: "矩阵与几何",
       keys: [
-        k("矩阵", "\\begin{pmatrix}$0&\\\\&\\\\\\end{pmatrix}", "2×2 矩阵", "\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}"),
-        k("行列式", "\\begin{vmatrix}$0&\\\\&\\\\\\end{vmatrix}", "2×2 行列式", "\\begin{vmatrix}a&b\\\\c&d\\end{vmatrix}"),
+        {
+          // 两个入口键：圆括号 = 矩阵，竖线 = 行列式；各自打开对应标题的面板。
+          label: "矩阵",
+          insert: "",
+          aria: "矩阵（圆括号）",
+          title: "插入矩阵（圆括号）",
+          tex: "\\left(\\begin{smallmatrix}\\cdot&\\cdot\\\\\\cdot&\\cdot\\end{smallmatrix}\\right)",
+          caption: "矩阵",
+          action: "matrix-dialog",
+          dialogKind: "matrix",
+          wide: true
+        },
+        {
+          label: "行列式",
+          insert: "",
+          aria: "行列式（竖线）",
+          title: "插入行列式（竖线）",
+          tex: "\\left|\\begin{smallmatrix}\\cdot&\\cdot\\\\\\cdot&\\cdot\\end{smallmatrix}\\right|",
+          caption: "行列式",
+          action: "matrix-dialog",
+          dialogKind: "determinant",
+          wide: true
+        },
         k("向量", "\\vec{$0}", "向量", "\\vec{a}"),
         k("上划线", "\\overline{$0}", "上划线", "\\overline{a}"),
         k("∠", "\\angle $0", "角", "\\angle"),
@@ -188,14 +229,13 @@
     }
   ];
 
-  /* ---------- 可视化公式模式用的 MathLive 模板 ----------
+  /* ---------- 渲染编辑视图用的 MathLive 模板 ----------
      文字输入框里仍然插入原来的 LaTeX 文本（insert 不变）；
-     公式（可视化）模式下，结构性按键改为让 MathLive executeCommand(['insert', 模板])，
+     在原稿渲染视图里，结构性按键改为让 MathLive 在数学模式中插入模板，
      #@ 是要放光标的首个占位符、#? 是其它占位符。
-     mathGlyph 是纯符号键在公式模式里要插入的 LaTeX（默认取 label）。 */
+     mathGlyph 是纯符号键在渲染视图里要插入的 LaTeX（默认取 label）。 */
   const TEMPLATE_BY_INSERT = {
     "\\frac{$0}{}": "\\frac{#@}{#?}",
-    "\\dfrac{$0}{}": "\\frac{#@}{#?}",
     "\\sqrt{$0}": "\\sqrt{#@}",
     "\\sqrt[3]{$0}": "\\sqrt[3]{#@}",
     "\\left($0\\right)": "\\left(#@\\right)",
@@ -209,15 +249,21 @@
     "a_{b}": "a_{b}#@",
     "10^{n}": "10^{n}#@",
     "e^{x}": "e^{x}#@",
-    "\\lim_{x\\to $0}": "\\lim_{#?}{#@}",
+    "\\lim_{x\\to $0}": "\\lim_{x\\to #@}{#?}",
     "\\frac{d}{dx}$0": "\\frac{d}{dx}#@",
-    "\\int $0\\,dx": "\\int_{#?}^{#?}{#@}",
-    "\\int_{$0}^{} $0\\,dx": "\\int_{#?}^{#?}{#@}",
-    "\\sum_{$0}^{} $0": "\\sum_{#?}^{#?}{#@}",
-    "\\prod": "\\prod_{#?}^{#?}{#@}",
-    "\\begin{pmatrix}$0&\\\\&\\\\\\end{pmatrix}": "\\begin{pmatrix}#@&\\\\&\\\\\\end{pmatrix}",
-    // MathLive 没有 vmatrix 的键面结构，行列式沿用 pmatrix（报告里已说明）
-    "\\begin{vmatrix}$0&\\\\&\\\\\\end{vmatrix}": "\\begin{pmatrix}#@&\\\\&\\\\\\end{pmatrix}",
+    // 积分类：不定积分不带上下界；两种积分都在积分体后保留 \,dx。
+    // 积分体用 #0：有显式选区时包住选区，没有选区时变成占位符，且不会
+    // 像 #@ 那样把光标左侧的已有公式捕获进来（折叠光标时也不劫持前文）。
+    // 上下界仍只用 #?；首填槽=模板里第一个占位符（不定积分=积分体，定积分=下界）。
+    "\\int $0\\,dx": "\\int #0\\,dx",
+    "\\int_{$0}^{} $0\\,dx": "\\int_{#?}^{#?}#0\\,dx",
+    // 求和 / 连乘：下标预填普通字符 i=，后面才是可编辑值槽；
+    // 用户可以用普通 Backspace / 方向键修改 i=，符号、上界和被求和积项不受影响。
+    // 被求和积分项用 #0：选中公式时整段进正文，空光标时只放占位符。
+    "\\sum_{i=$0}^{} $0": "\\sum_{i=#?}^{#?}#0",
+    "\\prod_{i=$0}^{} $0": "\\prod_{i=#?}^{#?}#0",
+    // 带底数对数：第一个 #? 是真实可填底数，第二个 #? 是真数。
+    "\\log_{$0}": "\\log_{#?}{#?}",
     "\\vec{$0}": "\\vec{#@}",
     "\\overline{$0}": "\\overline{#@}"
   };
@@ -305,14 +351,14 @@
     "a:b": "a:b"
   };
 
-  // 公式模式里纯文本键要插入的「人类可读字符」（文字模式不受影响，默认取 label）
+  // 公式模式里纯文本键要插入的「人类可读字符」（文字模式不受影响，默认取 label）。
+  // 带底数对数不再在这里降级成普通 "log"：它有 chipTemplate，底数必须进入真实可填槽位。
   const GLYPH_BY_INSERT = {
     "\\sin": "sin",
     "\\cos": "cos",
     "\\tan": "tan",
     "\\ln": "ln",
     "\\lg": "lg",
-    "\\log_{$0}": "log",
     "\\exp": "exp",
     "\\Box^{$0}": "□",
     "^{(n)}": "⁽ⁿ⁾"
@@ -365,13 +411,112 @@
     return instance;
   }
 
+  /* ---------- 悬浮层几何（纯函数，便于自测） ---------- */
+
+  function isFloatingAnchor(field) {
+    return Boolean(
+      field && field.closest && field.closest(FLOATING.composerSelector)
+    );
+  }
+
+  function rectOf(node) {
+    if (!node || typeof node.getBoundingClientRect !== "function") return null;
+    const rect = node.getBoundingClientRect();
+    if (!rect) return null;
+    // 隐藏元素量出来是 0×0：当作没有这个节点。
+    if (!rect.width && !rect.height) return null;
+    return {
+      left: Number(rect.left) || 0,
+      right: Number(rect.right) || 0,
+      top: Number(rect.top) || 0,
+      bottom: Number(rect.bottom) || 0,
+      width: Number(rect.width) || 0,
+      height: Number(rect.height) || 0
+    };
+  }
+
+  // 计算悬浮符号表的落位与可用高度。
+  // anchor：输入框矩形；attach / submit：加号与发送按钮矩形（可缺省）。
+  // 返回 {left, top, width, maxHeight, compact}。
+  function computeFloatingBox(input) {
+    const anchor = input && input.anchor;
+    if (!anchor) return null;
+    const viewport = (input && input.viewport) || {};
+    const vw = Number(viewport.width) || 0;
+    const vh = Number(viewport.height) || 0;
+    if (!vw || !vh) return null;
+    const maxWidth = input.maxWidth == null ? FLOATING.maxWidth : Number(input.maxWidth);
+    const minWidth = input.minWidth == null ? FLOATING.minWidth : Number(input.minWidth);
+    const gap = input.gap == null ? FLOATING.gap : Number(input.gap);
+    const edge = input.edge == null ? FLOATING.edge : Number(input.edge);
+    const bottomGap = input.bottomGap == null ? FLOATING.bottomGap : Number(input.bottomGap);
+    const preferred = input.preferredHeight == null ? FLOATING.preferredHeight : Number(input.preferredHeight);
+    const minHeight = input.minHeight == null ? FLOATING.minHeight : Number(input.minHeight);
+    const compactBelow = input.compactBelow == null ? FLOATING.compactBelow : Number(input.compactBelow);
+
+    // 水平：默认贴着输入框，但绝不越过加号 / 发送按钮的实际边界。
+    let left = Math.max(edge, anchor.left);
+    let right = Math.min(vw - edge, anchor.right);
+    const attach = input.attach;
+    const submit = input.submit;
+    let bounded = false;
+    if (attach && submit) {
+      const sameRow = Math.abs(attach.top - submit.top) < 80;
+      const from = Math.max(edge, attach.right);
+      const to = Math.min(vw - edge, submit.left);
+      // 两个按钮在同一行且中间还有可用空间：面板只占这段，按钮永远露出来。
+      if (sameRow && to - from >= 80) {
+        left = from + gap;
+        right = to - gap;
+        bounded = true;
+      }
+    }
+    let width = Math.min(maxWidth, right - left);
+    if (!bounded) width = Math.max(width, minWidth);
+    width = Math.max(0, Math.min(Math.round(width), Math.max(0, vw - edge * 2)));
+
+    // 居中于输入框，再夹回可用区间，保证不压到两侧按钮。
+    const center = (anchor.left + anchor.right) / 2;
+    let x = Math.round(center - width / 2);
+    if (right - width >= left) x = Math.max(left, Math.min(x, right - width));
+    else x = left;
+    x = Math.max(edge, Math.min(x, vw - width - edge));
+
+    // 垂直：锚在输入框下方；可用高度 = 视口底部余量。
+    const anchorTop = Math.round(anchor.bottom + gap);
+    const available = vh - anchorTop - bottomGap;
+    let top = anchorTop;
+    let maxHeight;
+    if (available >= minHeight) {
+      maxHeight = Math.max(minHeight, Math.min(preferred, available));
+    } else {
+      // 视口过矮：宁可让面板向上多占一点，也要保证分类条 + 至少一行符号键可见，
+      // 而不是只剩分类条。
+      maxHeight = minHeight;
+      top = Math.max(edge, vh - bottomGap - minHeight);
+    }
+    return {
+      left: Math.round(x),
+      top: Math.round(top),
+      width: Math.round(width),
+      maxHeight: Math.round(maxHeight),
+      compact: maxHeight < compactBelow
+    };
+  }
+
   function createInstance(field, kind) {
     const instanceKind = kind === "formula" ? "formula" : "text";
+    const floating = isFloatingAnchor(field);
     const panel = el("div", "mk-panel");
     panel.hidden = true;
     panel.setAttribute("data-mk-panel", "");
     panel.setAttribute("role", "group");
     panel.setAttribute("aria-label", "数学符号键盘");
+    if (floating) {
+      // 悬浮层：position:fixed，不占布局高度，不会把输入区和集合行挤走。
+      panel.classList.add("mk-panel-floating");
+      panel.setAttribute("data-mk-floating", "");
+    }
 
     const head = el("div", "mk-head");
     const tabs = el("div", "mk-tabs");
@@ -394,33 +539,7 @@
 
     head.append(tabs, closeButton);
 
-    // 方向键控制盘只给「公式编辑器」实例：◀ ▲ ▼ ▶ 移动槽位光标
-    let arrows = null;
-    if (instanceKind === "formula") {
-      arrows = el("div", "mk-arrows");
-      arrows.setAttribute("role", "group");
-      arrows.setAttribute("aria-label", "移动公式光标");
-      for (const item of [["left", "◀"], ["up", "▲"], ["down", "▼"], ["right", "▶"]]) {
-        const dir = item[0];
-        const arrow = el("button", "mk-arrow", item[1]);
-        arrow.type = "button";
-        arrow.dataset.mkMove = dir;
-        arrow.title = "移动光标到相邻槽位";
-        arrow.setAttribute("aria-label", "移动光标：" + dir);
-        arrow.addEventListener("pointerdown", preventFocusLoss);
-        arrow.addEventListener("mousedown", preventFocusLoss);
-        arrow.addEventListener("click", function (event) {
-          event.preventDefault();
-          moveCursor(dir, arrow, instance);
-        });
-        arrows.append(arrow);
-      }
-      arrows.append(el("span", "mk-arrows-label", "移动光标"));
-    }
-
-    panel.append(head);
-    if (arrows) panel.append(arrows);
-    panel.append(grid, foot);
+    panel.append(head, grid, foot);
 
     const instance = {
       kind: instanceKind,
@@ -433,7 +552,11 @@
       categoryButtons: Object.create(null),
       tabButtons: Object.create(null),
       hintTimer: null,
-      open: false
+      open: false,
+      floating: floating,
+      floatFrame: 0,
+      floatBound: false,
+      floatHandlers: []
     };
 
     for (const category of CATALOG) {
@@ -511,32 +634,44 @@
   }
 
   // 用 KaTeX 渲染按键外观；渲染结果为空时（例如 % 被当成注释）退回 label 文本，避免出现空白键。
-  function renderKeyVisual(button, key) {
-    button.replaceChildren();
+  function renderKeyTex(node, key) {
     if (window.katex && typeof window.katex.render === "function") {
       try {
-        window.katex.render(key.tex, button, { throwOnError: false, strict: false });
+        window.katex.render(key.tex, node, { throwOnError: false, strict: false });
       } catch (error) {
-        button.textContent = key.label;
+        node.textContent = key.label;
         return;
       }
-      const html = button.querySelector(".katex-html");
+      const html = node.querySelector(".katex-html");
       const visibleText = html ? html.textContent.replace(/[\s\u200b\u2061]/g, "") : "";
       const hasSvg = html ? Boolean(html.querySelector("svg")) : false;
-      if (!button.querySelector(".katex") || (visibleText === "" && !hasSvg)) {
-        button.textContent = key.label;
+      if (!node.querySelector(".katex") || (visibleText === "" && !hasSvg)) {
+        node.textContent = key.label;
       }
       return;
     }
-    button.textContent = key.label;
+    node.textContent = key.label;
+  }
+
+  function renderKeyVisual(button, key) {
+    button.replaceChildren();
+    if (key.caption) {
+      const icon = el("span", "mk-key-visual");
+      renderKeyTex(icon, key);
+      button.append(icon, el("span", "mk-key-caption", key.caption));
+      return;
+    }
+    renderKeyTex(button, key);
   }
 
   function createKeyButton(instance, key) {
-    const button = el("button", "mk-key");
+    const button = el("button", key.wide ? "mk-key mk-key-wide" : "mk-key");
     button.type = "button";
     button.title = key.title;
     button.dataset.mkTex = key.insert;
     button.dataset.mkAria = key.aria;
+    if (key.action) button.dataset.mkAction = key.action;
+    if (key.dialogKind) button.dataset.mkDialog = key.dialogKind;
     button.setAttribute("aria-label", key.aria);
 
     renderKeyVisual(button, key);
@@ -567,16 +702,6 @@
       ? api.insertChip({ template: key.chipTemplate })
       : api.insertGlyph(key.mathGlyph != null ? key.mathGlyph : key.label);
     showHint(instance, ok ? "已插入" : "公式编辑器未就绪");
-  }
-
-  function moveCursor(dir, button, instance) {
-    const api = formulaApi();
-    flash(button);
-    if (!api) {
-      showHint(instance, "公式编辑器未就绪");
-      return;
-    }
-    showHint(instance, api.move(dir) ? "已移动光标" : "已到边界");
   }
 
   /* ---------- 插入逻辑 ---------- */
@@ -685,7 +810,54 @@
     return { text: text, caret: parts[0].length };
   }
 
+  /* ---------- 矩阵 / 行列式入口 ---------- */
+
+  function handleAction(instance, key, button) {
+    if (key.action !== "matrix-dialog") return;
+    const dialog = window.formulaMatrix;
+    if (!dialog || typeof dialog.open !== "function") {
+      showHint(instance, "矩阵面板未就绪");
+      return;
+    }
+    flash(button);
+    dialog.open({
+      kind: key.dialogKind === "determinant" ? "determinant" : "matrix",
+      onInsert: function (payload) {
+        applyMatrix(instance, payload, button);
+      },
+      onClose: function () {
+        // 关掉面板后把焦点还给原输入框，用户可以接着打字
+        if (instance.kind === "formula") {
+          const api = formulaApi();
+          if (api && typeof api.focus === "function") api.focus();
+        } else if (instance.field) {
+          instance.field.focus({ preventScroll: true });
+        }
+      }
+    });
+  }
+
+  function applyMatrix(instance, payload, button) {
+    if (!payload) return;
+    const label = payload.kind === "determinant" ? "行列式" : "矩阵";
+    if (instance.kind === "formula") {
+      const api = formulaApi();
+      if (!api) {
+        showHint(instance, "公式编辑器未就绪");
+        return;
+      }
+      const ok = api.insertChip({ template: payload.template });
+      showHint(instance, ok ? "已插入" + label : "公式编辑器未就绪");
+      return;
+    }
+    insertTextAtCursor(instance, payload.text, button);
+  }
+
   function insertKey(instance, key, button) {
+    if (key.action) {
+      handleAction(instance, key, button);
+      return;
+    }
     if (instance.kind === "formula") {
       insertIntoFormula(instance, key, button);
       return;
@@ -762,6 +934,119 @@
 
   /* ---------- 展开 / 收起 ---------- */
 
+  function floatingViewport() {
+    const visual = window.visualViewport;
+    const width = (visual && Number(visual.width)) || Number(window.innerWidth) || 0;
+    const height = (visual && Number(visual.height)) || Number(window.innerHeight) || 0;
+    if (width && height) return { width: width, height: height };
+    const html = document.documentElement;
+    return {
+      width: Math.max(0, (html && html.clientWidth) || 0),
+      height: Math.max(0, (html && html.clientHeight) || 0)
+    };
+  }
+
+  function positionFloating(instance) {
+    if (!instance || !instance.floating || !instance.open) return;
+    if (!instance.panel || instance.panel.hidden) return;
+    const anchor = rectOf(instance.field);
+    if (!anchor) {
+      // 锚点已经不在页面上了（切到原文 / 切页 / 表单收起）：直接收起，别留悬空面板。
+      close(instance);
+      return;
+    }
+    let attach = null;
+    let submit = null;
+    try {
+      attach = rectOf(document.querySelector(FLOATING.attachSelector));
+      submit = rectOf(document.querySelector(FLOATING.submitSelector));
+    } catch (error) {
+      /* 其它页面没有这两个按钮，退回输入框宽度 */
+    }
+    const box = computeFloatingBox({
+      anchor: anchor,
+      attach: attach,
+      submit: submit,
+      viewport: floatingViewport()
+    });
+    if (!box) return;
+    instance.panel.style.left = box.left + "px";
+    instance.panel.style.top = box.top + "px";
+    instance.panel.style.width = box.width + "px";
+    instance.panel.style.maxHeight = box.maxHeight + "px";
+    instance.panel.classList.toggle("is-compact", box.compact);
+    instance.box = box;
+  }
+
+  function scheduleFloating(instance) {
+    if (!instance || !instance.floating || !instance.open) return;
+    if (instance.floatFrame) return;
+    const raf = window.requestAnimationFrame || function (fn) {
+      return window.setTimeout(fn, 16);
+    };
+    instance.floatFrame = raf(function () {
+      instance.floatFrame = 0;
+      positionFloating(instance);
+    });
+  }
+
+  function bindFloatingTracking(instance) {
+    if (!instance.floating || instance.floatBound) return;
+    instance.floatBound = true;
+    const update = function () {
+      scheduleFloating(instance);
+    };
+    const add = function (target, type, handler, capture) {
+      if (!target || typeof target.addEventListener !== "function") return;
+      target.addEventListener(type, handler, Boolean(capture));
+      instance.floatHandlers.push([target, type, handler, Boolean(capture)]);
+    };
+    add(window, "resize", update);
+    add(window, "orientationchange", update);
+    add(document, "scroll", update, true);
+    add(instance.field, "input", update);
+    if (window.visualViewport && window.visualViewport.addEventListener) {
+      add(window.visualViewport, "resize", update);
+      add(window.visualViewport, "scroll", update);
+    }
+    // 输入框自己变高变矮（长文换行、视图切换）时跟着挪。
+    if (typeof window.ResizeObserver === "function") {
+      try {
+        const observer = new window.ResizeObserver(update);
+        observer.observe(instance.field);
+        instance.floatObserver = observer;
+      } catch (error) {
+        instance.floatObserver = null;
+      }
+    }
+  }
+
+  function unbindFloatingTracking(instance) {
+    if (!instance || !instance.floatBound) return;
+    instance.floatBound = false;
+    while (instance.floatHandlers.length) {
+      const entry = instance.floatHandlers.pop();
+      try {
+        entry[0].removeEventListener(entry[1], entry[2], entry[3]);
+      } catch (error) {
+        /* 环境不支持时忽略 */
+      }
+    }
+    if (instance.floatObserver) {
+      try {
+        instance.floatObserver.disconnect();
+      } catch (error) {
+        /* 忽略 */
+      }
+      instance.floatObserver = null;
+    }
+    if (instance.floatFrame) {
+      const cancel = window.cancelAnimationFrame;
+      if (typeof cancel === "function") cancel(instance.floatFrame);
+      instance.floatFrame = 0;
+    }
+  }
+
   function open(instance) {
     if (openInstance && openInstance !== instance) close(openInstance);
     instance.panel.hidden = false;
@@ -769,12 +1054,20 @@
     instance.open = true;
     instance.openedAt = Date.now();
     openInstance = instance;
+    if (instance.floating) {
+      // 先定位再显示，避免面板先出现在左上角闪一下。
+      positionFloating(instance);
+      if (!instance.open) return;
+      bindFloatingTracking(instance);
+      scheduleFloating(instance);
+    }
   }
 
   function close(instance) {
     instance.panel.hidden = true;
     instance.panel.classList.remove("is-open");
     instance.open = false;
+    if (instance.floating) unbindFloatingTracking(instance);
     if (openInstance === instance) openInstance = null;
   }
 
@@ -852,7 +1145,7 @@
     if (!(target instanceof Node)) return;
     if (openInstance.panel.contains(target)) return;
     // 输入方式 / ∑ 公式 按钮自己会管理面板，别在它们按下时抢先收起
-    if (target instanceof Element && target.closest && target.closest(".composer-formula-toggle, .input-mode-button")) return;
+    if (target instanceof Element && target.closest && target.closest(".composer-formula-toggle, #draft-view-toggle")) return;
     if (instanceHasFocus(openInstance, target)) return;
     if (keepsPanelUntilClick(target)) return;
     close(openInstance);
@@ -880,7 +1173,7 @@
     if (openInstance && openInstance.kind === "formula" && !openInstance.panel.contains(target)) {
       // 输入方式 / 来源 tab / ∑ 按钮自己管理面板状态（切模式时会主动收起），不要再抢先关一次；
       // 面板刚打开（如点 ∑ 按钮后表单被向下推、这次 click 落到表单外）时的同一次点击也不关。
-      const keepSelector = ".input-mode-button, [data-source], .composer-formula-toggle";
+      const keepSelector = "#draft-view-toggle, [data-source], .composer-formula-toggle";
       const justOpened = Date.now() - (openInstance.openedAt || 0) < 700;
       if (!justOpened && !(target.closest && target.closest(keepSelector))) {
         close(openInstance);
@@ -903,12 +1196,13 @@
     }, 0);
   });
 
-  // 从「公式」切回「文字」时，收起公式编辑器对应的键盘面板
-  window.addEventListener("math-input-mode-change", function (event) {
-    if (!openInstance || openInstance.kind !== "formula") return;
-    const mode = event && event.detail ? event.detail.mode : "";
-    if (mode === "formula") return;
-    close(openInstance);
+  // 切换「原文 / 渲染」后，主页输入框这一侧的符号表要跟着换锚点：旧锚点被藏起来
+  // （rect 变 0）就收起，焦点落到新编辑器时 focusin 会重新开在同一位置。
+  window.addEventListener("math-draft-view-change", function () {
+    if (!openInstance) return;
+    if (!isFloatingAnchor(openInstance.field)) return;
+    if (!rectOf(openInstance.field)) close(openInstance);
+    else scheduleFloating(openInstance);
   });
 
   // 供调试 / 自动化测试读取目录规模，不暴露任何写操作。
@@ -918,6 +1212,9 @@
     }),
     // 纯函数：只计算这次插入的落点和是否需要包定界符，便于自检。
     planInsert: planInsertion,
-    version: "20261118-mathlive"
+    // 纯函数：主页悬浮符号表的位置、宽度与可用高度（不读 DOM）。
+    floatingBox: computeFloatingBox,
+    floatingDefaults: FLOATING,
+    version: "20261120-home-math-keys"
   };
 })();

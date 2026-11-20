@@ -223,6 +223,8 @@ class SettingsAndCancelWebTests(unittest.TestCase):
         first.get("/api/status")
         second = app.test_client()
         second.set_cookie("session", first.get_cookie("session").value)
+        second.set_cookie(app.config["HISTORY_COOKIE_NAME"],
+                          first.get_cookie(app.config["HISTORY_COOKIE_NAME"]).value)
         results = []
         worker = threading.Thread(target=lambda: results.append(first.post("/api/chat", json={"message": "原句", "request_id": "running"})))
         worker.start()
