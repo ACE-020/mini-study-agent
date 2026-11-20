@@ -806,7 +806,7 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     await field.evaluate(node => node.executeCommand('selectAll'));
     await page.keyboard.press('Backspace');
     await waitFieldEmpty();
-    assert.equal(await value(), '');
+    await waitCanonical('');
 
     // 对数：首填真实底数，再进入真数。
     await openCalculusKey('对数');
