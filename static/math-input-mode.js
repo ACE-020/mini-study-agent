@@ -9,7 +9,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-fraction-keyboard";
+  const VERSION = "20261120-typed-math";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -35,6 +35,7 @@
     syncing: 0,      // >0 表示正在双向同步，禁止 input / onExternalChange 互相触发
     suppressExternalSync: false,
     renderedBindingsBound: false,
+    typedPower: null,
     sourceCursor: { start: 0, end: 0 },
     entries: [],     // 对话补充框的公式编辑器
     docs: new WeakMap(), // <math-field> → 最近一次同步的草稿分段（保留原分隔符与换行）
@@ -957,6 +958,7 @@
 
   function setLatex(mf, latex) {
     if (!mf) return;
+    if (mf === state.field) state.typedPower = null;
     const textMode = isTextField(mf);
     if (textMode) ensureTextMode(mf);
     const prepared = prepareFractionSlots(latex || "", textMode);
@@ -1961,10 +1963,80 @@
     return true;
   }
 
+  function typedPowerPrefix(model, position) {
+    let prefix = "";
+    for (let i = position; i > 0 && prefix.length < 32; i -= 1) {
+      const atom = model.at(i);
+      if (atom?.mode !== "text" || typeof atom.value !== "string" || atom.value.length !== 1) break;
+      prefix = atom.value + prefix;
+    }
+    const match = /(?:^|[^A-Za-z0-9_./\\])([A-Za-z]|\d+)\^(-?)$/.exec(prefix);
+    if (!match || (prefix.length === 32 && match[0] === match[1] + "^" + match[2])) return null;
+    return match;
+  }
+
+  function insertTypedPower(mf, event) {
+    if (state.syncing || state.switching || state.view !== VIEW_RENDERED || mf.readOnly ||
+        !event.cancelable || event.isComposing || event.inputType !== "insertText" ||
+        !/^\d$/.test(event.data || "") || editorMode(mf) !== "text") return;
+    const model = modelFor(mf);
+    if (!model?.selectionIsCollapsed) return;
+    const position = mf.position;
+    const match = typedPowerPrefix(model, position);
+    if (!match) return;
+    const [, base, sign] = match;
+    const start = position - base.length - 1 - sign.length;
+    let inserted = false;
+    withSync(function () {
+      mf.selection = { ranges: [[start, position]] };
+      try {
+        inserted = mf.insert("$" + base + "^{" + sign + event.data + "}$", {
+          format: "latex",
+          mode: "text",
+          insertionMode: "replaceSelection",
+          selectionMode: "after"
+        });
+      } catch (error) {
+        inserted = false;
+      }
+      if (!inserted) {
+        mf.position = position;
+        return;
+      }
+      // 继续打数字时，光标要留在指数内，例如 2^10。
+      const power = model.at(mf.position);
+      const exponent = power?.type === "subsup" && branchRange(model, power, "superscript");
+      if (exponent) {
+        state.typedPower = power;
+        mf.position = exponent[1];
+        forceMathMode(mf);
+      }
+    });
+    if (!inserted) return;
+    event.preventDefault();
+    handleFieldChange(mf, draft);
+  }
+
+  function finishTypedPower(mf) {
+    const power = state.typedPower;
+    const model = modelFor(mf);
+    if (!power || !model?.selectionIsCollapsed) return false;
+    const caret = model.at(mf.position);
+    if (caret?.parent !== power || caret.parentBranch !== "superscript") return false;
+    const exponent = branchRange(model, power, "superscript");
+    if (!exponent || mf.position !== exponent[1]) return false;
+    state.typedPower = null;
+    mf.position = model.offsetOf(power);
+    return true;
+  }
+
   function bindRenderedEditing(mf) {
     if (!mf || state.renderedBindingsBound) return;
     state.renderedBindingsBound = true;
     const handled = new WeakSet();
+    mf.addEventListener("beforeinput", function (event) {
+      insertTypedPower(mf, event);
+    });
 
     // 在 document 捕获阶段处理：MathLive 的隐藏输入代理在 shadow DOM 里，
     // 只在 math-field 上监听 paste / Enter 可能拿不到事件。
@@ -1986,7 +2058,13 @@
 
     document.addEventListener("keydown", function (event) {
       if (state.view !== VIEW_RENDERED || !isMainDraftTarget(event.target) || event.isComposing) return;
-      if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "/" || event.key === " " || event.key === "Enter") {
+        if (finishTypedPower(mf) && event.key !== "/") ensureTextMode(mf);
+      } else if (/^(?:Arrow|Home|End|Tab)/.test(event.key)) {
+        state.typedPower = null;
+      }
+      if (event.key !== "Enter") return;
       if (editorMode(mf) !== "text") return;
       if (handled.has(event)) return;
       handled.add(event);
@@ -2008,7 +2086,10 @@
     }
     // pointerdown 只补焦点，不 preventDefault / stopPropagation，槽位命中仍由 MathLive 处理；
     // click 冒泡阶段再兜底一次，覆盖只在 click 阶段才响应的情况。
-    formulaHost.addEventListener("pointerdown", focusFromClick, true);
+    formulaHost.addEventListener("pointerdown", function (event) {
+      state.typedPower = null;
+      focusFromClick(event);
+    }, true);
     formulaHost.addEventListener("click", focusFromClick);
   }
 

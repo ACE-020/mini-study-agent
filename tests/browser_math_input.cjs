@@ -195,6 +195,37 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.ok(afterFormula.startsWith('hello中文\nsecond'), afterFormula);
     assert.ok(await field.evaluate(node => Boolean(node.shadowRoot && node.shadowRoot.querySelector('.ML__mfrac'))));
 
+    // 直接打上标也进入数学排版，并保留混合原稿里的正文。
+    await toggle.click();
+    await setDraft('');
+    await toggle.click();
+    await field.click();
+    await page.keyboard.type('x^2');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$x^2$');
+    assert.equal(await mathCount(await value()), 1);
+    await toggle.click();
+    assert.equal(await value(), '$x^2$');
+    await toggle.click();
+    assert.equal(await fieldLatex(), '$ x^2 $');
+    await toggle.click();
+    await setDraft('');
+    await toggle.click();
+    await field.click();
+    await page.keyboard.type('x^2/a^2');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$\\frac{x^2}{a^2}$');
+    assert.ok(await field.evaluate(node => Boolean(node.shadowRoot.querySelector('.ML__mfrac'))));
+    await chooseCategory('fraction');
+    assert.equal(await visibleKeyboard().locator('[data-mk-aria="分式"]').count(), 1);
+    assert.equal(await visibleKeyboard().locator('[data-mk-aria="行内大分式"]').count(), 0);
+    await toggle.click();
+    await setDraft('');
+    await toggle.click();
+    await field.click();
+    await page.keyboard.insertText('说明 ');
+    await page.keyboard.type('2^10 ');
+    await page.keyboard.insertText('后文');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '说明 $2^{10}$ 后文');
+
     /* 4. 粘贴带换行的文字：原文保留换行，不变成 $...$ */
     await toggle.click();
     await setDraft('');
