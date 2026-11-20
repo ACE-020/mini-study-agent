@@ -342,6 +342,28 @@
   display: none;
 }
 
+/* 撤回 / 重做 / 查看原文同排，沿用标题行已有的 text-button。
+   窄屏时标签与按钮组整体换行，按钮组右对齐，390px 下不挤破面板。 */
+.editor-heading {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.editor-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.editor-heading-actions .text-button {
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
 /* ---------- 公式键盘的方向键控制盘 ---------- */
 
 .mk-arrows {

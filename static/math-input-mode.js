@@ -8,7 +8,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "20261120-calculus-slots";
+  const VERSION = "20261120-draft-undo";
   const FOLLOW_VIEWS = ["organize", "review", "analysis"];
   const DRAFT_PLACEHOLDER = "在这里输入或粘贴原稿，公式会直接排版";
   const FOLLOW_PLACEHOLDER = "点下方符号键输入公式，也可以直接打字";
@@ -958,11 +958,13 @@
     bindRenderedEditing(state.field);
     if (viewToggle) viewToggle.disabled = false;
     if (window.MutationObserver) {
-      // app.js 在 updateButtons() 里设置 #draft.readOnly，这里把只读状态镜像到 MathLive
+      // app.js 在 updateButtons() 里设置 #draft.readOnly，这里把只读状态镜像到 MathLive，
+      // 同时刷新撤回 / 重做的可用状态（忙碌时两者都禁用）。
       const observer = new MutationObserver(function () {
-        setReadOnly(state.field, draft.readOnly);
+        setReadOnly(state.field, draft.readOnly || draft.disabled);
+        updateHistoryButtons();
       });
-      observer.observe(draft, { attributes: true, attributeFilter: ["readonly"] });
+      observer.observe(draft, { attributes: true, attributeFilter: ["readonly", "disabled"] });
     }
     return true;
   }
@@ -1042,6 +1044,8 @@
   // app.js 在 updateDraft() 末尾调用：把「OCR 写入 / 清空 / 提交后修改」同步进编辑器。
   // 原稿是普通文字优先：文字模式下只在外部值确实不同时才重设 MathLive，避免打断打字。
   function onExternalChange() {
+    // OCR / 清空 / 程序化回填不经过 input，但按钮可用状态要跟着变。
+    updateHistoryButtons();
     if (!state.field || state.syncing || state.suppressExternalSync) return;
     // 原文视图直接以 textarea 为准；隐藏 MathLive 的装载/归一化只会造成
     // 「异步 input → 覆盖原文和光标」的回路。切回渲染时 setView 会从 textarea 重新装载。
@@ -1650,6 +1654,317 @@
     formulaHost.addEventListener("click", focusFromClick);
   }
 
+  /* ---------- 主原稿撤回 / 重做 ---------- */
+
+  // 只有 #draft（主原稿）走这份历史；对话补充框仍用 MathLive 自己的 undo。
+  // 原文视图里的符号键盘用 setRangeText 写值，不进入浏览器原生 undo 栈；
+  // 渲染视图里的模板占位符也不在 #draft 的字面值里。因此统一存快照：
+  //   value   —— #draft 原文（保留换行与分隔符，提交链路只认它）
+  //   latex   —— 渲染视图当时的 MathLive LaTeX（保住 \placeholder 与可填槽位）
+  //   selection / position / mode —— 渲染视图的光标与编辑模式，撤回后能接着填。
+  // 历史独立成段，避免和上下限补丁改到同一批函数。
+  const HISTORY_LIMIT = 100;
+  const undoButton = document.querySelector("#draft-undo");
+  const redoButton = document.querySelector("#draft-redo");
+
+  const history = {
+    entries: [],
+    index: -1,
+    restoring: false,
+    scheduled: false,
+    composing: false
+  };
+
+  function readFieldSelection(mf) {
+    try {
+      const selection = mf.selection;
+      if (!selection || !Array.isArray(selection.ranges) || !selection.ranges.length) return null;
+      const ranges = [];
+      for (const range of selection.ranges) {
+        if (!Array.isArray(range) || range.length < 2) return null;
+        ranges.push([Number(range[0]), Number(range[1])]);
+      }
+      return { ranges: ranges, direction: selection.direction === "backward" ? "backward" : "forward" };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function historyEntry() {
+    const entry = {
+      value: draft ? draft.value : ""
+    };
+    if (state.view === VIEW_RENDERED && state.field) {
+      const latex = getLatex(state.field);
+      if (latex !== null) entry.latex = latex;
+      const position = positionOf(state.field);
+      if (typeof position === "number") entry.position = position;
+      const selection = readFieldSelection(state.field);
+      if (selection) entry.selection = selection;
+      const mode = editorMode(state.field);
+      if (mode) entry.mode = mode;
+    } else if (draft) {
+      entry.start = draft.selectionStart == null ? 0 : draft.selectionStart;
+      entry.end = draft.selectionEnd == null ? entry.start : draft.selectionEnd;
+    }
+    return entry;
+  }
+
+  function historyCurrent() {
+    return history.index >= 0 ? history.entries[history.index] : null;
+  }
+
+  // 外部写入（OCR、清空、失败后回填）没有 input 事件；在撤回前把它补记成一步，
+  // 否则一次撤回会直接跳回外部写入之前，把用户看得见的内容一起丢掉。
+  function historyHasExternalChange() {
+    const current = historyCurrent();
+    return Boolean(current && draft && draft.value !== current.value);
+  }
+
+  // 撤回 / 重做不能用「历史里还有没有」来回答：忙碌时 app.js 会把 #draft
+  // 设为只读，按钮和快捷键都必须一起停下。MutationObserver 负责刷新。
+  function historyBlocked() {
+    return !draft || Boolean(draft.readOnly) || Boolean(draft.disabled);
+  }
+
+  function canUndoHistory() {
+    if (historyBlocked()) return false;
+    return history.index > 0 || historyHasExternalChange();
+  }
+
+  function canRedoHistory() {
+    if (historyBlocked() || historyHasExternalChange()) return false;
+    return history.index >= 0 && history.index < history.entries.length - 1;
+  }
+
+  function updateHistoryButtons() {
+    if (undoButton) undoButton.disabled = !canUndoHistory();
+    if (redoButton) redoButton.disabled = !canRedoHistory();
+  }
+
+  function pushHistoryEntry(entry) {
+    const current = historyCurrent();
+    // 去重：同一份 #draft 不重复入栈，避免 setLatex / 同步回写自激。
+    if (current && current.value === entry.value) return false;
+    if (history.index < history.entries.length - 1) history.entries.length = history.index + 1;
+    history.entries.push(entry);
+    if (history.entries.length > HISTORY_LIMIT) {
+      history.entries.splice(0, history.entries.length - HISTORY_LIMIT);
+    }
+    history.index = history.entries.length - 1;
+    return true;
+  }
+
+  function recordHistory() {
+    if (!draft || history.restoring) return false;
+    const changed = pushHistoryEntry(historyEntry());
+    if (changed) updateHistoryButtons();
+    return changed;
+  }
+
+  function scheduleHistoryRecord() {
+    if (history.scheduled) return;
+    history.scheduled = true;
+    const run = function () {
+      history.scheduled = false;
+      if (history.restoring) return;
+      // MathLive → #draft 的写回也在 withSync 里；等这一轮同步结束再取快照。
+      if (state.syncing > 0) {
+        scheduleHistoryRecord();
+        return;
+      }
+      recordHistory();
+    };
+    if (typeof queueMicrotask === "function") queueMicrotask(run);
+    else window.setTimeout(run, 0);
+  }
+
+  function onDraftHistoryInput(event) {
+    if (!draft || history.restoring) return;
+    if (event && event.isComposing) return;
+    if (history.composing) return;
+    if (state.syncing > 0) {
+      scheduleHistoryRecord();
+      return;
+    }
+    recordHistory();
+  }
+
+  function applySourceSelection(entry) {
+    if (!draft) return;
+    const max = draft.value.length;
+    const rawStart = entry.start == null ? max : entry.start;
+    const rawEnd = entry.end == null ? rawStart : entry.end;
+    const start = Math.max(0, Math.min(rawStart, max));
+    const end = Math.max(start, Math.min(rawEnd, max));
+    state.sourceCursor = { start: start, end: end };
+    try {
+      draft.setSelectionRange(start, end);
+    } catch (error) {
+      /* 忽略：部分输入类型不支持 setSelectionRange */
+    }
+  }
+
+  function restoreFieldSelection(entry) {
+    const mf = state.field;
+    if (!mf) return;
+    if (entry.selection && Array.isArray(entry.selection.ranges) && entry.selection.ranges.length) {
+      try {
+        mf.selection = {
+          ranges: entry.selection.ranges.map(function (range) {
+            return [range[0], range[1]];
+          }),
+          direction: entry.selection.direction === "backward" ? "backward" : "forward"
+        };
+        return;
+      } catch (error) {
+        /* 位置对不上时退回 position */
+      }
+    }
+    if (typeof entry.position === "number") {
+      try {
+        mf.position = entry.position;
+      } catch (error) {
+        /* 忽略 */
+      }
+    }
+  }
+
+  function restoreHistoryEntry(entry) {
+    history.restoring = true;
+    const previousSuppress = state.suppressExternalSync;
+    state.suppressExternalSync = true;
+    try {
+      withSync(function () {
+        if (draft.value !== entry.value) {
+          draft.value = entry.value;
+          if (state.view === VIEW_SOURCE) applySourceSelection(entry);
+          // 字数、发送按钮与待发送队列仍由 app.js 的 input 监听更新。
+          draft.dispatchEvent(new Event("input", { bubbles: true }));
+        } else if (state.view === VIEW_SOURCE) {
+          applySourceSelection(entry);
+        }
+        if (!state.field) return;
+        // 后续编辑的 reconcile 基线必须换成恢复后的原文。
+        state.docs.set(state.field, parseDoc(entry.value));
+        if (state.view !== VIEW_RENDERED) return;
+        // 有 MathLive 快照就原样装回（含 \placeholder）；没有则从原文重建。
+        setLatex(state.field, entry.latex != null ? entry.latex : mixedToLatex(entry.value, true));
+        if (entry.mode === "math") forceMathMode(state.field);
+        else ensureTextMode(state.field);
+        // onFocus 可能把光标挪到下一个占位符；先聚焦，再恢复精确选区/位置。
+        focusEditor(state.field);
+        restoreFieldSelection(entry);
+        setReadOnly(state.field, draft.readOnly || draft.disabled);
+      });
+    } finally {
+      state.suppressExternalSync = previousSuppress;
+      history.restoring = false;
+    }
+    updateHistoryButtons();
+    focusVisibleEditor();
+  }
+
+  function syncExternalHistory() {
+    if (!historyHasExternalChange()) return false;
+    return recordHistory();
+  }
+
+  function undoHistory() {
+    if (!draft || history.restoring || historyBlocked()) return false;
+    syncExternalHistory();
+    if (history.index <= 0) {
+      updateHistoryButtons();
+      return false;
+    }
+    history.index -= 1;
+    restoreHistoryEntry(history.entries[history.index]);
+    return true;
+  }
+
+  function redoHistory() {
+    if (!draft || history.restoring || historyBlocked()) return false;
+    if (syncExternalHistory() || history.index >= history.entries.length - 1) {
+      updateHistoryButtons();
+      return false;
+    }
+    history.index += 1;
+    restoreHistoryEntry(history.entries[history.index]);
+    return true;
+  }
+
+  function isMainDraftFocus() {
+    if (!draft) return false;
+    const active = document.activeElement;
+    if (!active) return false;
+    if (state.view === VIEW_SOURCE) return active === draft;
+    if (state.view === VIEW_RENDERED && state.field) {
+      return active === state.field || Boolean(state.field.contains && state.field.contains(active));
+    }
+    return false;
+  }
+
+  function bindHistory() {
+    if (!draft) return;
+    draft.addEventListener("input", onDraftHistoryInput);
+    // IME 组合期间不逐帧记历史；组合结束后的正式 input 再入栈。
+    draft.addEventListener("compositionstart", function () {
+      history.composing = true;
+    });
+    draft.addEventListener("compositionend", function () {
+      history.composing = false;
+      // 有的输入法在 compositionend 才提交最终文本，之后不再补 input；
+      // 延迟补记一次，重复值仍由 pushHistoryEntry 去重。
+      window.setTimeout(scheduleHistoryRecord, 0);
+    });
+    if (undoButton) {
+      undoButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        undoHistory();
+      });
+    }
+    if (redoButton) {
+      redoButton.addEventListener("click", function (event) {
+        event.preventDefault();
+        redoHistory();
+      });
+    }
+    // Ctrl/Cmd+Z、Ctrl/Cmd+Shift+Z、Ctrl+Y 只在主原稿编辑区生效：
+    // 原文 textarea 聚焦，或渲染视图的 math-field 持有焦点。其余输入框/对话框不劫持。
+    document.addEventListener("keydown", function (event) {
+      if (!event || event.isComposing || event.altKey) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = String(event.key || "").toLowerCase();
+      let action = "";
+      if (key === "z") action = event.shiftKey ? "redo" : "undo";
+      else if (key === "y" && !event.shiftKey) action = "redo";
+      if (!action) return;
+      if (!isMainDraftFocus()) return;
+      if (document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (action === "undo") undoHistory();
+      else redoHistory();
+    }, true);
+    // 外部写入后焦点回到主原稿时，刷新按钮可用状态（不把焦点当编辑）。
+    document.addEventListener("focusin", function (event) {
+      const target = event && event.target;
+      if (!target) return;
+      if (target === draft || (state.field && (target === state.field || (state.field.contains && state.field.contains(target))))) {
+        updateHistoryButtons();
+      }
+    }, true);
+  }
+
+  function resetHistory() {
+    history.entries = [historyEntry()];
+    history.index = 0;
+    history.restoring = false;
+    history.scheduled = false;
+    history.composing = false;
+    updateHistoryButtons();
+  }
+
   /* ---------- Phase 2：三个对话补充框的「∑ 公式」 ---------- */
 
   function syncFromTextarea(entry) {
@@ -1843,12 +2158,15 @@
     ensureMathliveScript();
     const ready = initMainField();
     bindViewToggle();
+    bindHistory();
     // 记录原文视图里的光标；切去渲染视图再切回来时恢复到同一位置。
     for (const eventName of ["select", "click", "keyup", "input"]) {
       draft.addEventListener(eventName, rememberSourceCursor);
     }
     if (ready) setView(VIEW_RENDERED, { focus: false });
     else updateViewUi();
+    // 初始装载不算一步编辑：空原稿时撤回 / 重做保持禁用。
+    resetHistory();
     bindSubmitSync();
     bindPhysicalArrows();
     initFollowEditors();

@@ -102,6 +102,9 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.equal(await page.locator('#formula-pane').isVisible(), true);
     assert.equal(await draft.isVisible(), false);
     assert.equal(await toggle.innerText(), '查看原文');
+    assert.deepEqual(await page.locator('.editor-heading-actions .text-button').allTextContents(), ['撤回', '重做', '查看原文']);
+    assert.equal(await page.locator('#draft-undo').isDisabled(), true);
+    assert.equal(await page.locator('#draft-redo').isDisabled(), true);
     assert.equal(await page.locator('#draft-count').innerText(), '0 / 80000');
     assert.equal(await page.locator('#source-panel').evaluate(node => node.classList.contains('draft-view-rendered')), true);
     assert.equal(await page.locator('.input-mode-switch').count(), 0);
@@ -929,6 +932,93 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
       const node = document.querySelector('#formula-editor-host math-field');
       return Boolean(node && node.getValue('latex').includes('\\lim'));
     });
+
+    /* 18. 撤回 / 重做：按钮与快捷键共用一条历史；原文 / 渲染切换不清空；redo 恢复模板占位符。 */
+    const undo = page.locator('#draft-undo');
+    const redo = page.locator('#draft-redo');
+    const waitDraftExactly = text => page.waitForFunction(wanted => {
+      const node = document.querySelector('#draft');
+      return Boolean(node && node.value === wanted);
+    }, text);
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft('');
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await waitFieldEmpty();
+    await field.click();
+    await page.keyboard.insertText('撤回测试');
+    await waitDraftExactly('撤回测试');
+    assert.equal(await undo.isDisabled(), false);
+    assert.equal(await redo.isDisabled(), true);
+    await undo.click();
+    assert.equal(await value(), '');
+    assert.equal(await redo.isDisabled(), false);
+    await redo.click();
+    await waitDraftExactly('撤回测试');
+
+    // 撤回后新编辑必须截断 redo。
+    await undo.click();
+    await page.keyboard.insertText('x');
+    await waitDraftExactly('x');
+    assert.equal(await redo.isDisabled(), true);
+
+    // 原文改一个字后切回渲染，历史仍在；撤回 / 重做跨视图有效。
+    await page.keyboard.insertText('再');
+    await waitDraftExactly('x再');
+    await toggle.click();
+    await draft.click();
+    await page.keyboard.press('End');
+    await page.keyboard.insertText('源');
+    await waitDraftExactly('x再源');
+    await toggle.click();
+    await undo.click();
+    await waitDraftExactly('x再');
+    await redo.click();
+    await waitDraftExactly('x再源');
+
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 走同一条历史。
+    await field.click();
+    await page.keyboard.press('Control+z');
+    await waitDraftExactly('x再');
+    await page.keyboard.press('Control+Shift+z');
+    await waitDraftExactly('x再源');
+    await page.keyboard.press('Control+z');
+    await waitDraftExactly('x再');
+    await page.keyboard.press('Control+y');
+    await waitDraftExactly('x再源');
+
+    // 渲染模板：撤回插入后再重做，MathLive 占位符与选区必须还能继续填。
+    await clearDraft();
+    await field.click();
+    await visibleKeyboard().waitFor();
+    await chooseCategory('fraction');
+    await clickKey('分式');
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\frac'));
+    });
+    await undo.click();
+    await waitFieldEmpty();
+    await redo.click();
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      const ranges = node && node.selection && node.selection.ranges;
+      return Boolean(node && node.getValue('latex').includes('\\placeholder') &&
+        ranges && ranges.length === 1 && ranges[0][0] !== ranges[0][1]);
+    });
+    await page.keyboard.type('1');
+    await waitCanonicalDraft('\\frac{1}');
+
+    // 忙碌时 app.js 把 #draft 设为只读：按钮与快捷键都不能再改动原稿。
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    const beforeReadonly = await value();
+    await draft.evaluate(node => { node.readOnly = true; });
+    await page.waitForFunction(() => document.querySelector('#draft-undo').disabled && document.querySelector('#draft-redo').disabled);
+    await draft.click();
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(80);
+    assert.equal(await value(), beforeReadonly);
+    await draft.evaluate(node => { node.readOnly = false; });
+    await page.waitForFunction(() => !document.querySelector('#draft-undo').disabled);
 
     assert.deepEqual(errors, []);
     console.log('PASS: 普通文字键入/粘贴/OCR 往返、原文切换、符号公式、矩阵与行列式入口、AI 成功/快速切换/取消、无配置与 390px、方向键实体/屏幕对齐、微积分模板与空界删除保护。');

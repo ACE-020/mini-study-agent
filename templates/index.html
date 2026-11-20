@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
   <link rel="stylesheet" href="/static/app.css?v=20261026-review-focus-v20">
   <link rel="stylesheet" href="/static/workflow.css?v=20261026-review-focus-v20">
-  <link rel="stylesheet" href="/static/math-keyboard.css?v=20261119-draft-view">
+  <link rel="stylesheet" href="/static/math-keyboard.css?v=20261120-draft-undo">
   <script defer src="/static/vendor/marked.umd.js"></script>
   <script defer src="/static/vendor/purify.min.js"></script>
   <script defer src="/static/vendor/katex/katex.min.js"></script>
@@ -23,7 +23,7 @@
   <script defer src="/static/math-keyboard.js?v=20261120-calculus-templates"></script>
   <link rel="stylesheet" href="/static/vendor/mathlive/mathlive-fonts.css">
   <script defer src="/static/vendor/mathlive/mathlive.min.js"></script>
-  <script defer src="/static/math-input-mode.js?v=20261120-calculus-slots"></script>
+  <script defer src="/static/math-input-mode.js?v=20261120-draft-undo"></script>
   <script defer src="/static/formula-matrix.js?v=20261119-draft-view"></script>
   <script defer src="/static/materials.js?v=20261026-review-focus-v20"></script>
   <link rel="stylesheet" href="/static/materials.css?v=20261026-review-focus-v20">
@@ -91,7 +91,7 @@
                 <button id="recognize-button" class="button secondary full" type="button" disabled>批量读取并填入文字</button><p class="helper">单个 PDF 最多 256 MB，每批 512 MB；每次读取最多 20 页。先预览找页码，再读取，笔记与错题无需提前分类。</p><div class="ocr-choice"><label>识别方式 <select data-ocr-backend aria-label="识别方式"><option value="remote">云端识图 · DeepSeek / 已配置服务</option><option value="local">GLM 本机识别 · 无识图 API 费用</option></select></label><span class="ocr-choice-feedback" role="status"></span></div><p class="helper" data-local-ocr-info></p>
                 <div id="ocr-operation" class="operation-bar" hidden><span class="operation-label" role="status"><span class="spinner"></span>正在批量读取…</span><button class="button stop-button small" type="button" data-stop-request>停止并编辑</button></div>
               </div>
-              <div class="editor-heading"><label id="draft-label" for="draft">原稿文字与补充说明</label><button id="draft-view-toggle" class="text-button" type="button" aria-pressed="true" aria-controls="formula-pane draft" title="查看可编辑的 LaTeX 原文">查看渲染后文字</button></div>
+              <div class="editor-heading"><label id="draft-label" for="draft">原稿文字与补充说明</label><div class="editor-heading-actions"><button id="draft-undo" class="text-button" type="button" disabled aria-keyshortcuts="Control+Z Meta+Z" title="撤回上一步（Ctrl+Z / ⌘Z）">撤回</button><button id="draft-redo" class="text-button" type="button" disabled aria-keyshortcuts="Control+Shift+Z Control+Y Meta+Shift+Z Meta+Y" title="重做（Ctrl+Shift+Z / Ctrl+Y）">重做</button><button id="draft-view-toggle" class="text-button" type="button" aria-pressed="true" aria-controls="formula-pane draft" title="查看可编辑的 LaTeX 原文">查看渲染后文字</button></div></div>
               <div id="formula-pane" class="formula-pane" hidden>
                 <div id="formula-editor-host" class="formula-editor-host"></div>
                 <p class="formula-hint">点下方符号键插入；← → 在槽位间移动，↑ ↓ 在分子/分母、指数、积分上下限之间跳。直接输入中文也可以；原稿换行会保留（在单行可视区里显示为空格）。需要改 LaTeX 源码时点右上角「查看原文」。</p>
