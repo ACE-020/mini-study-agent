@@ -27,7 +27,8 @@ _NO_REDIRECT_OPENER = build_opener(_NoRedirect())
 
 
 class ModelClient:
-    def __init__(self, base_url, api_key, model, timeout=30, retries=2, follow_redirects=True):
+    def __init__(self, base_url, api_key, model, timeout=30, retries=2, follow_redirects=True,
+                 *, disable_thinking=False):
         if not all((base_url, api_key, model)): #如果参数不齐
             raise ModelError("请先在网页的‘模型设置’中保存 API Key，或设置 LLM_* 环境变量。")
         #将参数保存为属性
@@ -38,6 +39,7 @@ class ModelClient:
         self.model = model
         self.timeout = timeout
         self.retries = retries
+        self.disable_thinking = disable_thinking
         # 管理员/网页版沿用历史行为（默认跟随重定向）；个人固定供应商的 Key 显式关闭。
         self.follow_redirects = bool(follow_redirects)
 
@@ -55,6 +57,8 @@ class ModelClient:
 
     def complete(self, messages, tools=None, cancel_token=None):
         body = {"model": self.model, "messages": messages, "stream": False}
+        if self.disable_thinking:
+            body["thinking"] = {"type": "disabled"}
         if tools:
             body.update(tools=tools, tool_choice="auto")
             #body.update()等价于

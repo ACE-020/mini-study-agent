@@ -71,7 +71,6 @@
       full: "分式与根式",
       keys: [
         k("a/b", "\\frac{$0}{}", "分式", "\\frac{a}{b}"),
-        k("a/b", "\\dfrac{$0}{}", "行内大分式", "\\dfrac{a}{b}"),
         k("√", "\\sqrt{$0}", "平方根", "\\sqrt{a}"),
         k("∛", "\\sqrt[3]{$0}", "三次根号", "\\sqrt[3]{a}"),
         k("( )", "\\left($0\\right)", "自适应圆括号", "\\left(a\\right)"),
@@ -237,7 +236,6 @@
      mathGlyph 是纯符号键在渲染视图里要插入的 LaTeX（默认取 label）。 */
   const TEMPLATE_BY_INSERT = {
     "\\frac{$0}{}": "\\frac{#@}{#?}",
-    "\\dfrac{$0}{}": "\\frac{#@}{#?}",
     "\\sqrt{$0}": "\\sqrt{#@}",
     "\\sqrt[3]{$0}": "\\sqrt[3]{#@}",
     "\\left($0\\right)": "\\left(#@\\right)",
@@ -1253,6 +1251,6 @@
     // 纯函数：主页悬浮符号表的位置、宽度与可用高度（不读 DOM）。
     floatingBox: computeFloatingBox,
     floatingDefaults: FLOATING,
-    version: "20261120-floating-panel"
+    version: "20261120-home-math"
   };
 })();

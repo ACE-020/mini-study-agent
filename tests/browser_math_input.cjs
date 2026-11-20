@@ -181,6 +181,37 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.ok(afterFormula.startsWith('hello中文\nsecond'), afterFormula);
     assert.ok(await field.evaluate(node => Boolean(node.shadowRoot && node.shadowRoot.querySelector('.ML__mfrac'))));
 
+    // 直接打上标也进入数学排版，并保留混合原稿里的正文。
+    await toggle.click();
+    await setDraft('');
+    await toggle.click();
+    await field.click();
+    await page.keyboard.type('x^2');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$x^2$');
+    assert.equal(await mathCount(await value()), 1);
+    await toggle.click();
+    assert.equal(await value(), '$x^2$');
+    await toggle.click();
+    assert.equal(await fieldLatex(), '$ x^2 $');
+    await toggle.click();
+    await setDraft('');
+    await toggle.click();
+    await field.click();
+    await page.keyboard.type('x^2/a^2');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$\\frac{x^2}{a^2}$');
+    assert.ok(await field.evaluate(node => Boolean(node.shadowRoot.querySelector('.ML__mfrac'))));
+    await chooseCategory('fraction');
+    assert.equal(await visibleKeyboard().locator('[data-mk-aria="分式"]').count(), 1);
+    assert.equal(await visibleKeyboard().locator('[data-mk-aria="行内大分式"]').count(), 0);
+    await toggle.click();
+    await setDraft('');
+    await toggle.click();
+    await field.click();
+    await page.keyboard.insertText('说明 ');
+    await page.keyboard.type('2^10 ');
+    await page.keyboard.insertText('后文');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '说明 $2^{10}$ 后文');
+
     /* 4. 粘贴带换行的文字：原文保留换行，不变成 $...$ */
     await toggle.click();
     await setDraft('');
@@ -281,6 +312,111 @@ const base = process.env.STUDY_QA_URL || 'http://127.0.0.1:8766';
     assert.ok(edited.startsWith('第一行\n第二行'));
     assert.ok(edited.includes('$$\\frac{1}{x}+1$$'));
     assert.equal((edited.match(/\$\$/g) || []).length, 2);
+
+    /* 7b. 空分式回归：渲染时给空分子/分母补可填占位（横线有宽度），
+       从已填分式删空最后一格时不能连分式一起删；原文不写占位符。 */
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft('$$\\frac{}{}$$');
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.shadowRoot && node.shadowRoot.querySelector('.ML__mfrac'));
+    });
+    const fracLineWidth = () => field.evaluate(node => {
+      const line = node.shadowRoot && node.shadowRoot.querySelector('.ML__frac-line');
+      return line ? line.getBoundingClientRect().width : 0;
+    });
+    assert.ok((await fracLineWidth()) > 4, '空分式的横线必须由可填占位撑开');
+    assert.equal(await value(), '$$\\frac{}{}$$');
+    assert.ok(!(await value()).includes('\\placeholder'));
+
+    await page.evaluate(() => window.mathInputMode.setView('source'));
+    await setDraft('$$\\frac{1}{2}$$');
+    await page.evaluate(() => window.mathInputMode.setView('rendered'));
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return Boolean(node && node.getValue('latex').includes('\\frac{1}{2}'));
+    });
+    await field.click();
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      return node && (node === document.activeElement || Boolean(node.shadowRoot?.activeElement));
+    });
+    const fractionBranch = name => field.evaluate((node, branch) => {
+      const model = node._mathfield.model;
+      for (let i = 0; i <= model.lastOffset; i += 1) {
+        const atom = model.at(i);
+        if (atom && atom.type === 'genfrac') {
+          return model.getBranchRange(model.offsetOf(atom), branch);
+        }
+      }
+      return null;
+    }, name);
+    const putFieldCaret = offset => field.evaluate((node, value) => {
+      node.focus();
+      node.position = value;
+    }, offset);
+
+    const filledDenominator = await fractionBranch('below');
+    assert.ok(filledDenominator, '已填写的分母应该可定位');
+    await putFieldCaret(filledDenominator[1]);
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      const ranges = node?.selection.ranges;
+      const line = node?.shadowRoot?.querySelector('.ML__frac-line');
+      return ranges?.length === 1 && ranges[0][0] === ranges[0][1]
+        && line && !line.classList.contains('ML__selected');
+    });
+    assert.equal(await value(), '$$\\frac{1}{2}$$');
+
+    const numerator = await fractionBranch('above');
+    assert.ok(numerator, '分式分子应该可定位');
+    await putFieldCaret(numerator[1]);
+    await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$$\\frac{}{2}$$');
+    const denominator = await fractionBranch('below');
+    assert.ok(denominator, '分式分母应该可定位');
+    await putFieldCaret(denominator[1]);
+    await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$$\\frac{}{}$$');
+    assert.ok(await field.evaluate(node => node.getValue('latex').includes('\\frac')));
+    assert.ok((await fracLineWidth()) > 4, '删空分母后分式和横线都必须保留');
+
+    // 清空后还能继续填入；撤回 / 重做仍按原文恢复，不把占位符写进 #draft。
+    await page.keyboard.type('3');
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$$\\frac{}{3}$$');
+    await page.waitForTimeout(80);
+    await page.locator('#draft-undo').click();
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$$\\frac{}{}$$');
+    await page.locator('#draft-redo').click();
+    await page.waitForFunction(() => document.querySelector('#draft').value === '$$\\frac{}{3}$$');
+    // 整段选中删除分式仍然有效（守卫只拦「删空单个分支」）。
+    await field.click();
+    await field.evaluate(node => node.executeCommand('selectAll'));
+    await page.keyboard.press('Backspace');
+    await waitFieldEmpty();
+    await page.waitForFunction(() => document.querySelector('#draft').value === '');
+
+    // 从符号表插入也是入口。空编辑框可以仍处于 math 模式，分子也必须可填。
+    await field.click();
+    await field.evaluate(node => { node._mathfield.model.mode = 'math'; });
+    await chooseCategory('fraction');
+    await clickKey('分式');
+    await page.keyboard.type('1');
+    await page.keyboard.press('Tab');
+    await page.keyboard.type('2');
+    await page.waitForFunction(() => {
+      const draft = document.querySelector('#draft');
+      return /\$\\frac(?:12|\{1\}\{2\})\$/.test(draft.value);
+    });
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(() => {
+      const node = document.querySelector('#formula-editor-host math-field');
+      const focused = document.activeElement === node || Boolean(node?.shadowRoot?.activeElement);
+      return focused && node.position === node._mathfield.model.lastOffset;
+    });
+    await page.evaluate(() => window.mathInputMode.setView('source'));
 
     /* 8. 矩阵 / 行列式两个相邻入口、各自标题、手动预览与插入 */
     await setDraft('');

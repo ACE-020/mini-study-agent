@@ -153,6 +153,52 @@ check('append after typed newline preserves newline',
 check('append after pasted newline preserves both newlines',
   api.reconcileDraft('第一行\n第二行\n', '第一行 第二行 结束', true), '第一行\n第二行\n结束');
 
+// 8b) 空分子/分母只给 MathLive 渲染串补可填占位；原文读取仍剔除占位符
+check('empty fraction gets fillable slots',
+  api.prepareFractionSlots('$$\\frac{}{}$$', true),
+  '$$\\frac{\\placeholder{}}{\\placeholder{}}$$');
+check('filled fraction is unchanged',
+  api.prepareFractionSlots('$$\\frac{1}{2}$$', true), '$$\\frac{1}{2}$$');
+check('only the empty side gets a slot',
+  api.prepareFractionSlots('$$\\frac{1}{}$$', true),
+  '$$\\frac{1}{\\placeholder{}}$$');
+check('nested empty fractions get slots',
+  api.prepareFractionSlots('$$\\frac{\\frac{}{}}{}$$', true),
+  '$$\\frac{\\frac{\\placeholder{}}{\\placeholder{}}}{\\placeholder{}}$$');
+check('nested fraction content is preserved',
+  api.prepareFractionSlots('$$\\frac{\\frac{1}{2}}{3}$$', true), '$$\\frac{\\frac{1}{2}}{3}$$');
+check('dfrac / tfrac / cfrac are covered',
+  api.prepareFractionSlots('$\\dfrac{}{}+\\tfrac{}{}+\\cfrac[l]{}{}$', true),
+  '$\\dfrac{\\placeholder{}}{\\placeholder{}}+\\tfrac{\\placeholder{}}{\\placeholder{}}+\\cfrac[l]{\\placeholder{}}{\\placeholder{}}$');
+check('slot preparation is idempotent',
+  api.prepareFractionSlots(api.prepareFractionSlots('$$\\frac{}{}$$', true), true),
+  '$$\\frac{\\placeholder{}}{\\placeholder{}}$$');
+check('plain text outside math is not rewritten',
+  api.prepareFractionSlots('前文 \\frac{}{} 后文 $$\\frac{}{}$$', true),
+  '前文 \\frac{}{} 后文 $$\\frac{\\placeholder{}}{\\placeholder{}}$$');
+check('math-mode field gets slots without delimiters',
+  api.prepareFractionSlots('\\frac{}{}', false),
+  '\\frac{\\placeholder{}}{\\placeholder{}}');
+check('unbalanced fraction is left alone',
+  api.prepareFractionSlots('$$\\frac{}{$$', true), '$$\\frac{}{$$');
+check('fraction-like command is not rewritten',
+  api.prepareFractionSlots('$$\\fracfoo{}{}$$', true), '$$\\fracfoo{}{}$$');
+check('slots never leak into the draft',
+  api.reconcileDraft('$$\\frac{}{}$$', '$$\\frac{\\placeholder{}}{\\placeholder{}}$$', true),
+  '$$\\frac{}{}$$');
+check('typing into both slots round trips',
+  api.reconcileDraft('$$\\frac{}{}$$', '$$\\frac{1}{2}$$', true),
+  '$$\\frac{1}{2}$$');
+// 深层嵌套必须在固定层数后早退，不能栈溢出或长时间卡住装载。
+let deepFraction = '1';
+for (let i = 0; i < 40; i += 1) deepFraction = '\\frac{' + deepFraction + '}{}';
+const deepPrepared = api.prepareFractionSlots('$' + deepFraction + '$', true);
+check('deep fraction scan is bounded', typeof deepPrepared === 'string' && deepPrepared.endsWith('$'), true);
+check('new inline math keeps the preceding typed space',
+  api.reconcileDraft('中文 ', '中文 $ x^2 $', true),
+  '中文 $x^2$');
+check('deep fraction still fills the reachable empty slots', deepPrepared.includes('\\placeholder{}'), true);
+
 // 9) 矩阵 / 行列式面板的模板与预览
 check('matrix 2x3 text template',
   matrix.buildLatex(2, 3, 'matrix', '$0', ''),
