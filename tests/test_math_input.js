@@ -7,6 +7,7 @@ const vm = require('vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'static', 'math-input-mode.js'), 'utf8');
 const keyboardSource = fs.readFileSync(path.join(__dirname, '..', 'static', 'math-keyboard.js'), 'utf8');
+const matrixSource = fs.readFileSync(path.join(__dirname, '..', 'static', 'formula-matrix.js'), 'utf8');
 const window = {
   addEventListener() {},
   dispatchEvent() {},
@@ -37,6 +38,9 @@ assert.ok(api, 'mathInputMode API should be exposed');
 vm.runInContext(keyboardSource, context, {filename: 'math-keyboard.js'});
 const keyboard = window.mathKeyboard;
 assert.ok(keyboard && typeof keyboard.planInsert === 'function', 'mathKeyboard.planInsert should be exposed');
+vm.runInContext(matrixSource, context, {filename: 'formula-matrix.js'});
+const matrix = window.formulaMatrix;
+assert.ok(matrix && typeof matrix.buildLatex === 'function', 'formulaMatrix.buildLatex should be exposed');
 
 let passed = 0;
 function check(name, actual, expected) {
@@ -119,6 +123,115 @@ check('insert before formula continues', [keyboard.planInsert('$x$', 0, 0).start
 check('insert replaces whole formula', [keyboard.planInsert('$x$', 0, 3).wrap, keyboard.planInsert('$x$', 0, 3).selected], [true, 'x']);
 check('insert inside block formula', [keyboard.planInsert('$$x$$', 4, 4).start, keyboard.planInsert('$$x$$', 4, 4).wrap], [3, false]);
 check('plain price does not count as formula', keyboard.planInsert('价格 $5 到 $10', 8, 8).wrap, true);
+
+// 8) 原稿可视编辑使用 MathLive text 模式：普通文字不进 $...$，公式显式包起来
+check('text mode plain english stays plain', api.mixedToLatex('abc', true), 'abc');
+check('text mode plain chinese stays plain', api.mixedToLatex('笔记：第一行', true), '笔记：第一行');
+check('text mode inline formula is delimited', api.mixedToLatex('前文 $x^2$ 后文', true), '前文 $x^2$ 后文');
+check('text mode block formula is delimited', api.mixedToLatex('$$\\frac{1}{x}$$', true), '$$\\frac{1}{x}$$');
+check('text mode newlines become spaces in the field',
+  api.mixedToLatex('第一行\n第二行', true), '第一行 第二行');
+check('text mode serialized plain text parses back', api.latexToMixed('abc', true), 'abc');
+check('text mode serialized formula parses back', api.latexToMixed('普通文字 $ x^2 $ 后文', true), '普通文字 $x^2$ 后文');
+check('text mode serialized block parses back', api.latexToMixed('$$ \\frac{1}{x} $$', true), '$$\\frac{1}{x}$$');
+check('text typed in math mode parses back as plain text', api.latexToMixed('$ \\text{原稿 Hello 123} $', true), '原稿 Hello 123');
+check('ghost empty math parses as empty', api.latexToMixed('$  $', true), '');
+check('ghost empty math does not swallow following text', api.latexToMixed('$  $原稿 Hello', true), '原稿 Hello');
+check('ghost empty math does not rewrite empty draft', api.reconcileDraft('', '$  $', true), '');
+for (const text of [
+  'abc',
+  '笔记：第一行\n第二行',
+  '第一行\n第二行 $x^2$ 结束',
+  '中文 $$\\frac{1}{x}$$ 中文',
+  '价格 $5 到 $10 元',
+]) {
+  check('text mode round trip: ' + JSON.stringify(text),
+    api.reconcileDraft(text, api.mixedToLatex(text, true), true), text);
+}
+check('append after typed newline preserves newline',
+  api.reconcileDraft('hello中文\n', 'hello中文 s', true), 'hello中文\ns');
+check('append after pasted newline preserves both newlines',
+  api.reconcileDraft('第一行\n第二行\n', '第一行 第二行 结束', true), '第一行\n第二行\n结束');
+
+// 9) 矩阵 / 行列式面板的模板与预览
+check('matrix 2x3 text template',
+  matrix.buildLatex(2, 3, 'matrix', '$0', ''),
+  '\\begin{pmatrix}$0&&\\\\&&\\end{pmatrix}');
+check('matrix 2x3 editable template',
+  matrix.buildLatex(2, 3, 'matrix', '#@', '#?'),
+  '\\begin{pmatrix}#@&#?&#?\\\\#?&#?&#?\\end{pmatrix}');
+check('determinant 3x3 template',
+  matrix.buildLatex(3, 3, 'determinant', '#@', '#?'),
+  '\\begin{vmatrix}#@&#?&#?\\\\#?&#?&#?\\\\#?&#?&#?\\end{vmatrix}');
+check('matrix preview uses square placeholders',
+  matrix.buildPreview(2, 3, 'matrix'),
+  '\\begin{pmatrix}\\square&\\square&\\square\\\\\\square&\\square&\\square\\end{pmatrix}');
+check('determinant preview uses vertical bars',
+  matrix.buildPreview(3, 3, 'determinant'),
+  '\\begin{vmatrix}\\square&\\square&\\square\\\\\\square&\\square&\\square\\\\\\square&\\square&\\square\\end{vmatrix}');
+
+// 10) 手动尺寸：1–20 才可插入；逐行核对形状，不能只看 & 总数
+function latexShape(latex) {
+  const body = String(latex)
+    .replace(/^\\begin\{[^}]+\}/, '')
+    .replace(/\\end\{[^}]+\}$/, '');
+  return body.split(/\\\\/).map(row => row.split('&').length);
+}
+
+check('panel maxSize exposed to MathLive', matrix.maxSize, 20);
+check('panel minSize', matrix.minSize, 1);
+check('size tip wording', matrix.sizeTip, '只能是1~20内的整数！');
+check('editor reads the same max size', api.matrixMaxSize(), 20);
+check('parse 7 columns', matrix.parseSize('7'), 7);
+check('parse 20 columns', matrix.parseSize('20'), 20);
+check('parse 1 row', matrix.parseSize('1'), 1);
+check('reject 0', matrix.parseSize('0'), null);
+check('reject 21', matrix.parseSize('21'), null);
+check('reject empty', matrix.parseSize(''), null);
+check('reject decimal', matrix.parseSize('7.5'), null);
+check('reject text', matrix.parseSize('abc'), null);
+check('clamp 21 down to 20', matrix.clampSizeValue('21'), 20);
+check('clamp 0 up to 1', matrix.clampSizeValue('0'), 1);
+check('clamp negative up to 1', matrix.clampSizeValue('-3'), 1);
+check('keep 20 in range', matrix.clampSizeValue('20'), null);
+check('keep two-digit 10', matrix.clampSizeValue('10'), null);
+check('keep in-range decimal for integer validation', matrix.clampSizeValue('7.5'), null);
+check('empty is not clamped', matrix.clampSizeValue(''), null);
+check('text is not clamped', matrix.clampSizeValue('abc'), null);
+check('21 fallback message names the range',
+  matrix.sizeError({value: '21'}, '行数'),
+  message => message.includes('1–20') && !message.includes('不能插入'));
+check('7.5 gets an integer message',
+  matrix.sizeError({value: '7.5'}, '列数'),
+  message => message.includes('整数'));
+
+check('6x7 preview keeps every row', latexShape(matrix.buildPreview(6, 7, 'matrix')),
+  [7, 7, 7, 7, 7, 7]);
+check('7x6 source template keeps every row', latexShape(matrix.buildLatex(7, 6, 'matrix', '$0', '')),
+  [6, 6, 6, 6, 6, 6, 6]);
+check('7x7 determinant keeps every row', latexShape(matrix.buildLatex(7, 7, 'determinant', '$0', '')),
+  [7, 7, 7, 7, 7, 7, 7]);
+check('8x8 determinant keeps every row', latexShape(matrix.buildPreview(8, 8, 'determinant')),
+  [8, 8, 8, 8, 8, 8, 8, 8]);
+check('20x20 preview has 20 rows',
+  latexShape(matrix.buildPreview(20, 20, 'matrix')).length, 20);
+check('20x20 preview has 20 cells in every row',
+  latexShape(matrix.buildPreview(20, 20, 'matrix')).every(cells => cells === 20), true);
+check('20x20 editable template has 20 rows',
+  latexShape(matrix.buildLatex(20, 20, 'matrix', '#@', '#?')).length, 20);
+check('6x7 editable template starts with the caret cell',
+  matrix.buildLatex(6, 7, 'matrix', '#@', '#?').startsWith('\\begin{pmatrix}#@&#?&#?&#?&#?&#?&#?\\\\'), true);
+
+// 11) 历史对话切换：只在对话真正改变时重置本对话的原稿撤回基线（合版新增的隔离契约）
+assert.equal(typeof api.syncConversation, 'function', 'mathInputMode.syncConversation should be exposed');
+check('no conversation is tracked before app.js switches', api.conversationId(), null);
+check('first conversation switch resets the draft history baseline', api.syncConversation('A'), true);
+check('same conversation keeps the in-conversation undo history', api.syncConversation('A'), false);
+check('switching to another conversation resets it again', api.syncConversation('B'), true);
+check('conversation id follows the active conversation', api.conversationId(), 'B');
+check('switching back to the same conversation id is still idempotent', api.syncConversation('B'), false);
+// 隐藏的编辑器没有所有权：没有可见渲染编辑器时 flush 不写回、也不报成功。
+check('flush without a visible rendered editor is a no-op', api.flush(), false);
 
 if (process.exitCode) {
   console.error('math input tests failed');

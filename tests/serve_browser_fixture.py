@@ -20,6 +20,16 @@ from prompts import IMPORT_PROMPT
 class BrowserModel:
     def complete(self, messages, tools=None):
         last = messages[-1]
+        if messages[0]["role"] == "system" and messages[0]["content"].startswith("你是 LaTeX 排版助手"):
+            # /api/formula/matrix 的替身：矩阵给 2×3 圆括号，行列式给 3 阶竖线。
+            text = next(item["content"] for item in reversed(messages) if item["role"] == "user")
+            if "等待生成" in text:
+                time.sleep(1)
+            if "目标类型：行列式" in text:
+                latex = r"\begin{vmatrix}1&0&0\\0&1&0\\0&0&1\end{vmatrix}"
+            else:
+                latex = r"\begin{pmatrix}1&2&3\\4&5&6\end{pmatrix}"
+            return {"role": "assistant", "content": latex}
         if any(item["role"] == "system" and "当前任务是整理学习笔记" in item["content"] for item in messages):
             text = next(item["content"] for item in reversed(messages) if item["role"] == "user")
             if isinstance(text, list):

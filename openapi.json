@@ -885,6 +885,58 @@
         "operationId": "preview_page"
       }
     },
+    "/api/formula/matrix": {
+      "post": {
+        "summary": "按描述生成矩阵 / 行列式的 LaTeX",
+        "tags": [
+          "公式"
+        ],
+        "description": "把一句自然语言描述转成矩阵或行列式环境。只返回 LaTeX，不写任何数据；结果已做校验（限定 pmatrix / bmatrix / vmatrix / matrix / smallmatrix 等环境，拦截 \\input、\\write18 一类命令）。未配置模型时直接返回 400。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FormulaMatrixInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "生成结果（latex）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormulaMatrixResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "描述为空、过长或生成的公式不合法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "模型服务不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "formula_matrix"
+      }
+    },
     "/api/intake/clear": {
       "post": {
         "summary": "清空指定对话的上传区",
@@ -4014,6 +4066,45 @@
                 }
               }
             }
+          }
+        }
+      },
+      "FormulaMatrixInput": {
+        "type": "object",
+        "required": [
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "对矩阵或行列式的自然语言描述"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "matrix",
+              "determinant"
+            ],
+            "default": "matrix"
+          }
+        },
+        "additionalProperties": false
+      },
+      "FormulaMatrixResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "latex"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          },
+          "latex": {
+            "type": "string",
+            "description": "校验通过的 LaTeX 矩阵环境"
           }
         }
       },
