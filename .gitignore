@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+node_modules/
 .env
 data/mistakes.json
 data/exercises.json

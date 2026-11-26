@@ -1,0 +1,11 @@
+{
+  "name": "mini-study-agent",
+  "private": true,
+  "scripts": {
+    "test:browser:sequences": "node tests/browser_math_sequences.cjs"
+  },
+  "devDependencies": {
+    "fast-check": "4.11.0",
+    "playwright": "1.65.1"
+  }
+}
