@@ -79,18 +79,21 @@ class BrowserModel:
         return {"role": "assistant", "content": "收到你的修改。"}
 
 
+def create_browser_fixture(root):
+    settings_path = root / "settings.json"
+    SettingsStore(settings_path).save({"base_url": "https://example.invalid/v1",
+                                       "api_key": "fake-browser-key", "model": "browser-fixture",
+                                       "ocr_model": "browser-fixture", "ocr_base_url": "",
+                                       "ocr_api_key": ""})
+    return create_app(root / "data", client_factory=BrowserModel,
+                      reader_factory=lambda: ImageReader(BrowserModel()),
+                      settings_path=settings_path)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8766)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="study-browser-") as folder:
-        root = Path(folder)
-        settings_path = root / "settings.json"
-        SettingsStore(settings_path).save({"base_url": "https://example.invalid/v1",
-                                           "api_key": "fake-browser-key", "model": "browser-fixture",
-                                           "ocr_model": "browser-fixture", "ocr_base_url": "",
-                                           "ocr_api_key": ""})
-        create_app(root / "data", client_factory=BrowserModel,
-                   reader_factory=lambda: ImageReader(BrowserModel()),
-                   settings_path=settings_path).run(host="127.0.0.1", port=args.port,
-                                                   debug=False, use_reloader=False, threaded=True)
+        create_browser_fixture(Path(folder)).run(host="127.0.0.1", port=args.port,
+                                               debug=False, use_reloader=False, threaded=True)
